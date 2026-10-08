@@ -1,0 +1,13 @@
+fastapi==0.141.1
+uvicorn[standard]
+SQLAlchemy==2.0.54
+aiosqlite
+pydantic-settings
+python-dotenv
+boto3[crt]>=1.43.98
+anthropic>=1.7.0
+httpx
+cryptography>=42.0.0
+PyJWT[crypto]>=2.9.0
+pytest
+pytest-asyncio

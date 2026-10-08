@@ -1,0 +1,167 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >
+  AWS 자동 배포 마법사가 이 계정에 배포할 수 있도록 만드는 역할 세 개.
+  주의 - 미검증 템플릿입니다. 실제 AWS에서 아직 확인되지 않았습니다 (기획서 06장: "AI가 없는 파라미터를 지어낸다").
+  두 번째 AWS 계정으로 반드시 먼저 테스트하고, docs/aws-notes.md의 "M6에서 확인할 것"에 결과를 기록하세요.
+
+Parameters:
+  TrustedAwsAccountId:
+    Type: String
+    Description: 배포 마법사를 실행하는 우리 쪽 AWS 계정 번호 (화면에 표시된 값)
+  ExternalId:
+    Type: String
+    Description: 배포 마법사 화면에서 생성해 보여준 값을 그대로 붙여넣으세요
+
+Resources:
+  DeployWizardTrustRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: DeployWizardCrossAccountRole
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              AWS: !Sub arn:aws:iam::${TrustedAwsAccountId}:root
+            Action: sts:AssumeRole
+            Condition:
+              StringEquals:
+                sts:ExternalId: !Ref ExternalId
+      Tags:
+        - Key: managed-by
+          Value: deploy-wizard
+        # 이 템플릿의 버전 - 권한을 바꿀 때마다 올린다 (features/accounts/services.py 의 TEMPLATE_VERSION 과 같아야 한다)
+        # 배포 마법사가 이 값을 읽어 낮으면 "스택 업데이트 필요"를 띄운다
+        - Key: template-version
+          Value: '2'
+      Policies:
+        - PolicyName: DeployWizardPermissions
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              # 위 template-version 태그를 읽기 위한 것 - 자기 역할 하나만 볼 수 있다
+              - Sid: ReadOwnRole
+                Effect: Allow
+                Action: iam:GetRole
+                Resource: !Sub arn:aws:iam::${AWS::AccountId}:role/DeployWizardCrossAccountRole
+
+              # ECS Express Mode - 생성은 우리 태그를 붙인 것만 (Express Mode가 태그 조건을 지원하는지 미검증)
+              - Sid: EcsExpressCreate
+                Effect: Allow
+                Action:
+                  - ecs:CreateExpressGatewayService
+                Resource: "*"
+                Condition:
+                  StringEquals:
+                    aws:RequestTag/managed-by: deploy-wizard
+              - Sid: EcsExpressManage
+                Effect: Allow
+                Action:
+                  - ecs:UpdateExpressGatewayService
+                  - ecs:DescribeExpressGatewayService
+                  - ecs:DeleteExpressGatewayService
+                  - ecs:ListServiceDeployments
+                  - ecs:DescribeServiceDeployments
+                  - ecs:TagResource
+                Resource: "*"
+
+              # ECR - CreateRepository 만 태그 조건 가능. GetAuthorizationToken 은 계정 전역이라 조건 불가 (ECR 문서 기준)
+              - Sid: EcrCreate
+                Effect: Allow
+                Action: ecr:CreateRepository
+                Resource: "*"
+                Condition:
+                  StringEquals:
+                    aws:RequestTag/managed-by: deploy-wizard
+              - Sid: EcrAuth
+                Effect: Allow
+                Action: ecr:GetAuthorizationToken
+                Resource: "*"
+              - Sid: EcrPush
+                Effect: Allow
+                Action:
+                  - ecr:DescribeRepositories
+                  - ecr:PutImage
+                  - ecr:InitiateLayerUpload
+                  - ecr:UploadLayerPart
+                  - ecr:CompleteLayerUpload
+                  - ecr:BatchCheckLayerAvailability
+                  - ecr:BatchGetImage
+                  - ecr:TagResource
+                  # 배포 삭제 때 이미지 저장소까지 지운다 - 없으면 이미지가 남아 저장 요금이 계속 나간다
+                  - ecr:DeleteRepository
+                Resource: "*"
+
+              # CloudWatch Logs - 읽기 전용 (문제 이력·해설용)
+              - Sid: LogsRead
+                Effect: Allow
+                Action:
+                  - logs:DescribeLogGroups
+                  - logs:DescribeLogStreams
+                  - logs:GetLogEvents
+                  - logs:FilterLogEvents
+                Resource: "*"
+
+              # 이 템플릿을 콘솔에 올릴 때 AWS가 cf-templates-* 버킷에 남기는 파일을 지운다 ([템플릿 파일 삭제] 버튼)
+              # 우리 템플릿 파일 이름으로 끝나는 것만 지울 수 있다. 버킷과 다른 파일은 못 건드린다
+              - Sid: TemplateBucketFind
+                Effect: Allow
+                Action: s3:ListAllMyBuckets
+                Resource: "*"
+              - Sid: TemplateBucketList
+                Effect: Allow
+                Action: s3:ListBucket
+                Resource: arn:aws:s3:::cf-templates-*
+              - Sid: TemplateFileDelete
+                Effect: Allow
+                Action: s3:DeleteObject
+                Resource: arn:aws:s3:::cf-templates-*/*-deploy_wizard_role.yaml
+
+              # ECS가 아래 두 역할을 쓸 수 있게 넘겨준다 - 없으면 create_express_gateway_service 가 막힌다
+              - Sid: PassExecutionRoles
+                Effect: Allow
+                Action: iam:PassRole
+                Resource:
+                  - !GetAtt DeployWizardEcsExecutionRole.Arn
+                  - !GetAtt DeployWizardEcsInfrastructureRole.Arn
+
+  # scripts/setup_roles.py 가 우리 계정에 만드는 것과 같은 역할 - 여기서는 사용자 계정에 만든다
+  # 이름에 접두어를 붙인다 - ecsTaskExecutionRole 은 사용자 계정에 이미 있는 경우가 많아 그대로 쓰면 스택 생성이 실패한다
+  DeployWizardEcsExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: DeployWizardEcsTaskExecutionRole
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ecs-tasks.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy
+      Tags:
+        - Key: managed-by
+          Value: deploy-wizard
+
+  DeployWizardEcsInfrastructureRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: DeployWizardEcsInfrastructureRole
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ecs.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AmazonECSInfrastructureRoleforExpressGatewayServices
+      Tags:
+        - Key: managed-by
+          Value: deploy-wizard
+
+Outputs:
+  RoleArn:
+    Value: !GetAtt DeployWizardTrustRole.Arn
+    Description: 이 값을 배포 마법사 화면에 붙여넣으세요
