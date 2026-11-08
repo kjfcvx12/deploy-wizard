@@ -60,7 +60,7 @@
 - **값 저장.** `config`만 `plain_value`에 저장하고 컨테이너 `environment`로 들어간다. 시크릿 종류는 값을 받지 않는다 (PUT 501, 결정 D8의 AWS 보안 저장소 검증 후). 응답에는 `has_value`만, 값은 쓰기 전용.
 - **첫 배포만 멈춘다.** 값이 빈 필수 변수가 있으면 `needs_input`으로 `deploying` 직전에 멈춘다. 서비스가 이미 있는 재배포는 멈추지 않고 경고 로그만 남기고, 값이 있는 변수는 갱신 때도 다시 보낸다. `skipped`는 멈춤 조건에서 빠진다.
 - **실행 중 에러에서 이름 찾기.** `pipeline_fail`이 에러 글(`KeyError: 'X'`, `Missing required environment variable X`, `X is not defined`)에서 대문자 이름만 최대 10개 뽑아 `source: runtime_error`, 필수로 올린다. 사용자가 이미 넣은 값·상태는 건드리지 않지만, 이미 있던 행의 `source`·`source_hint`는 덮어쓴다. 이 처리가 실패해도 배포 실패 기록은 막지 않는다. 해설 규칙 "필요한 환경변수가 설정되지 않았습니다."는 헬스체크 규칙보다 앞에 둔다 (변수가 없어 죽은 앱은 헬스체크 실패도 같이 나오기 때문).
-- **화면 (계획 B)**: `ui/api.js`(라우터와 같은 모양) · `ui/constants.js`(종류 라벨, `groupEnvVars`, `canContinue`) · `ui/EnvVarsCard.jsx`. 배포 상세에 붙는 카드이고 자기 행을 스스로 읽는다. 시크릿 종류는 값 입력창을 주지 않고 건너뛰기만 준다(서버 501과 맞춤). 값은 저장에 성공했을 때만 입력창에서 지우고 어디에도 남기지 않는다. 자세한 모양은 [`ui-spec.md`](./ui-spec.md) "환경변수 카드".
+- **화면 (계획 B)**: `ui/api.js`(라우터와 같은 모양) · `ui/constants.js`(종류 라벨, `groupEnvVars`, `canContinue`) · `ui/EnvVarsCard.jsx`. 배포 상세에 붙는 카드이고 자기 행을 스스로 읽는다. 시크릿 종류는 값 입력창을 주지 않고 건너뛰기만 준다(서버 501과 맞춤). 저장된 값은 화면에 남기지 않는다 (저장에 성공하면 입력칸을 비운다). 자세한 모양은 [`ui-spec.md`](./ui-spec.md) "환경변수 카드".
 - 남은 것: 시크릿 값 저장(D8), 컨테이너 로그 기반 이름 찾기(D4 로그 접근 확인 후).
 
 ### advice (백엔드 + 화면 - 실제 AWS 배포로는 아직 검증 전)
