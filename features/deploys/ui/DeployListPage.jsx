@@ -51,6 +51,7 @@ export default function DeployListPage() {
                 {deploy.branch && ` · ${deploy.branch}`}
                 {deploy.language && ` · ${deploy.language}`}
                 {deploy.endpoint && ` · ${deploy.endpoint.replace('https://', '')}`}
+                {deploy.env_pending > 0 && ` · 환경변수 ${deploy.env_pending}개 입력 필요`}
               </div>
             </div>
             <StatusBadge status={deploy.status} />
