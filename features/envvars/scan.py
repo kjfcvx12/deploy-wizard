@@ -13,6 +13,8 @@ IGNORED_NAMES={'PATH', 'HOME', 'PWD', 'USER', 'HOSTNAME', 'LANG', 'TZ', 'NODE_EN
 SKIP_DIRS=EXCLUDE_DIRS | {'tests', 'test', '__tests__', 'spec', 'e2e', 'docs', 'examples', 'example'}
 MAX_FILES=500
 MAX_FILE_BYTES=200_000
+MAX_ENV_NAMES=300
+MAX_NAME_CHARS=100
 EXAMPLE_FILES=('.env.example', '.env.sample', '.env.template')
 PYTHON_EXTS={'.py'}
 NODE_EXTS={'.js', '.jsx', '.mjs', '.cjs', '.ts', '.tsx'}
@@ -41,10 +43,10 @@ VITE_BUILTINS={'DEV', 'MODE', 'BASE_URL', 'PROD', 'SSR'}
 
 class Env_Scan_Service:
 
-    # 이름이 쓸 만한지 - 형식이 맞고 템플릿이 정하는 이름이 아니어야 한다
+    # 이름이 쓸 만한지 - 형식이 맞고 100자 이하이며 템플릿이 정하는 이름이 아니어야 한다
     @staticmethod
     def services_env_scan_valid_name(name:str) -> bool:
-        return bool(NAME_RE.match(name)) and name not in IGNORED_NAMES
+        return bool(NAME_RE.match(name)) and len(name) <= MAX_NAME_CHARS and name not in IGNORED_NAMES
 
 
     # 텍스트 안 위치의 줄 번호 (1부터)
@@ -175,10 +177,12 @@ class Env_Scan_Service:
         return found
 
 
-    # 파일 읽기 - UTF-8, 안 되면 BOM 있는 UTF-16, 그래도 안 되면 깨진 글자를 버린다. 예외를 내지 않는다
+    # 파일 읽기 - 심볼릭 링크는 따라가지 않는다. UTF-8, 안 되면 BOM 있는 UTF-16, 그래도 안 되면 깨진 글자를 버린다. 예외를 내지 않는다
     @staticmethod
     def services_env_scan_read(path:Path) -> str | None:
         try:
+            if path.is_symlink():
+                return None
             if path.stat().st_size > MAX_FILE_BYTES:
                 return None
             data=path.read_bytes()
@@ -209,7 +213,7 @@ class Env_Scan_Service:
             group.append(item)
 
         result:list[Env_Found]=[]
-        for name in sorted(best):
+        for name in sorted(best)[:MAX_ENV_NAMES]:
             group=best[name]
             has_default=all(g.has_default for g in group)
             result.append(group[0].model_copy(update={'has_default': has_default, 'required': not has_default}))
@@ -231,6 +235,9 @@ class Env_Scan_Service:
                 lower=file_name.lower()
                 path=Path(dir_path) / file_name
                 rel=path.relative_to(app_path).as_posix()
+
+                if path.is_symlink():
+                    continue
 
                 if lower in EXAMPLE_FILES:
                     kind='example'

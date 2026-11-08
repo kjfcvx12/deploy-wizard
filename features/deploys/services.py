@@ -186,7 +186,12 @@ class Deploy_Service:
             await db.refresh(update_deploy)
             update_deploy.env_pending=0
 
-            Deploy_Pipeline.pipeline_start(d_id, 'deploying')
+            # 이전 작업이 아직 정리 중이면 시작되지 않는다 - queued 로 굳지 않게 입력 대기로 되돌린다
+            if not Deploy_Pipeline.pipeline_start(d_id, 'deploying'):
+                await Deploy_Crud.crud_deploy_update(db, d_id, {"status": "needs_input"})
+                await db.commit()
+                raise HTTPException(status_code=status.HTTP_409_CONFLICT,
+                                    detail='잠시 후 다시 눌러 주세요 (이전 작업을 정리하는 중입니다)')
 
             return update_deploy
 

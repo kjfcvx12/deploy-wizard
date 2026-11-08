@@ -369,8 +369,8 @@ class Deploy_Pipeline:
                     await Env_Service.services_env_save_found(db, d_id, [
                         Env_Found(name=name, required=True, has_default=False, kind='unknown', source='runtime_error', source_hint=None)
                         for name in names])
-        except Exception:
-            pass
+        except Exception as e:
+            buffer.buffer_add(f"환경변수 이름 기록을 건너뜁니다 ({type(e).__name__})", 'warn')
 
         await Deploy_Pipeline.pipeline_update(d_id, status='failed', error_step=error_step,
                                               error_msg=error_msg, explain=explain_json)

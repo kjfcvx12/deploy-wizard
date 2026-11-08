@@ -23,7 +23,7 @@
 
 ## 앱·웹 확장 1단계 백엔드 (2026-11-09)
 
-환경변수 감지·입력(`features/envvars/`, `needs_input` 상태)과 배포 전 분석(`features/advice/`) 백엔드가 들어왔다. 계획: [`superpowers/plans/2026-11-09-backend-env-and-advice.md`](./superpowers/plans/2026-11-09-backend-env-and-advice.md). `pytest`(mock)로만 확인했고 **실제 AWS 배포는 아직이다** — `primaryContainer.environment` 주입과 `needs_input` 멈춤·이어서 배포는 위 "다음에 할 일" 4번의 실제 배포 때 같이 확인한다. 시크릿 값 저장(D8)과 사양 숫자·비용(D10)은 검증 전이라 비어 있고, 화면은 다음 단계다.
+환경변수 감지·입력(`features/envvars/`, `needs_input` 상태)과 배포 전 분석(`features/advice/`) 백엔드가 들어왔다. 계획: [`superpowers/plans/2026-11-09-backend-env-and-advice.md`](./superpowers/plans/2026-11-09-backend-env-and-advice.md). `pytest`(mock)로만 확인했고 **실제 AWS 배포는 아직이다** — `primaryContainer.environment` 주입과 `needs_input` 멈춤·이어서 배포는 아래 "다음에 할 일" 4번의 실제 배포 때 같이 확인한다. 시크릿 값 저장(D8)과 사양 숫자·비용(D10)은 검증 전이라 비어 있고, 화면은 다음 단계다.
 
 ## 다음에 할 일
 

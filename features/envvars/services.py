@@ -1,4 +1,5 @@
 import re
+import asyncio
 from pathlib import Path
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -43,6 +44,10 @@ MAX_ENV_VALUE_CHARS=2000
 ENV_UPDATE_KEYS={'status', 'storage', 'plain_value', 'secret_ref', 'kind', 'required', 'has_default', 'source', 'source_hint'}
 CONTEXT_RADIUS=3
 MAX_CONTEXT_LINE_CHARS=200
+MAX_CONTEXT_SCAN_CHARS=2000
+# 따옴표로 감싼 글자 - 코드에 박힌 기본값(키·URL)이 AI 로 나가지 않게 자리표시자로 바꾼다
+STRING_LITERAL_RE=re.compile(r'(["\'])(?:\\.|(?!\1).)*\1')
+UNCLOSED_QUOTE_RE=re.compile(r'["\'].*$')
 
 SYSTEM_ENV_KIND="""너는 컨테이너 배포 도구의 일부다. 환경변수 이름과 그 주변 코드 몇 줄을 보고 종류를 하나 고른다.
 - 종류는 database, cache, external_api, secret, config, unknown 중 정확히 하나만 고른다.
@@ -71,7 +76,10 @@ class Env_Service:
         except OSError:
             return None
         text=Env_Scan_Service.services_env_scan_read(path)
-        return None if text is None else text.splitlines()
+        if text is None:
+            return None
+        # 스캔이 줄 번호를 \n 개수로 세므로 같은 기준으로 자른다 (splitlines 는 \x0c·U+2028 에서도 잘린다)
+        return [line[:-1] if line.endswith("\r") else line for line in text.split("\n")]
 
 
     # 글에서 종류 낱말 찾기 - 표 순서대로 먼저 맞는 것
@@ -116,6 +124,14 @@ class Env_Service:
         return [f.model_copy(update={'kind': Env_Service.services_env_classify_one(app_path, f)}) for f in found]
 
 
+    # 한 줄에서 따옴표 글자를 가린다 - 닫히지 않은 따옴표는 그 뒤를 모두 가린다 (hard rule 6)
+    @staticmethod
+    def services_env_context_line(line:str) -> str:
+        line=STRING_LITERAL_RE.sub('"…"', line[:MAX_CONTEXT_SCAN_CHARS])
+        line=UNCLOSED_QUOTE_RE.sub('"…', line)
+        return mask_text(line[:MAX_CONTEXT_LINE_CHARS])
+
+
     # LLM 에 보낼 주변 코드 - 위치 앞뒤 3줄까지 최대 7줄, 위치가 없으면 빈 글
     @staticmethod
     def services_env_context(app_path:Path, found:Env_Found) -> str:
@@ -129,7 +145,7 @@ class Env_Service:
 
         start=max(split[1] - 1 - CONTEXT_RADIUS, 0)
         picked=lines[start:split[1] + CONTEXT_RADIUS]
-        return "\n".join(mask_text(l[:MAX_CONTEXT_LINE_CHARS]) for l in picked)
+        return "\n".join(Env_Service.services_env_context_line(l) for l in picked)
 
 
     # 모르는 것만 AI 에게 목록 중 하나 고르게 하기 - 한 번에 20개까지, 못 쓰면 그대로 둔다 (기획서 LLM 규칙)
@@ -161,8 +177,8 @@ class Env_Service:
     # 앱 폴더 분석 - 이름 찾기 -> 규칙 -> AI 선택
     @staticmethod
     async def services_env_analyze(app_path:Path) -> list[Env_Found]:
-        found=Env_Scan_Service.services_env_scan(app_path)
-        found=Env_Service.services_env_classify_rule(app_path, found)
+        found=await asyncio.to_thread(Env_Scan_Service.services_env_scan, app_path)
+        found=await asyncio.to_thread(Env_Service.services_env_classify_rule, app_path, found)
         return await Env_Service.services_env_classify_llm(app_path, found)
 
 
@@ -191,6 +207,12 @@ class Env_Service:
                         kind=row.kind, source=row.source, source_hint=row.source_hint, status=row.status,
                         has_value=row.plain_value is not None or row.secret_ref is not None,
                         needs_redeploy=needs_redeploy)
+
+
+    # 행의 값이 컨테이너에 들어가는지 - status=set 이고 일반 저장인 값 (runtime_dict 와 같은 기준)
+    @staticmethod
+    def services_env_is_injected(row:Deploy_Env_Var) -> bool:
+        return row.status == 'set' and row.storage == 'plain' and row.plain_value is not None
 
 
     # 스캔 결과 저장 - 이름 기준으로 넣거나 갱신하고 개수를 돌려준다
@@ -260,6 +282,7 @@ class Env_Service:
                     name=name, required=True, has_default=False, kind=kind, source='user', source_hint=None))
 
             had_value=db_env.plain_value is not None or db_env.secret_ref is not None
+            was_injected=Env_Service.services_env_is_injected(db_env)
             update_data={}
             value_changed=False
 
@@ -286,7 +309,9 @@ class Env_Service:
             updated=await Env_Crud.crud_env_update(db, d_id, name, update_data)
 
             await db.commit()
-            return Env_Service.services_env_to_read(updated, needs_redeploy=bool(deploy.service_arn) and value_changed)
+            # 값이 바뀌었거나, 건너뛰기로 컨테이너에 들어가는지 여부가 달라졌으면 다시 배포가 필요하다
+            changed=value_changed or was_injected != Env_Service.services_env_is_injected(updated)
+            return Env_Service.services_env_to_read(updated, needs_redeploy=bool(deploy.service_arn) and changed)
 
         except HTTPException:
             raise
@@ -351,5 +376,4 @@ class Env_Service:
     @staticmethod
     async def services_env_runtime_dict(db:AsyncSession, d_id:int) -> dict[str, str]:
         rows=await Env_Crud.crud_env_get_by_d_id(db, d_id)
-        return {row.name: row.plain_value for row in rows
-                if row.status == 'set' and row.storage == 'plain' and row.plain_value is not None}
+        return {row.name: row.plain_value for row in rows if Env_Service.services_env_is_injected(row)}

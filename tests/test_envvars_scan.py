@@ -2,7 +2,7 @@ import json
 import pytest
 from pathlib import Path
 
-from features.envvars.scan import Env_Scan_Service, MAX_FILES, MAX_FILE_BYTES
+from features.envvars.scan import Env_Scan_Service, MAX_FILES, MAX_FILE_BYTES, MAX_ENV_NAMES
 
 
 # 결과를 {이름: Env_Found} 로 바꾼다
@@ -255,3 +255,69 @@ def test_scan_odd_encodings_do_not_raise(tmp_path):
     names={f.name for f in Env_Scan_Service.services_env_scan(tmp_path)}
     assert "U16_VAR" in names
     assert "GOOD" in names
+
+
+# 심볼릭 링크는 따라가지 않는다 - .env.example -> ../.env 나 x.py -> /dev/zero 를 읽지 않는다
+def test_scan_skips_real_symlinks(tmp_path):
+    app=tmp_path / "app"
+    app.mkdir()
+    (tmp_path / ".env").write_text("REAL_SECRET_NAME=hunter2\n", encoding="utf-8")
+    (tmp_path / "outside.py").write_text('os.getenv("OUTSIDE_VAR")\n', encoding="utf-8")
+    write(app, "ok.py", 'os.getenv("OK_VAR")\n')
+    try:
+        (app / ".env.example").symlink_to(tmp_path / ".env")
+        (app / "link.py").symlink_to(tmp_path / "outside.py")
+    except (OSError, NotImplementedError):
+        pytest.skip("이 계정은 심볼릭 링크를 만들 수 없다")
+
+    names={f.name for f in Env_Scan_Service.services_env_scan(app)}
+
+    assert names == {"OK_VAR"}
+
+
+# 심볼릭 링크 판정만 가짜로 바꿔도 읽지 않는다 (어디서나 도는 판)
+def test_scan_skips_paths_reported_as_symlink(tmp_path, monkeypatch):
+    write(tmp_path, "ok.py", 'os.getenv("OK_VAR")\n')
+    write(tmp_path, "link.py", 'os.getenv("LINKED_VAR")\n')
+    write(tmp_path, ".env.example", "LINKED_EXAMPLE=1\n")
+    reads=[]
+    original_is_symlink=Path.is_symlink
+    original_read_bytes=Path.read_bytes
+
+    def fake_is_symlink(self):
+        return self.name in ("link.py", ".env.example") or original_is_symlink(self)
+
+    def spy_read_bytes(self):
+        reads.append(self.name)
+        return original_read_bytes(self)
+
+    monkeypatch.setattr(Path, "is_symlink", fake_is_symlink)
+    monkeypatch.setattr(Path, "read_bytes", spy_read_bytes)
+
+    names={f.name for f in Env_Scan_Service.services_env_scan(tmp_path)}
+
+    assert names == {"OK_VAR"}
+    assert "link.py" not in reads and ".env.example" not in reads
+
+
+# 이름은 100자까지 (DB 열·PUT 이름 규칙과 같다)
+def test_scan_name_length_capped_at_100(tmp_path):
+    ok="A" * 100
+    too_long="B" * 101
+    write(tmp_path, "app.py", f'os.getenv("{ok}")\nos.getenv("{too_long}")\n')
+    write(tmp_path, ".env.example", f"{too_long}=1\nC_EXAMPLE=1\n")
+
+    names={f.name for f in Env_Scan_Service.services_env_scan(tmp_path)}
+
+    assert names == {ok, "C_EXAMPLE"}
+
+
+# 서로 다른 이름은 300개까지 - 이름순으로 앞에서부터 남긴다
+def test_scan_distinct_names_capped_at_300(tmp_path):
+    lines="".join(f'os.getenv("N{i:04d}")\n' for i in range(350))
+    write(tmp_path, "app.py", lines)
+
+    result=Env_Scan_Service.services_env_scan(tmp_path)
+
+    assert len(result) == MAX_ENV_NAMES == 300
+    assert [f.name for f in result] == [f"N{i:04d}" for i in range(300)]

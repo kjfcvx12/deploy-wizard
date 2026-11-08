@@ -32,6 +32,7 @@ Base URL: `http://localhost:8081` · 전부 JSON · 인증 없음(로컬 전용)
 | 404 | 없는 `d_id`, 이미 삭제된 배포 |
 | 409 | 진행 중인 배포에 다시 배포·삭제 요청 |
 | 500 | AWS 삭제 실패 등 |
+| 501 | 시크릿 종류 환경변수에 값을 보냄 (저장 미지원 - 아래 "Env") |
 
 ### POST `/api/deploys`
 
@@ -189,6 +190,7 @@ Base URL: `http://localhost:8081` · 전부 JSON · 인증 없음(로컬 전용)
 | 404 | DELETE `/value`에서 없는 이름 | `해당 환경변수가 없습니다` |
 | 409 | `/env/continue`인데 `needs_input`이 아님 | `입력이 필요한 상태의 배포만 이어서 배포할 수 있습니다` |
 | 409 | `/env/continue`인데 값이 빈 필수 변수가 남음 | `필수 환경변수에 값이 없습니다 :A, B` (이름만 나열) |
+| 409 | `/env/continue`인데 이전 작업이 아직 정리 중이라 시작하지 못함 (상태는 `needs_input` 그대로) | `잠시 후 다시 눌러 주세요 (이전 작업을 정리하는 중입니다)` |
 | 501 | 시크릿 종류(`database` `cache` `external_api` `secret`)에 `value`를 보냄 | `시크릿 값 저장은 아직 지원하지 않습니다 (사용자 AWS 보안 저장소 검증 후 지원)` |
 | 500 | 저장 실패 | `환경변수 저장 실패 :<예외 종류>` / `환경변수 값 삭제 실패 :<예외 종류>` / `이어서 배포 실패 :...` (값은 에러에 싣지 않는다) |
 
@@ -218,7 +220,7 @@ Base URL: `http://localhost:8081` · 전부 JSON · 인증 없음(로컬 전용)
 ```json
 {
   "tier": "medium",
-  "confidence": "high",
+  "confidence": "medium",
   "cpu": null,
   "memory": null,
   "cost": { "monthly_min": null, "monthly_max": null, "currency": "USD", "basis_date": null, "note": "트래픽에 따라 늘어납니다" },

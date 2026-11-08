@@ -170,3 +170,106 @@ async def test_analyze_works_with_llm_off(tmp_path):
     result=await Env_Service.services_env_analyze(tmp_path)
 
     assert kinds(result) == {"APP_DB": "database", "MYSTERY": "unknown"}
+
+
+
+# 스캔·규칙 분류는 동기 파일 읽기라 이벤트 루프 스레드가 아닌 곳에서 돌아야 한다
+@pytest.mark.asyncio
+async def test_analyze_runs_scan_and_rule_off_the_event_loop(tmp_path, monkeypatch):
+    import threading
+    from features.envvars.scan import Env_Scan_Service
+
+    loop_thread=threading.current_thread()
+    seen={}
+    real_scan=Env_Scan_Service.services_env_scan
+    real_rule=Env_Service.services_env_classify_rule
+
+    def spy_scan(app_path):
+        seen["scan"]=threading.current_thread()
+        return real_scan(app_path)
+
+    def spy_rule(app_path, found):
+        seen["rule"]=threading.current_thread()
+        return real_rule(app_path, found)
+
+    monkeypatch.setattr(Env_Scan_Service, "services_env_scan", staticmethod(spy_scan))
+    monkeypatch.setattr(Env_Service, "services_env_classify_rule", staticmethod(spy_rule))
+    write(tmp_path, "app.py", 'engine = create_engine(os.getenv("APP_DB"))\n')
+
+    result=await Env_Service.services_env_analyze(tmp_path)
+
+    assert seen["scan"] is not loop_thread and seen["rule"] is not loop_thread
+    assert kinds(result) == {"APP_DB": "database"}
+
+
+# 코드에 박힌 기본값 글자(키·URL)는 AI 에 보내는 주변 코드에 남지 않는다
+@pytest.mark.asyncio
+async def test_llm_prompt_has_no_string_literals_from_code(tmp_path, monkeypatch):
+    write(tmp_path, "app.py", "\n".join([
+        'import os',
+        'a = os.getenv("WEBHOOK_URL", "https://hooks.slack.com/services/T0/B0/xyz")',
+        "b = os.getenv('STRIPE_KEY', 'sk_live_abc123SECRET')",
+        'c = os.getenv("TOKEN_X", "ghp_abcdefghijklmnopqrstuvwxyz0123456789")',
+        'd = f(r"esc \\" quote sk_test_zzz")',
+        'e = """sk_open_unclosed_secret',
+    ]))
+    prompts=[]
+
+    async def spy(system, prompt, scheme):
+        prompts.append(prompt)
+        return Env_Kind_Pick(kind='unknown')
+
+    monkeypatch.setattr(LLM_Client, "llm_parse", spy)
+    found=[code_found("WEBHOOK_URL", "app.py:2")]
+
+    await Env_Service.services_env_classify_llm(tmp_path, found)
+
+    prompt=prompts[0]
+    assert "WEBHOOK_URL" in prompt
+    for leaked in ("hooks.slack.com", "T0/B0/xyz", "sk_live_abc123SECRET", "ghp_abcdefghijklmnopqrstuvwxyz0123456789",
+                   "sk_test_zzz", "sk_open_unclosed_secret"):
+        assert leaked not in prompt
+    assert "os.getenv(" in prompt
+
+
+# 따옴표 밖에 있는 토큰 꼴 글자도 mask_text 로 가려진다
+def test_context_line_still_masks_tokens_outside_quotes(tmp_path):
+    token="ghp_abcdefghijklmnopqrstuvwxyz0123456789"
+    write(tmp_path, "app.py", f"# token {token} here\nx = os.getenv(NAME)\n")
+
+    context=Env_Service.services_env_context(tmp_path, code_found("NAME", "app.py:2"))
+
+    assert token not in context
+    assert "x = os.getenv(NAME)" in context
+
+
+# 한 줄이 아주 길어도 일곱 줄·200자 제한은 그대로다 (글자를 가린 뒤에도)
+def test_context_literals_masked_but_limits_hold(tmp_path):
+    long_line='x = os.getenv("A", "' + "y" * 500 + '")'
+    write(tmp_path, "app.py", "\n".join([long_line] * 12))
+    write(tmp_path, "wide.py", "\n".join(["z" * 500] * 12))
+
+    context=Env_Service.services_env_context(tmp_path, code_found("A", "app.py:6"))
+    wide=Env_Service.services_env_context(tmp_path, code_found("A", "wide.py:6"))
+
+    lines=context.splitlines()
+    assert len(lines) == 7
+    assert all(len(l) <= 200 for l in lines)
+    assert "yyyy" not in context
+    assert len(wide.splitlines()) == 7 and all(len(l) == 200 for l in wide.splitlines())
+
+
+# 줄 번호는 스캔이 센 방식(\n 기준)과 같아야 한다 - 폼 피드·U+2028 이 줄을 밀지 않는다
+def test_context_line_numbers_follow_newline_only(tmp_path):
+    from features.envvars.scan import Env_Scan_Service
+
+    text="# a\x0c b\n# c  d\n\x85 e\nimport os\nx = os.environ['TARGET_VAR']\nafter1\nafter2\n"
+    path=tmp_path / "app.py"
+    path.write_bytes(text.encode("utf-8"))
+    found=Env_Scan_Service.services_env_scan_text("app.py", text)
+    assert found[0].source_hint == "app.py:5"
+
+    context=Env_Service.services_env_context(tmp_path, found[0])
+
+    assert "os.environ" in context.split("\n")[3]
+    assert Env_Service.services_env_read_lines(tmp_path, "app.py")[4] == "x = os.environ['TARGET_VAR']"
