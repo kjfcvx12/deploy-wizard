@@ -21,7 +21,7 @@ class Deploy(Base):
     app_dir: Mapped[Optional[str]] = mapped_column(String(255))
 
     status: Mapped[str] = mapped_column(String(20), nullable=False, default='queued')
-    # queued|cloning|analyzing|generating|building|pushing|deploying|running|failed|stopped|deleting|deleted
+    # queued|cloning|analyzing|generating|building|pushing|needs_input|deploying|running|failed|stopped|deleting|deleted
 
     dockerfile: Mapped[Optional[str]] = mapped_column(Text)
     dockerfile_source: Mapped[Optional[str]] = mapped_column(String(20))

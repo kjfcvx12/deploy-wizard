@@ -41,10 +41,10 @@ Deps: `features/* -> shared/*` ok · `shared/* -> features/*` never · feature-t
 
 ## Status values — `deploys.status`
 ```
-queued -> cloning -> analyzing -> generating -> building -> pushing -> deploying -> running
+queued -> cloning -> analyzing -> generating -> building -> pushing -> (needs_input ->) deploying -> running
                          (any step) -> failed
 running -> stopped -> queued -> deploying -> running      (stop keeps the image; start skips clone/build/push)
-running|failed|stopped -> deleting -> deleted
+running|failed|stopped|needs_input -> deleting -> deleted
 ```
 Change in three places together: `features/deploys/models.py` comment, `PROGRESS_STATUSES` in `features/deploys/pipeline.py`, `features/deploys/ui/constants.js`.
 - `deploy_logs.level`: `info|cmd|warn|error`

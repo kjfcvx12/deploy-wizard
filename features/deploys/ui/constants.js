@@ -16,6 +16,7 @@ export const STATUS_LABEL = {
   generating: 'Dockerfile 생성 중',
   building: '빌드 중',
   pushing: '푸시 중',
+  needs_input: '입력 필요',
   deploying: '배포 중',
   running: '정상',
   failed: '실패',

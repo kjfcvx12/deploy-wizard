@@ -17,6 +17,8 @@ from features.builds.services import Build_Service
 from features.express.services import Express_Service
 from features.explains.services import Explain_Service
 from features.accounts.services import Aws_Account_Service, Github_Service
+from features.envvars.services import Env_Service
+from features.envvars.scheme import Env_Found
 
 # 배포 파이프라인 (M3)
 # 클론 -> 언어 판별(규칙) -> Dockerfile 생성(템플릿+LLM) -> 빌드 -> 푸시 -> 배포
@@ -90,6 +92,13 @@ class Deploy_Pipeline:
         async with AsyncSessionLocal() as db:
             await Deploy_Crud.crud_deploy_update(db, d_id, update_data)
             await db.commit()
+
+
+    # 스캔한 환경변수 저장 - 이름만 저장한다. 사용자가 이미 넣은 값은 그대로 둔다
+    @staticmethod
+    async def pipeline_save_envs(d_id:int, found:list[Env_Found]) -> None:
+        async with AsyncSessionLocal() as db:
+            await Env_Service.services_env_save_found(db, d_id, found)
 
 
     # AWS 세션 준비 (M6) - 연결된 계정 있으면 위임 세션, 없으면 기존 개발 세션 (M1~M5 그대로 동작)
@@ -183,6 +192,11 @@ class Deploy_Pipeline:
         repo_path=settings.work_path / f"deploy_{d_id}"
 
         resume=start_step or await Deploy_Pipeline.pipeline_resume_from(d_id, deploy)
+
+        # 작업 종료로 이미지를 지웠으면 배포 단계만 돌릴 수 없다 - 평소 이어하기 규칙으로
+        if resume == 'deploying' and not deploy.image_uri:
+            resume=await Deploy_Pipeline.pipeline_resume_from(d_id, deploy)
+
         resume_index=STEP_ORDER.index(resume)
 
         await Deploy_Pipeline.pipeline_update(d_id, error_step=None, error_msg=None, explain=None)
@@ -217,6 +231,11 @@ class Deploy_Pipeline:
 
             await Deploy_Pipeline.pipeline_update(d_id, language=detect.language, support_level=detect.support_level,
                                                   app_dir=detect.app_dir)
+
+            # 환경변수 이름 찾기 - 이름만 저장하고, 로그에도 개수만 남긴다
+            found=await Env_Service.services_env_analyze(app_path)
+            await Deploy_Pipeline.pipeline_save_envs(d_id, found)
+            buffer.buffer_add(f"환경변수 {len(found)}개를 찾았습니다 (필수 {sum(1 for f in found if f.required)}개)")
         else:
             detect=Repo_App(language=deploy.language, support_level=deploy.support_level,
                             app_dir=deploy.app_dir or ".", manifest="")
@@ -288,16 +307,30 @@ class Deploy_Pipeline:
             buffer.buffer_add(f"이미 올린 이미지를 그대로 씁니다 :{image_uri}")
 
         # 6. Express Mode 배포 - 이미 서비스가 있으면 새 이미지로 갈아끼운다
+        async with AsyncSessionLocal() as db:
+            missing=await Env_Service.services_env_pending_names(db, d_id)
+            environment=await Env_Service.services_env_runtime_dict(db, d_id) or None
+
+        if missing and not service_arn:
+            # 첫 배포는 값이 빌 때 멈추고 묻는다. 실패가 아니라 대기라 이미지는 그대로 둔다
+            await Deploy_Pipeline.pipeline_update(d_id, status='needs_input')
+            buffer.buffer_add(f"환경변수 입력이 필요합니다 :{', '.join(missing)}", 'warn')
+            return
+
+        if missing:
+            buffer.buffer_add(f"값이 비어 있는 필수 환경변수가 있습니다 (그대로 배포합니다) :{', '.join(missing)}", 'warn')
+
         if service_arn:
             await Deploy_Pipeline.pipeline_step(buffer, 'deploying', "기존 서비스에 새 버전을 배포합니다")
             await asyncio.to_thread(Express_Service.services_express_update, session, service_arn, image_uri,
-                                    result.port, result.health_check_path)
+                                    result.port, result.health_check_path, environment=environment)
         else:
             await Deploy_Pipeline.pipeline_step(buffer, 'deploying', "ECS Express Mode 서비스를 만듭니다")
             service_name=f"dw-{slug}-{d_id}"
             role_arns=await Deploy_Pipeline.pipeline_get_role_arns(deploy.aws_account_id)
             created=await asyncio.to_thread(Express_Service.services_express_create, session, service_name, image_uri,
-                                            result.port, result.health_check_path, role_arns=role_arns)
+                                            result.port, result.health_check_path, environment=environment,
+                                            role_arns=role_arns)
             service_arn=created.service_arn
             # arn은 받자마자 저장한다. 이후에 실패해도 정리할 수 있어야 한다
             await Deploy_Pipeline.pipeline_update(d_id, service_name=created.service_name or service_name,

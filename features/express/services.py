@@ -63,16 +63,20 @@ class Express_Service:
         return Express_Service.services_express_to_status(result["service"])
 
 
-    # 새 이미지로 재배포
+    # 새 이미지로 재배포 - primaryContainer 를 통째로 바꾸므로 환경변수도 매번 다시 보낸다
     @staticmethod
     def services_express_update(session:boto3.Session, service_arn:str, image_uri:str, port:int,
-                                health_check_path:str="/") -> None:
+                                health_check_path:str="/", environment:dict[str, str]|None=None) -> None:
         ecs=session.client("ecs")
+
+        primary_container={"image": image_uri, "containerPort": port}
+        if environment:
+            primary_container["environment"]=[{"name": k, "value": v} for k, v in environment.items()]
 
         ecs.update_express_gateway_service(
             serviceArn=service_arn,
             healthCheckPath=health_check_path,
-            primaryContainer={"image": image_uri, "containerPort": port},
+            primaryContainer=primary_container,
         )
 
 
