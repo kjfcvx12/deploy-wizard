@@ -73,6 +73,46 @@ def test_scan_computed_name_not_found():
     assert Env_Scan_Service.services_env_scan_text("a.py", 'x=os.environ[prefix + "_KEY"]') == []
 
 
+# 문자열을 이어 붙인 이름은 일부만 잘라 찾지 않는다
+@pytest.mark.parametrize("code", [
+    'x=os.getenv("PREFIX_" + name)',
+    'x=os.environ.get("A" + b, "d")',
+])
+def test_scan_concatenated_get_name_not_found(code):
+    assert Env_Scan_Service.services_env_scan_text("a.py", code) == []
+
+
+# Vite 내장 값은 import.meta.env 형태에서 뺀다 - 다른 이름은 그대로 찾는다
+def test_scan_vite_builtins_ignored():
+    code='const a=import.meta.env.DEV\nconst b=import.meta.env.MODE\nconst c=import.meta.env.BASE_URL\nconst d=import.meta.env.PROD\nconst e=import.meta.env.SSR\nconst f=import.meta.env.VITE_API\n'
+    names={f.name for f in Env_Scan_Service.services_env_scan_text("src/a.ts", code)}
+    assert names == {"VITE_API"}
+    assert {f.name for f in Env_Scan_Service.services_env_scan_text("src/a.js", "process.env.DEV")} == {"DEV"}
+
+
+# Field alias 는 환경변수 꼴일 때만 쓴다
+def test_scan_field_alias_must_look_like_env_name():
+    code='a: str=Field(..., alias="userId")\nb: str=Field(..., alias="DATABASE_URL")\n'
+    names={f.name for f in Env_Scan_Service.services_env_scan_text("m.py", code)}
+    assert names == {"DATABASE_URL"}
+
+
+# UTF-8 BOM 이 있어도 첫 줄의 이름을 잃지 않는다
+def test_scan_example_utf8_bom_keeps_first_name(tmp_path):
+    write(tmp_path, ".env.example", b"\xef\xbb\xbfFIRST_VAR=\nSECOND_VAR=\n")
+    names={f.name for f in Env_Scan_Service.services_env_scan(tmp_path)}
+    assert names == {"FIRST_VAR", "SECOND_VAR"}
+
+
+# 컴포즈 ${NAME:?메시지} 는 필수, ${NAME:-기본값} 은 기본값 있음
+def test_scan_compose_required_and_default_forms():
+    text='services:\n  w:\n    environment:\n      - R=${R:?must be set}\n      - Q=${Q?must be set}\n      - W=${W:-d}\n'
+    found=by_name(Env_Scan_Service.services_env_scan_compose(text))
+    assert found["R"].required is True
+    assert found["Q"].required is True
+    assert found["W"].has_default is True
+
+
 # 템플릿 도커파일이 정하는 이름은 돌려주지 않는다
 def test_scan_ignores_template_set_names():
     code='os.getenv("PORT")\nos.environ["PATH"]\nprocess.env.NODE_ENV\n'

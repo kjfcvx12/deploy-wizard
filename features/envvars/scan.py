@@ -27,12 +27,16 @@ COMPOSE_FILE_RE=re.compile(r'^(docker-)?compose(\..+)?\.ya?ml$', re.IGNORECASE)
 
 _NAME=r'([A-Za-z_][A-Za-z0-9_]*)'
 PY_ENVIRON_RE=re.compile(r'os\.environ\[\s*["\']' + _NAME + r'["\']\s*\](?!\s*=[^=])')
-PY_GET_RE=re.compile(r'os\.(?:environ\.get|getenv)\(\s*["\']' + _NAME + r'["\']\s*(,\s*[^)\s])?')
+PY_GET_RE=re.compile(r'os\.(?:environ\.get|getenv)\(\s*["\']' + _NAME + r'["\']\s*(?=[,)])(,\s*[^)\s])?')
 PY_FIELD_RE=re.compile(r'Field\(([^()]*?)\balias\s*=\s*["\']' + _NAME + r'["\']')
 PY_FIELD_DEFAULT_RE=re.compile(r'\bdefault(?:_factory)?\s*=')
 NODE_ENV_RE=re.compile(r'(?:process\.env|import\.meta\.env)(?:\.' + _NAME + r'|\[\s*["\']' + _NAME + r'["\']\s*\])')
 NODE_DEFAULT_RE=re.compile(r'\|\||\?\?')
-COMPOSE_BARE_REF_RE=re.compile(r'\$\{[A-Za-z_][A-Za-z0-9_]*\}|\$[A-Za-z_][A-Za-z0-9_]*')
+COMPOSE_BARE_REF_RE=re.compile(r'\$\{[A-Za-z_][A-Za-z0-9_]*(?::?\?[^}]*)?\}|\$[A-Za-z_][A-Za-z0-9_]*')
+# Field alias 는 환경변수 꼴(대문자·숫자·밑줄)일 때만 쓴다 - userId 같은 JSON 별칭을 거른다
+ENV_ALIAS_RE=re.compile(r'^[A-Z][A-Z0-9_]*$')
+# Vite 가 넣어 주는 내장 값 - import.meta.env 형태에서만 뺀다
+VITE_BUILTINS={'DEV', 'MODE', 'BASE_URL', 'PROD', 'SSR'}
 
 
 class Env_Scan_Service:
@@ -71,6 +75,8 @@ class Env_Scan_Service:
                 found.append(Env_Scan_Service.services_env_scan_code_item(file_name, text, m.start(), m.group(1), m.group(2) is not None))
 
             for m in PY_FIELD_RE.finditer(text):
+                if not ENV_ALIAS_RE.match(m.group(2)):
+                    continue
                 args=m.group(1)
                 first=args.split(",")[0].strip()
                 if first == "...":
@@ -84,6 +90,8 @@ class Env_Scan_Service:
         elif ext in NODE_EXTS:
             for m in NODE_ENV_RE.finditer(text):
                 name=m.group(1) or m.group(2)
+                if m.group(0).startswith("import.meta") and name in VITE_BUILTINS:
+                    continue
                 line_end=text.find("\n", m.end())
                 rest=text[m.end():] if line_end == -1 else text[m.end():line_end]
                 found.append(Env_Scan_Service.services_env_scan_code_item(file_name, text, m.start(), name, bool(NODE_DEFAULT_RE.search(rest))))
@@ -178,7 +186,7 @@ class Env_Scan_Service:
             return None
 
         try:
-            return data.decode("utf-8")
+            return data.decode("utf-8-sig")
         except UnicodeDecodeError:
             pass
         if data[:2] in (b"\xff\xfe", b"\xfe\xff"):
