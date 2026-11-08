@@ -15,6 +15,7 @@ from shared.database import Base, async_engine
 # 모델을 import 해야 create_all 이 테이블을 안다
 from features.deploys import models as deploy_models
 from features.accounts import models as account_models
+from features.envvars import models as envvar_models
 
 from features.deploys import router as deploys
 from features.deploys.pipeline import Deploy_Pipeline
