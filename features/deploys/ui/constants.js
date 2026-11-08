@@ -29,4 +29,9 @@ export const PROGRESS = ['queued', 'cloning', 'analyzing', 'generating', 'buildi
 
 export const isProgress = (status) => PROGRESS.includes(status)
 
+// 환경변수 목록이 생기는 단계부터 상세 화면에 환경변수 카드를 보여 준다
+const ENV_CARD_STATUSES = ['analyzing', 'generating', 'building', 'pushing', 'needs_input', 'deploying', 'running', 'failed', 'stopped']
+
+export const showsEnvCard = (status) => ENV_CARD_STATUSES.includes(status)
+
 export const repoName = (repo_url) => repo_url.replace('https://github.com/', '')

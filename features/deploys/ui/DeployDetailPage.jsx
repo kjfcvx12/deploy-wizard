@@ -2,9 +2,10 @@ import { useEffect, useRef, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 
 import ExplainCard from '@features/explains/ui/ExplainCard.jsx'
+import EnvVarsCard from '@features/envvars/ui/EnvVarsCard.jsx'
 
 import { deployApi } from './api.js'
-import { isProgress, repoName } from './constants.js'
+import { isProgress, repoName, showsEnvCard } from './constants.js'
 import StatusBadge from './StatusBadge.jsx'
 import StepProgress from './StepProgress.jsx'
 import LogTerminal from './LogTerminal.jsx'
@@ -135,6 +136,12 @@ export default function DeployDetailPage() {
     <>
       <p className="small"><Link to="/">← 목록</Link></p>
 
+      {deploy.status === 'needs_input' && (
+        <div className="notice info" style={{ marginTop: 0, marginBottom: 16 }}>
+          환경변수 입력이 필요합니다. 아래에서 값을 입력하거나 건너뛴 뒤 [이어서 배포]를 누르세요.
+        </div>
+      )}
+
       <section className="card">
         <div className="row spread" style={{ marginBottom: 16 }}>
           <div>
@@ -156,6 +163,10 @@ export default function DeployDetailPage() {
 
         <StepProgress status={deploy.status} errorStep={deploy.error_step} />
       </section>
+
+      {showsEnvCard(deploy.status) && (
+        <EnvVarsCard deploy={deploy} onContinued={() => setRound((n) => n + 1)} onRedeploy={redeploy} />
+      )}
 
       {deploy.status === 'running' && deploy.endpoint && (
         <section className="card">
@@ -214,7 +225,7 @@ export default function DeployDetailPage() {
 
       {!isProgress(deploy.status) && deploy.status !== 'failed' && (
         <div className="row" style={{ marginTop: 16 }}>
-          {deploy.status !== 'stopped' && <button onClick={redeploy} disabled={busy}>다시 배포</button>}
+          {deploy.status !== 'stopped' && deploy.status !== 'needs_input' && <button onClick={redeploy} disabled={busy}>다시 배포</button>}
           {deploy.status === 'running' && <button onClick={() => stopDialog.current?.showModal()} disabled={busy}>멈춤</button>}
           <button className="danger" onClick={() => dialog.current?.showModal()} disabled={busy}>삭제</button>
         </div>

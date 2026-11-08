@@ -234,9 +234,28 @@ button.account-arrow { padding: 6px 12px; font-size: 18px; line-height: 1; }
 button.copy { padding: 5px 10px; font-size: 12px; }
 button.copy.done { color: var(--ok); border-color: var(--ok); }
 
+/* 환경변수 */
+.env-group { margin-top: 18px; }
+.env-group h3 { margin: 0 0 4px; font-size: 14px; }
+details.env-group > summary { font-size: 14px; }
+.env-list { list-style: none; padding: 0; margin: 6px 0 0; }
+.env-row { padding: 12px 4px; border-top: 1px solid var(--border); }
+.env-row:first-child { border-top: 0; }
+.env-head { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.env-name { font-weight: 700; overflow-wrap: anywhere; }
+.env-hint { margin-top: 2px; overflow-wrap: anywhere; }
+.env-actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-top: 8px; }
+.env-note { flex: 1 1 200px; }
+.env-input { flex: 1 1 200px; }
+.env-add { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-top: 18px; }
+.env-field-err { color: var(--err); margin-top: 6px; }
+.env-foot { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; margin-top: 18px; }
+.step.wait .step-bar { background: var(--warn); }
+.step.wait { color: var(--text); font-weight: 700; }
+
 @media (max-width: 640px) {
   .topbar-note { display: none; }
   .account-boxes { grid-template-columns: 1fr; }
   .step { font-size: 0; }
-  .step.now, .step.fail { font-size: 11px; }
+  .step.now, .step.fail, .step.wait { font-size: 11px; }
 }
