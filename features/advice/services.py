@@ -1,5 +1,7 @@
 import re
+import ast
 import json
+import fnmatch
 import asyncio
 import tomllib
 from pathlib import Path
@@ -35,14 +37,13 @@ DEP_COUNT_LIMIT=40
 UNSUPPORTED_MESSAGE="마법사가 아직 만들어 주지 못합니다"
 DISK_WRITE_MESSAGE="디스크에 쓴 파일은 서비스가 다시 시작되면 사라집니다"
 
-# 디스크에 파일을 쓰는 코드 흔적 - 쓰기 모드 open, fs.writeFile 계열
-DISK_WRITE_PATTERNS=[
-    re.compile(r"""\bopen\s*\([^)\n]*?,\s*(?:mode\s*=\s*)?["'][^"']*[wax+][^"']*["']"""),
-    re.compile(r"\.write_text\s*\(|\.write_bytes\s*\("),
-    re.compile(r"\b(?:writeFile|writeFileSync|appendFile|appendFileSync|createWriteStream)\s*\("),
-]
+# 디스크에 파일을 쓰는 코드 흔적 - 파이썬은 open 의 쓰기 모드(ast 로 확인)와 write_text, 노드는 fs.writeFile 계열
+PY_WRITE_PATTERN=re.compile(r"\.write_text\s*\(|\.write_bytes\s*\(")
+JS_WRITE_PATTERN=re.compile(r"\bfs(?:\.promises)?\.(?:writeFile|writeFileSync|appendFile|appendFileSync)\s*\(|\bcreateWriteStream\s*\(")
+WRITE_MODE_CHARS=set("wax+")
 SOURCE_SUFFIXES={".py", ".js", ".mjs", ".cjs", ".ts"}
 SKIP_SOURCE_DIRS={"test", "tests", "__tests__", "spec"}
+TEST_FILE_PATTERNS=["test_*.py", "*_test.py", "*.test.*", "*.spec.*"]
 SOURCE_FILE_LIMIT=400
 SOURCE_SIZE_LIMIT=200_000
 
@@ -116,7 +117,36 @@ class Advice_Service:
         return False
 
 
-    # 코드가 앱 폴더에 파일을 쓰는지 - 소스 일부만 훑는다 (테스트·제외 폴더는 건너뜀)
+    # 파이썬 코드에서 open(경로, 쓰기모드) 호출이 있는지 - 모드는 두 번째 인자 또는 mode= 만 본다
+    @staticmethod
+    def services_advice_py_open_write(text:str) -> bool:
+        try:
+            tree=ast.parse(text)
+        except (SyntaxError, ValueError):
+            return False
+
+        for node in ast.walk(tree):
+            if not (isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == "open"):
+                continue
+
+            modes=[node.args[1]] if len(node.args) > 1 else []
+            modes+=[kw.value for kw in node.keywords if kw.arg == "mode"]
+            for mode in modes:
+                if isinstance(mode, ast.Constant) and isinstance(mode.value, str) and WRITE_MODE_CHARS & set(mode.value):
+                    return True
+
+        return False
+
+
+    # 소스 한 파일이 디스크에 쓰는지
+    @staticmethod
+    def services_advice_file_writes(path:Path, text:str) -> bool:
+        if path.suffix == ".py":
+            return Advice_Service.services_advice_py_open_write(text) or bool(PY_WRITE_PATTERN.search(text))
+        return bool(JS_WRITE_PATTERN.search(text))
+
+
+    # 코드가 앱 폴더에 파일을 쓰는지 - 소스 일부만 훑는다 (테스트·제외 폴더·심볼릭 링크는 건너뜀)
     @staticmethod
     def services_advice_has_disk_write(app_path:Path) -> bool:
         seen=0
@@ -124,7 +154,16 @@ class Advice_Service:
 
         while stack:
             base=stack.pop()
-            for child in sorted(base.iterdir()):
+            try:
+                children=sorted(base.iterdir())
+            except OSError:
+                continue
+
+            for child in children:
+                # 신뢰할 수 없는 레포라 링크는 따라가지 않는다
+                if child.is_symlink():
+                    continue
+
                 if child.is_dir():
                     if child.name in EXCLUDE_DIRS or child.name.lower() in SKIP_SOURCE_DIRS or child.name.startswith("."):
                         continue
@@ -133,15 +172,22 @@ class Advice_Service:
 
                 if child.suffix not in SOURCE_SUFFIXES or Repo_Service.services_repo_is_excluded(child):
                     continue
-                if child.stat().st_size > SOURCE_SIZE_LIMIT:
+                if any(fnmatch.fnmatch(child.name.lower(), pattern) for pattern in TEST_FILE_PATTERNS):
                     continue
 
-                seen+=1
-                if seen > SOURCE_FILE_LIMIT:
-                    return False
+                try:
+                    if child.stat().st_size > SOURCE_SIZE_LIMIT:
+                        continue
 
-                text=Repo_Service.services_repo_read_text(child)
-                if any(pattern.search(text) for pattern in DISK_WRITE_PATTERNS):
+                    seen+=1
+                    if seen > SOURCE_FILE_LIMIT:
+                        return False
+
+                    text=Repo_Service.services_repo_read_text(child)
+                except OSError:
+                    continue
+
+                if Advice_Service.services_advice_file_writes(child, text):
                     return True
 
         return False
@@ -294,7 +340,11 @@ class Advice_Service:
                                 detail=f"분석 실패 :{mask_text(str(e))}")
 
         finally:
-            await asyncio.to_thread(Repo_Service.services_repo_remove, dest)
+            # 지우기 실패가 원래 결과(응답·예외)를 덮지 않게 삼킨다
+            try:
+                await asyncio.to_thread(Repo_Service.services_repo_remove, dest)
+            except Exception:
+                pass
 
         # 4. 캐시에 넣는다 (오래된 것부터 밀어낸다)
         if cache_key:

@@ -1,3 +1,4 @@
+import os
 import json
 
 import pytest
@@ -181,6 +182,49 @@ def test_read_only_open_is_not_disk_write(tmp_path):
     assert "disk_write" not in need_kinds(advise(tmp_path))
 
 
+def test_nested_call_and_window_open_are_not_disk_write(tmp_path):
+    make_repo(tmp_path, {"requirements.txt": "flask\n",
+                         "app.py": 'import os\nopen(os.path.join(BASE, "data.txt"))\n'})
+    assert "disk_write" not in need_kinds(advise(tmp_path))
+
+    other=tmp_path / "n"
+    other.mkdir()
+    make_repo(other, {"package.json": json.dumps({"scripts": {"start": "node i.js"}}),
+                      "i.js": 'window.open(u, "_blank");\nconst x=a.open(b, "w");\n'})
+    assert "disk_write" not in need_kinds(advise(other))
+
+
+def test_open_write_modes_are_disk_write(tmp_path):
+    for index, line in enumerate(['open(p, "w")', 'open(p, mode="a")', "open(p, 'r+')"]):
+        repo=tmp_path / f"r{index}"
+        repo.mkdir()
+        make_repo(repo, {"requirements.txt": "flask\n", "app.py": line + "\n"})
+        assert "disk_write" in need_kinds(advise(repo)), line
+
+
+def test_write_only_in_test_files_is_not_disk_write(tmp_path):
+    make_repo(tmp_path, {"requirements.txt": "flask\n", "app.py": "print(1)\n",
+                         "test_x.py": 'open(p, "w")\n', "y_test.py": 'open(p, "w")\n',
+                         "z.test.js": "fs.writeFile(a, b, c);\n", "z.spec.js": "fs.writeFileSync(a, b);\n"})
+
+    assert "disk_write" not in need_kinds(advise(tmp_path))
+
+
+def test_disk_write_scan_ignores_symlinks(tmp_path):
+    make_repo(tmp_path, {"requirements.txt": "flask\n", "app.py": "print(1)\n"})
+    outside=tmp_path.parent / f"{tmp_path.name}_outside"
+    outside.mkdir()
+    (outside / "w.py").write_text('open(p, "w")\n', encoding="utf-8")
+    try:
+        os.symlink(outside, tmp_path / "linked", target_is_directory=True)
+        os.symlink(tmp_path / "missing_target.py", tmp_path / "x.py")
+        os.symlink(tmp_path, tmp_path / "loop", target_is_directory=True)
+    except OSError:
+        pytest.skip("심볼릭 링크를 만들 권한이 없다")
+
+    assert "disk_write" not in need_kinds(advise(tmp_path))
+
+
 # ---- 엔드포인트 ----
 
 @pytest_asyncio.fixture
@@ -275,3 +319,33 @@ async def test_advice_cleans_temp_dir_when_analysis_raises(client, monkeypatch):
     assert len(client.calls["dests"]) == 1
     assert not client.calls["dests"][0].exists()
     assert Advice_Service.ADVICE_CACHE == {}
+
+
+@pytest.mark.asyncio
+async def test_advice_cleanup_failure_does_not_mask_result(client, monkeypatch):
+    def broken_remove(path):
+        raise PermissionError("지우기 실패")
+
+    monkeypatch.setattr(Repo_Service, "services_repo_remove", staticmethod(broken_remove))
+
+    response=await client.post("/api/deploys/advice", json={"repo_url": "https://github.com/o/r"})
+
+    assert response.status_code == 200
+    assert response.json()["tier"] == "small"
+
+
+@pytest.mark.asyncio
+async def test_advice_cleanup_failure_keeps_original_400(client, monkeypatch):
+    def empty_clone(repo_url, branch, dest, on_line=None, token=None):
+        dest.mkdir(parents=True)
+        return "sha_one"
+
+    def broken_remove(path):
+        raise PermissionError("지우기 실패")
+
+    monkeypatch.setattr(Repo_Service, "services_repo_clone", staticmethod(empty_clone))
+    monkeypatch.setattr(Repo_Service, "services_repo_remove", staticmethod(broken_remove))
+
+    response=await client.post("/api/deploys/advice", json={"repo_url": "https://github.com/o/r"})
+
+    assert response.status_code == 400
