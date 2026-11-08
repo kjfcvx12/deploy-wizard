@@ -122,7 +122,8 @@ class Advice_Service:
     def services_advice_py_open_write(text:str) -> bool:
         try:
             tree=ast.parse(text)
-        except (SyntaxError, ValueError):
+        except Exception:
+            # 문법 오류뿐 아니라 너무 깊은 식(RecursionError·MemoryError)도 쓰기 없음으로 본다
             return False
 
         for node in ast.walk(tree):
@@ -184,7 +185,7 @@ class Advice_Service:
                         return False
 
                     text=Repo_Service.services_repo_read_text(child)
-                except OSError:
+                except (OSError, ValueError):
                     continue
 
                 if Advice_Service.services_advice_file_writes(child, text):

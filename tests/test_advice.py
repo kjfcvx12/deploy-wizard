@@ -225,6 +225,21 @@ def test_disk_write_scan_ignores_symlinks(tmp_path):
     assert "disk_write" not in need_kinds(advise(tmp_path))
 
 
+def test_disk_write_scan_survives_pathological_python(tmp_path):
+    make_repo(tmp_path, {"requirements.txt": "flask\n", "app.py": "print(1)\n",
+                         "big.py": "x = " + "+".join(["1"] * 60000) + "\n",
+                         "deep.py": "x = " + "-" * 60000 + "1\n"})
+
+    assert "disk_write" not in need_kinds(advise(tmp_path))
+
+
+def test_disk_write_scan_skips_undecodable_file(tmp_path):
+    make_repo(tmp_path, {"requirements.txt": "flask\n", "app.py": "print(1)\n"})
+    (tmp_path / "bad.py").write_bytes(b"\xff\xfe" + b"a\x00b\x00c")
+
+    assert "disk_write" not in need_kinds(advise(tmp_path))
+
+
 # ---- 엔드포인트 ----
 
 @pytest_asyncio.fixture
