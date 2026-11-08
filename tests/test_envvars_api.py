@@ -9,7 +9,7 @@ from features.accounts import models as account_models
 from features.envvars import models as envvar_models
 from features.deploys.models import Deploy
 from features.deploys.crud import Deploy_Crud
-from features.deploys.pipeline import Deploy_Pipeline
+from features.deploys.pipeline import Deploy_Pipeline, Deploy_Log_Buffer
 from features.envvars.scheme import Env_Found
 from features.envvars.services import Env_Service
 
@@ -285,3 +285,58 @@ async def test_env_put_kind_to_secret_drops_stored_plain_value(client):
 
     async with AsyncSessionLocal() as db:
         assert await Env_Service.services_env_runtime_dict(db, d_id) == {}
+
+
+# 에러 글에서 환경변수 이름만 뽑는다 - 규칙에 맞는 대문자 이름만, 중복 없이, 10개까지
+@pytest.mark.parametrize("text,expected", [
+    ("Traceback...\nKeyError: 'DATABASE_URL'", ['DATABASE_URL']),
+    ("Error: Missing required environment variable STRIPE_KEY", ['STRIPE_KEY']),
+    ("ReferenceError: API_BASE is not defined", ['API_BASE']),
+    ("ReferenceError: x is not defined", []),
+    ("KeyError: 'db_url'", []),
+    ("KeyError: 'AB'", []),
+    ("KeyError: 'FOO_URL'\nKeyError: 'FOO_URL'\nBAR_KEY is not defined", ['FOO_URL', 'BAR_KEY']),
+    ("\n".join(f"KeyError: 'VAR_{i:02d}'" for i in range(12)), [f"VAR_{i:02d}" for i in range(10)]),
+])
+def test_env_names_from_error(text, expected):
+    assert Env_Service.services_env_names_from_error(text) == expected
+
+
+# 실패한 배포의 에러 글에 있는 변수 이름은 runtime_error 로 저장된다 (값은 없다)
+@pytest.mark.asyncio
+async def test_pipeline_fail_records_runtime_error_names(client):
+    d_id=await make_deploy(client)
+
+    await Deploy_Pipeline.pipeline_fail(d_id, Deploy_Log_Buffer(d_id), Exception("KeyError: 'FOO_URL'"))
+
+    rows=(await client.get(f"/api/deploys/{d_id}/env")).json()
+    assert [(r["name"], r["source"], r["required"], r["kind"], r["status"], r["has_value"]) for r in rows] == [
+        ("FOO_URL", "runtime_error", True, "unknown", "detected", False)]
+
+
+# 이미 값이 입력된 변수는 실패 해설이 다시 와도 값과 상태를 잃지 않는다
+@pytest.mark.asyncio
+async def test_pipeline_fail_keeps_existing_env_value(client):
+    d_id=await make_deploy(client)
+    await save_found(d_id, make_found("FOO_URL", kind='config'))
+    await client.put(f"/api/deploys/{d_id}/env/FOO_URL", json={"value": "http://x"})
+
+    await Deploy_Pipeline.pipeline_fail(d_id, Deploy_Log_Buffer(d_id), Exception("KeyError: 'FOO_URL'"))
+
+    row=(await client.get(f"/api/deploys/{d_id}/env")).json()[0]
+    assert (row["status"], row["kind"], row["has_value"]) == ("set", "config", True)
+
+
+# 환경변수 저장이 깨져도 실패 처리는 끝까지 간다
+@pytest.mark.asyncio
+async def test_pipeline_fail_survives_env_hook_error(client, monkeypatch):
+    d_id=await make_deploy(client)
+
+    async def boom(*_a, **_kw):
+        raise RuntimeError("db down")
+
+    monkeypatch.setattr(Env_Service, "services_env_save_found", staticmethod(boom))
+
+    await Deploy_Pipeline.pipeline_fail(d_id, Deploy_Log_Buffer(d_id), Exception("KeyError: 'FOO_URL'"))
+
+    assert (await client.get(f"/api/deploys/{d_id}")).json()["status"] == "failed"

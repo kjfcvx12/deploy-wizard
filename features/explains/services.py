@@ -96,6 +96,12 @@ EXPLAIN_RULES=[
      "의존성 설치나 build 스크립트가 0이 아닌 코드로 끝났습니다. 로그의 첫 번째 npm error 줄이 실제 원인입니다.",
      ["로컬에서 npm ci && npm run build 가 되는지 확인합니다.", "package-lock.json이 package.json과 맞는지 확인합니다."]),
 
+    # 헬스체크 규칙보다 앞에 둔다 - 변수 때문에 앱이 죽으면 헬스체크도 같이 실패하는데, 원인이 더 구체적인 쪽을 보여 준다
+    (re.compile(r"KeyError: ['\"][A-Z][A-Z0-9_]{2,}['\"]|(?i:Missing required environment variable)|\b[A-Z][A-Z0-9_]{2,}\s+is not defined"),
+     "필요한 환경변수가 설정되지 않았습니다.",
+     "앱이 시작하면서 값이 있어야 하는 환경변수를 읽으려 했는데 비어 있어서 시작하자마자 죽었습니다. 그래서 헬스체크도 함께 실패할 수 있습니다.",
+     ["환경변수 화면에서 에러에 나온 변수의 값을 입력합니다.", "값을 입력한 뒤 이어서 배포하거나 다시 배포합니다."]),
+
     (re.compile(r"health ?check|unhealthy|Target\.FailedHealthChecks", re.I),
      "헬스체크에 실패했습니다.",
      "컨테이너는 떴지만 로드밸런서가 보낸 확인 요청에 200으로 답하지 못했습니다. 포트가 다르거나, 127.0.0.1에만 바인딩했거나, 시작할 때 DB 연결에 실패해 앱이 죽었을 수 있습니다.",

@@ -361,6 +361,17 @@ class Deploy_Pipeline:
         except Exception:
             explain_json=None
 
+        # 값이 없어 죽은 변수 이름은 환경변수 목록에 남긴다 - 이름만, 실패하면 건너뛴다 (실패 처리를 막지 않는다)
+        try:
+            names=Env_Service.services_env_names_from_error(f"{error_msg}\n{log_tail}")
+            if names:
+                async with AsyncSessionLocal() as db:
+                    await Env_Service.services_env_save_found(db, d_id, [
+                        Env_Found(name=name, required=True, has_default=False, kind='unknown', source='runtime_error', source_hint=None)
+                        for name in names])
+        except Exception:
+            pass
+
         await Deploy_Pipeline.pipeline_update(d_id, status='failed', error_step=error_step,
                                               error_msg=error_msg, explain=explain_json)
         await Deploy_Pipeline.pipeline_record_issue(d_id, error_step, error_msg, explain_json)

@@ -30,6 +30,13 @@ NAME_HINTS=[
 LOCAL_ASSIGN_RE=re.compile(r'^\s*(?:export\s+)?(?:const|let|var)?\s*([A-Za-z_][A-Za-z0-9_]*)\s*(?::[^=]+)?=\s*(?:os\.|process\.env|import\.meta\.env)')
 HINT_RE=re.compile(r'^(.+):(\d+)$')
 MAX_LLM_PICKS=20
+MAX_ERROR_NAMES=10
+# 실행 중 에러 글에서 '값이 없어 죽은' 변수 이름 - 대문자 이름만 (소문자 x is not defined 같은 코드 버그는 제외)
+ERROR_NAME_RE=re.compile(
+    r"KeyError:\s*['\"]([A-Z][A-Z0-9_]{2,})['\"]"
+    r"|(?i:Missing required environment variable)[:\s]+['\"]?([A-Z][A-Z0-9_]{2,})(?![A-Za-z0-9_])"
+    r"|\b([A-Z][A-Z0-9_]{2,})\s+is not defined"
+)
 ENV_NAME_RE=re.compile(r'^[A-Za-z_][A-Za-z0-9_]{0,99}$')
 MAX_ENV_VALUE_CHARS=2000
 # 사용자 요청이 바꿀 수 있는 열 - 요청 필드를 그대로 넘기지 않고 서비스가 만든 값만 통과시킨다
@@ -157,6 +164,17 @@ class Env_Service:
         found=Env_Scan_Service.services_env_scan(app_path)
         found=Env_Service.services_env_classify_rule(app_path, found)
         return await Env_Service.services_env_classify_llm(app_path, found)
+
+
+    # 에러 글에서 값이 없어 죽은 환경변수 이름 찾기 - 이름만 (값은 에러 글에도 옮기지 않는다), 중복 없이 최대 10개
+    @staticmethod
+    def services_env_names_from_error(text:str) -> list[str]:
+        names=[]
+        for m in ERROR_NAME_RE.finditer(text or ''):
+            name=next(g for g in m.groups() if g)
+            if name not in names:
+                names.append(name)
+        return names[:MAX_ERROR_NAMES]
 
 
     # 배포 존재 확인 - 없으면 404 (deploys 서비스는 순환 import 를 피하려고 호출 시점에 불러온다)
