@@ -273,3 +273,54 @@ def test_context_line_numbers_follow_newline_only(tmp_path):
 
     assert "os.environ" in context.split("\n")[3]
     assert Env_Service.services_env_read_lines(tmp_path, "app.py")[4] == "x = os.environ['TARGET_VAR']"
+
+
+# 닫히지 않은 따옴표 뒤에 역슬래시가 길게 이어져도 한 줄 처리가 지수 시간으로 늘지 않는다
+@pytest.mark.parametrize("line", [
+    'x = "' + "\\" * 2000,
+    "x = '" + "\\" * 60,
+    "# don't " + "\\" * 40,
+    'x = "' + "\\" * 59 + '"' + "\\" * 59,
+])
+def test_context_line_hostile_backslashes_finish_fast(line):
+    import time
+
+    started=time.perf_counter()
+    result=Env_Service.services_env_context_line(line)
+    elapsed=time.perf_counter() - started
+
+    assert elapsed < 1.0
+    assert "\\\\\\\\" not in result
+
+
+# 같은 줄이 파일 안에 있어도 주변 코드 만들기가 1초 안에 끝난다
+def test_context_with_hostile_lines_finishes_fast(tmp_path):
+    import time
+
+    write(tmp_path, "app.py", "\n".join(['x = "' + "\\" * 2000, "y = '" + "\\" * 60, "# don't " + "\\" * 40, "z = os.getenv(NAME)"]))
+
+    started=time.perf_counter()
+    context=Env_Service.services_env_context(tmp_path, code_found("NAME", "app.py:4"))
+    elapsed=time.perf_counter() - started
+
+    assert elapsed < 1.0
+    assert len(context.splitlines()) == 4
+
+
+# 이스케이프된 따옴표가 든 보통 글자는 끝까지 한 덩어리로 가려진다
+@pytest.mark.asyncio
+async def test_llm_prompt_masks_escaped_quote_literal_fully(tmp_path, monkeypatch):
+    write(tmp_path, "app.py", 'import os\na = os.getenv("A", "say \\"hi\\" now")\nb = 1\n')
+    prompts=[]
+
+    async def spy(system, prompt, scheme):
+        prompts.append(prompt)
+        return Env_Kind_Pick(kind='unknown')
+
+    monkeypatch.setattr(LLM_Client, "llm_parse", spy)
+
+    await Env_Service.services_env_classify_llm(tmp_path, [code_found("A", "app.py:2")])
+
+    assert 'a = os.getenv("…", "…")' in prompts[0]
+    assert "hi" not in prompts[0].split("주변 코드:")[1]
+    assert "now" not in prompts[0]

@@ -46,8 +46,8 @@ CONTEXT_RADIUS=3
 MAX_CONTEXT_LINE_CHARS=200
 MAX_CONTEXT_SCAN_CHARS=2000
 # 따옴표로 감싼 글자 - 코드에 박힌 기본값(키·URL)이 AI 로 나가지 않게 자리표시자로 바꾼다
-STRING_LITERAL_RE=re.compile(r'(["\'])(?:\\.|(?!\1).)*\1')
-UNCLOSED_QUOTE_RE=re.compile(r'["\'].*$')
+# 본문은 역슬래시를 이스케이프 가지로만 먹게 해서(애매함 없음) 역슬래시가 길어도 되돌아가기가 폭발하지 않는다. 닫히지 않은 따옴표는 줄 끝까지
+STRING_LITERAL_RE=re.compile(r'(["\'])(?:(?!\1)[^\\\n]|\\.|\\$)*(\1|$)')
 
 SYSTEM_ENV_KIND="""너는 컨테이너 배포 도구의 일부다. 환경변수 이름과 그 주변 코드 몇 줄을 보고 종류를 하나 고른다.
 - 종류는 database, cache, external_api, secret, config, unknown 중 정확히 하나만 고른다.
@@ -127,8 +127,7 @@ class Env_Service:
     # 한 줄에서 따옴표 글자를 가린다 - 닫히지 않은 따옴표는 그 뒤를 모두 가린다 (hard rule 6)
     @staticmethod
     def services_env_context_line(line:str) -> str:
-        line=STRING_LITERAL_RE.sub('"…"', line[:MAX_CONTEXT_SCAN_CHARS])
-        line=UNCLOSED_QUOTE_RE.sub('"…', line)
+        line=STRING_LITERAL_RE.sub(lambda m: '"…"' if m.group(2) else '"…', line[:MAX_CONTEXT_SCAN_CHARS])
         return mask_text(line[:MAX_CONTEXT_LINE_CHARS])
 
 
