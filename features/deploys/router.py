@@ -61,6 +61,12 @@ async def router_deploy_redeploy(d_id: int, db: AsyncSession = Depends(get_db)):
     return await Deploy_Service.services_deploy_redeploy(db, d_id)
 
 
+# POST 환경변수 입력을 마치고 이어서 배포
+@router.post('/{d_id}/env/continue', response_model=Deploy_Read)
+async def router_deploy_env_continue(d_id: int, db: AsyncSession = Depends(get_db)):
+    return await Deploy_Service.services_deploy_env_continue(db, d_id)
+
+
 # POST 멈춤 - 요금이 나가는 ECS 서비스만 내린다 (이미지·기록은 유지)
 @router.post('/{d_id}/stop', response_model=Deploy_Read)
 async def router_deploy_stop(d_id: int, db: AsyncSession = Depends(get_db)):

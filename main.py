@@ -18,6 +18,7 @@ from features.accounts import models as account_models
 from features.envvars import models as envvar_models
 
 from features.deploys import router as deploys
+from features.envvars import router as envvars
 from features.deploys.pipeline import Deploy_Pipeline
 from features.accounts import router as accounts
 from features.watches import router as watches
@@ -61,6 +62,7 @@ async def root():
     return {"message": "ok"}
 
 app.include_router(deploys.router)
+app.include_router(envvars.router)
 app.include_router(accounts.router)
 app.include_router(watches.router)
 

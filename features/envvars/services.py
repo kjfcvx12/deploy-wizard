@@ -1,7 +1,12 @@
 import re
 from pathlib import Path
 
-from features.envvars.scheme import Env_Found, Env_Kind_Pick
+from sqlalchemy.ext.asyncio import AsyncSession
+from fastapi import HTTPException, status
+
+from features.envvars.crud import Env_Crud
+from features.envvars.models import Deploy_Env_Var
+from features.envvars.scheme import Env_Found, Env_Kind_Pick, Env_Read, Env_Update, ENV_KINDS, ENV_SECRET_KINDS
 from features.envvars.scan import Env_Scan_Service
 from shared.llm import LLM_Client, LLM_Unavailable
 from shared.masking import mask_text
@@ -25,6 +30,10 @@ NAME_HINTS=[
 LOCAL_ASSIGN_RE=re.compile(r'^\s*(?:export\s+)?(?:const|let|var)?\s*([A-Za-z_][A-Za-z0-9_]*)\s*(?::[^=]+)?=\s*(?:os\.|process\.env|import\.meta\.env)')
 HINT_RE=re.compile(r'^(.+):(\d+)$')
 MAX_LLM_PICKS=20
+ENV_NAME_RE=re.compile(r'^[A-Za-z_][A-Za-z0-9_]{0,99}$')
+MAX_ENV_VALUE_CHARS=2000
+# 사용자 요청이 바꿀 수 있는 열 - 요청 필드를 그대로 넘기지 않고 서비스가 만든 값만 통과시킨다
+ENV_UPDATE_KEYS={'status', 'storage', 'plain_value', 'secret_ref', 'kind', 'required', 'has_default', 'source', 'source_hint'}
 CONTEXT_RADIUS=3
 MAX_CONTEXT_LINE_CHARS=200
 
@@ -148,3 +157,181 @@ class Env_Service:
         found=Env_Scan_Service.services_env_scan(app_path)
         found=Env_Service.services_env_classify_rule(app_path, found)
         return await Env_Service.services_env_classify_llm(app_path, found)
+
+
+    # 배포 존재 확인 - 없으면 404 (deploys 서비스는 순환 import 를 피하려고 호출 시점에 불러온다)
+    @staticmethod
+    async def services_env_get_deploy(db:AsyncSession, d_id:int):
+        from features.deploys.services import Deploy_Service
+        return await Deploy_Service.services_deploy_get_d_id(db, d_id)
+
+
+    # 행 -> 응답 - 값은 복사하지 않고 있는지 없는지(has_value)만 담는다
+    @staticmethod
+    def services_env_to_read(row:Deploy_Env_Var, needs_redeploy:bool=False) -> Env_Read:
+        return Env_Read(d_e_id=row.d_e_id, d_id=row.d_id, name=row.name, required=row.required, has_default=row.has_default,
+                        kind=row.kind, source=row.source, source_hint=row.source_hint, status=row.status,
+                        has_value=row.plain_value is not None or row.secret_ref is not None,
+                        needs_redeploy=needs_redeploy)
+
+
+    # 스캔 결과 저장 - 이름 기준으로 넣거나 갱신하고 개수를 돌려준다
+    @staticmethod
+    async def services_env_save_found(db:AsyncSession, d_id:int, found:list[Env_Found]) -> int:
+        try:
+            for item in found:
+                await Env_Crud.crud_env_upsert_found(db, d_id, item)
+
+            await db.commit()
+            return len(found)
+
+        except HTTPException:
+            raise
+
+        except Exception as e:
+            await db.rollback()
+            raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                                detail=f"환경변수 저장 실패 :{type(e).__name__}")
+
+
+    # 배포의 환경변수 목록 - 값은 싣지 않는다
+    @staticmethod
+    async def services_env_get_all(db:AsyncSession, d_id:int) -> list[Env_Read]:
+        await Env_Service.services_env_get_deploy(db, d_id)
+        rows=await Env_Crud.crud_env_get_by_d_id(db, d_id)
+        return [Env_Service.services_env_to_read(row) for row in rows]
+
+
+    # 값 입력·종류 지정·건너뛰기 - 이름이 없으면 사용자가 직접 추가한 것으로 만든다
+    @staticmethod
+    async def services_env_update(db:AsyncSession, d_id:int, name:str, body:Env_Update) -> Env_Read:
+        try:
+            if not ENV_NAME_RE.match(name):
+                raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST,
+                                    detail='환경변수 이름이 올바르지 않습니다')
+
+            deploy=await Env_Service.services_env_get_deploy(db, d_id)
+
+            if body.kind is not None and body.kind not in ENV_KINDS:
+                raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST,
+                                    detail='환경변수 종류가 올바르지 않습니다')
+
+            if body.value is not None and len(body.value) > MAX_ENV_VALUE_CHARS:
+                raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST,
+                                    detail=f'값은 {MAX_ENV_VALUE_CHARS}자까지 입력할 수 있습니다')
+
+            if body.value is not None and body.skip:
+                raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST,
+                                    detail='건너뛰기와 값은 함께 보낼 수 없습니다')
+
+            db_env=await Env_Crud.crud_env_get(db, d_id, name)
+            kind=body.kind or (db_env.kind if db_env else 'unknown')
+
+            if body.value is not None:
+                if kind == 'unknown':
+                    raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST,
+                                        detail='종류를 먼저 골라 주세요')
+
+                if kind in ENV_SECRET_KINDS:
+                    raise HTTPException(status_code=status.HTTP_501_NOT_IMPLEMENTED,
+                                        detail='시크릿 값 저장은 아직 지원하지 않습니다 (사용자 AWS 보안 저장소 검증 후 지원)')
+
+            # 1. 없는 이름이면 직접 추가
+            if db_env is None:
+                db_env=await Env_Crud.crud_env_upsert_found(db, d_id, Env_Found(
+                    name=name, required=True, has_default=False, kind=kind, source='user', source_hint=None))
+
+            had_value=db_env.plain_value is not None or db_env.secret_ref is not None
+            update_data={}
+            value_changed=False
+
+            # 2. 종류 변경 - 시크릿 종류로 바뀌면 이미 저장된 일반 값은 남기지 않는다
+            if body.kind is not None:
+                update_data['kind']=body.kind
+
+                if body.kind in ENV_SECRET_KINDS and db_env.storage == 'plain':
+                    update_data.update({'status': 'detected', 'storage': 'none', 'plain_value': None, 'secret_ref': None})
+                    value_changed=had_value
+
+            # 3. 값 입력 (config 만 여기까지 온다) / 건너뛰기 / 건너뛰기 취소
+            if body.value is not None:
+                update_data.update({'status': 'set', 'storage': 'plain', 'plain_value': body.value, 'secret_ref': None})
+                value_changed=True
+
+            elif body.skip:
+                update_data['status']='skipped'
+
+            elif body.skip is False and db_env.status == 'skipped':
+                update_data['status']='set' if had_value and 'plain_value' not in update_data else 'detected'
+
+            update_data={k: v for k, v in update_data.items() if k in ENV_UPDATE_KEYS}
+            updated=await Env_Crud.crud_env_update(db, d_id, name, update_data)
+
+            await db.commit()
+            return Env_Service.services_env_to_read(updated, needs_redeploy=bool(deploy.service_arn) and value_changed)
+
+        except HTTPException:
+            raise
+
+        except Exception as e:
+            await db.rollback()
+            raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                                detail=f"환경변수 저장 실패 :{type(e).__name__}")
+
+
+    # 저장된 값 지우기 - 값만 비우고 변수 행은 남긴다
+    @staticmethod
+    async def services_env_clear_value(db:AsyncSession, d_id:int, name:str) -> Env_Read:
+        try:
+            deploy=await Env_Service.services_env_get_deploy(db, d_id)
+            db_env=await Env_Crud.crud_env_get(db, d_id, name)
+
+            if db_env is None:
+                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND,
+                                    detail='해당 환경변수가 없습니다')
+
+            had_value=db_env.plain_value is not None or db_env.secret_ref is not None
+            update_data={'storage': 'none', 'plain_value': None, 'secret_ref': None}
+
+            if db_env.status == 'set':
+                update_data['status']='detected'
+
+            updated=await Env_Crud.crud_env_update(db, d_id, name, update_data)
+
+            await db.commit()
+            return Env_Service.services_env_to_read(updated, needs_redeploy=bool(deploy.service_arn) and had_value)
+
+        except HTTPException:
+            raise
+
+        except Exception as e:
+            await db.rollback()
+            raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                                detail=f"환경변수 값 삭제 실패 :{type(e).__name__}")
+
+
+    # 값이 비어 있는 필수 변수 이름들 (이름순)
+    @staticmethod
+    async def services_env_pending_names(db:AsyncSession, d_id:int) -> list[str]:
+        rows=await Env_Crud.crud_env_get_by_d_id(db, d_id)
+        return [row.name for row in rows if row.required and row.status == 'detected']
+
+
+    # 값이 비어 있는 필수 변수 개수
+    @staticmethod
+    async def services_env_pending_count(db:AsyncSession, d_id:int) -> int:
+        return await Env_Crud.crud_env_count_pending(db, d_id)
+
+
+    # 여러 배포의 개수를 한 번에 - 목록 화면용 (deploys 가 crud 를 직접 부르지 않도록 감싼다)
+    @staticmethod
+    async def services_env_pending_many(db:AsyncSession, d_ids:list[int]) -> dict[int, int]:
+        return await Env_Crud.crud_env_count_pending_many(db, d_ids)
+
+
+    # 컨테이너에 넣을 값 - status=set 이고 일반 저장인 것만 (시크릿 저장은 아직 없다)
+    @staticmethod
+    async def services_env_runtime_dict(db:AsyncSession, d_id:int) -> dict[str, str]:
+        rows=await Env_Crud.crud_env_get_by_d_id(db, d_id)
+        return {row.name: row.plain_value for row in rows
+                if row.status == 'set' and row.storage == 'plain' and row.plain_value is not None}

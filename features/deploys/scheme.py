@@ -49,6 +49,9 @@ class Deploy_In_DB(Deploy_Base):
     watch_commit_sha: str | None = None
     watch_checked_at: datetime | None = None
 
+    # 값이 비어 있는 필수 환경변수 수 - DB 열이 아니라 서비스가 채운다
+    env_pending: int = 0
+
     created_at: datetime
     updated_at: datetime
 

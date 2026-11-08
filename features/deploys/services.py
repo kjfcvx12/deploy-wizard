@@ -15,6 +15,7 @@ from features.repos.services import Repo_Service
 from features.repos.scheme import Repo_Remote
 from features.express.services import Express_Service
 from features.accounts.services import Aws_Account_Service, Github_Service
+from features.envvars.services import Env_Service
 
 
 class Deploy_Service:
@@ -22,7 +23,13 @@ class Deploy_Service:
     # 전 배포 조회
     @staticmethod
     async def services_deploy_get_all(db:AsyncSession):
-        return await Deploy_Crud.crud_deploy_get_all(db)
+        deploys=await Deploy_Crud.crud_deploy_get_all(db)
+        pending=await Env_Service.services_env_pending_many(db, [d.d_id for d in deploys])
+
+        for deploy in deploys:
+            deploy.env_pending=pending[deploy.d_id]
+
+        return deploys
 
 
     # 배포 d_id 조회
@@ -34,6 +41,7 @@ class Deploy_Service:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND,
                                 detail='해당 id의 배포가 없습니다')
 
+        deploy.env_pending=await Env_Service.services_env_pending_count(db, d_id)
         return deploy
 
 
@@ -154,6 +162,41 @@ class Deploy_Service:
             await db.rollback()
             raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                                 detail=f"다시 배포 실패 :{e}")
+
+
+    # 이어서 배포 - 환경변수 입력을 마친 배포를 배포 단계부터 다시 돌린다. 사용자가 버튼을 눌렀을 때만
+    @staticmethod
+    async def services_deploy_env_continue(db:AsyncSession, d_id:int):
+        try:
+            deploy=await Deploy_Service.services_deploy_get_d_id(db, d_id)
+
+            if deploy.status != 'needs_input':
+                raise HTTPException(status_code=status.HTTP_409_CONFLICT,
+                                    detail='입력이 필요한 상태의 배포만 이어서 배포할 수 있습니다')
+
+            missing=await Env_Service.services_env_pending_names(db, d_id)
+
+            if missing:
+                raise HTTPException(status_code=status.HTTP_409_CONFLICT,
+                                    detail=f"필수 환경변수에 값이 없습니다 :{', '.join(missing)}")
+
+            update_deploy=await Deploy_Crud.crud_deploy_update(db, d_id, {"status": "queued"})
+
+            await db.commit()
+            await db.refresh(update_deploy)
+            update_deploy.env_pending=0
+
+            Deploy_Pipeline.pipeline_start(d_id, 'deploying')
+
+            return update_deploy
+
+        except HTTPException:
+            raise
+
+        except Exception as e:
+            await db.rollback()
+            raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                                detail=f"이어서 배포 실패 :{mask_text(str(e))}")
 
 
     # 멈춤 - 요금이 나가는 ECS 서비스만 내린다. 이미지와 기록은 남겨 [다시 켜기]가 빌드 없이 끝나게 한다. 사용자가 확인한 뒤에만 부른다
