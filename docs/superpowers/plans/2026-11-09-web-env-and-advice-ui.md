@@ -45,7 +45,7 @@ Mock these with Playwright (`page.route('**/api/**', ...)` via `browser_run_code
 
 **Files:**
 - Create: `features/envvars/ui/api.js`, `features/envvars/ui/constants.js`, `features/advice/ui/api.js`, `features/advice/ui/constants.js`
-- Modify: `features/deploys/ui/api.js` (add `continueEnv`? no — keep it in `envApi`; this file unchanged), `features/deploys/ui/constants.js` only if a status helper is needed (see Interfaces)
+- Modify: none (the continue call lives in `envApi`; `features/deploys/ui/api.js` and `constants.js` stay unchanged — `needs_input` is already in `STATUS_LABEL` and intentionally not in `PROGRESS`)
 
 **Interfaces:**
 - Produces (`envvars/ui/api.js`): `envApi = { getAll(d_id), put(d_id, name, body), clearValue(d_id, name), continueDeploy(d_id) }` using `request` from `@shared/ui/api.js`; URLs `/api/deploys/${d_id}/env`, `/env/${encodeURIComponent(name)}`, `/env/${encodeURIComponent(name)}/value` (DELETE), `/env/continue` (POST).
@@ -138,7 +138,7 @@ Behavior (decision D11: two steps):
 - Modify: `docs/ui-spec.md` (new/changed screens), `docs/features.md` (UI notes for `envvars`, `advice`), `HISTORY.md` (one row, terse English), `docs/worklog/2026-11-09.md` (append, terse English), `docs/app-web/README.md` (mark Plan B implemented, link this plan)
 
 - [ ] **Step 1: Re-run** the Task 2 and Task 4 browser checks once end to end on the final code at 390 px dark and 1280 px light (one flow: list → new deploy → analyze → deploy → detail `needs_input` → set/skip → continue) with the fixtures; confirm no console errors (`browser_console_messages`) and no failed requests other than the intended 409/501/400 mocks.
-- [ ] **Step 2: Update the docs** listed above: `docs/ui-spec.md` gets the S-19 card (groups, copy, secret-kind rule, redeploy banner), the S-20 two-step form, the `needs_input` badge/step behavior, and removes "자동 재배포 설정…" nothing else; note the tier-selection UI is deferred with the reason.
+- [ ] **Step 2: Update the docs** listed above: `docs/ui-spec.md` gets the S-19 card (groups, copy, secret-kind rule, redeploy banner), the S-20 two-step form, and the `needs_input` badge/step behavior; note that the tier-selection UI is deferred and why (no `size_tier` backend, decision D10).
 - [ ] **Step 3: Run** `npm run build` and `.venv/Scripts/python.exe -m pytest -q` — Expected: build succeeds; Python suite unchanged (all pass).
 - [ ] **Step 4: Commit** `docs(web): 환경변수·분석 화면 명세와 작업 기록`
 
