@@ -121,6 +121,17 @@ class Repo_Service:
         return None
 
 
+    # 폴더 통째 삭제 - git의 .git/objects 읽기 전용 파일 때문에 Windows에서 rmtree가 조용히 실패하고 남는 걸 막는다
+    @staticmethod
+    def services_repo_remove(path:Path) -> None:
+        def clear_readonly(func, target, exc):
+            os.chmod(target, stat.S_IWRITE)
+            func(target)
+
+        if path.exists():
+            shutil.rmtree(path, onexc=clear_readonly)
+
+
     # 레포 클론 (얕은 복제)
     @staticmethod
     def services_repo_clone(repo_url:str, branch:str|None, dest:Path, on_line=None, token:str|None=None) -> str:
@@ -128,13 +139,7 @@ class Repo_Service:
         branch=Repo_Service.services_repo_check_branch(branch)
         auth_url=Repo_Service.services_repo_auth_url(repo_url, token)
 
-        # git의 .git/objects 읽기 전용 파일 때문에 Windows에서 rmtree가 조용히 실패하고 남는 걸 막는다
-        def clear_readonly(func, path, exc):
-            os.chmod(path, stat.S_IWRITE)
-            func(path)
-
-        if dest.exists():
-            shutil.rmtree(dest, onexc=clear_readonly)
+        Repo_Service.services_repo_remove(dest)
         dest.parent.mkdir(parents=True, exist_ok=True)
 
         args=["git", "clone", "--depth", "1", "--single-branch"]
