@@ -59,6 +59,7 @@ export default function AdvicePanel({ advice, busy, onDeploy, onReset }) {
         <span className={`badge ${advice.support_level === 'official' ? 'ok' : 'exp'}`}>
           {advice.support_level === 'official' ? '공식 지원' : '실험 지원'}
         </span>
+        {advice.app_dir && advice.app_dir !== '.' && <span className="small">앱 폴더: <code>{advice.app_dir}</code></span>}
       </div>
 
       <div className="advice-tier">

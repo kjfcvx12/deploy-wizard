@@ -32,6 +32,7 @@ export default function DeployForm() {
     inflight.current = false
     setAdvice(null)
     setAnalyzing(false)
+    setError('')
   }
 
   const loadBranches = async () => {

@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 
+import { isProgress } from '@features/deploys/ui/constants.js'
+
 import { envApi } from './api.js'
 import { ENV_KINDS, ENV_SECRET_KINDS, canContinue, groupEnvVars, kindLabel } from './constants.js'
 
@@ -9,7 +11,9 @@ const NAME_MESSAGE = '이름은 영문자나 _로 시작하고, 영문자·숫�
 // 변수 한 줄 - 종류에 따라 값 입력 / 종류 고르기 / 시크릿 안내를 다르게 보여 준다
 function EnvRow({ row, busy, onPut, onClear }) {
   const [value, setValue] = useState('')
-  const isSecret = ENV_SECRET_KINDS.has(row.kind)
+  // 다섯 종류가 아닌 값은 모르는 종류로 다룬다 - 값 입력창을 절대 주지 않기 위해서다
+  const kind = ENV_KINDS.some((k) => k.key === row.kind) ? row.kind : 'unknown'
+  const isSecret = ENV_SECRET_KINDS.has(kind)
   const isDone = row.status === 'set' || row.status === 'skipped'
 
   // 값은 저장에 성공했을 때만 비운다 - 실패하면 다시 시도할 수 있게 남겨 둔다
@@ -29,20 +33,21 @@ function EnvRow({ row, busy, onPut, onClear }) {
 
       {isDone ? (
         <div className="env-actions">
-          {row.status === 'set' && <button onClick={() => onClear(row.name)} disabled={busy}>값 지우기</button>}
-          {row.status === 'skipped' && <button onClick={() => onPut(row.name, { skip: false })} disabled={busy}>건너뛰기 취소</button>}
+          {row.status === 'set' && <button onClick={() => onClear(row.name)} disabled={busy} aria-label={`${row.name} 값 지우기`}>값 지우기</button>}
+          {row.status === 'skipped' && <button onClick={() => onPut(row.name, { skip: false })} disabled={busy} aria-label={`${row.name} 건너뛰기 취소`}>건너뛰기 취소</button>}
         </div>
-      ) : row.kind === 'unknown' ? (
+      ) : kind === 'unknown' ? (
         <div className="env-actions">
           <span className="muted small">이 변수는 어떤 종류인가요?</span>
-          {ENV_KINDS.map((kind) => (
-            <button key={kind.key} onClick={() => onPut(row.name, { kind: kind.key })} disabled={busy}>{kind.label}</button>
+          {ENV_KINDS.map((k) => (
+            <button key={k.key} onClick={() => onPut(row.name, { kind: k.key })} disabled={busy} aria-label={`${row.name} 종류: ${k.label}`}>{k.label}</button>
           ))}
+          <button onClick={() => onPut(row.name, { skip: true })} disabled={busy} aria-label={`${row.name} 건너뛰기`}>건너뛰기</button>
         </div>
       ) : isSecret ? (
         <div className="env-actions">
           <span className="muted small env-note">이 종류의 값은 아직 저장할 수 없습니다. 지금은 건너뛰기만 됩니다.</span>
-          <button onClick={() => onPut(row.name, { skip: true })} disabled={busy}>건너뛰기</button>
+          <button onClick={() => onPut(row.name, { skip: true })} disabled={busy} aria-label={`${row.name} 건너뛰기`}>건너뛰기</button>
         </div>
       ) : (
         <form className="env-actions" onSubmit={save}>
@@ -56,8 +61,8 @@ function EnvRow({ row, busy, onPut, onClear }) {
             aria-label={`${row.name} 값`}
             disabled={busy}
           />
-          <button type="submit" disabled={busy || value === ''}>저장</button>
-          <button type="button" onClick={() => onPut(row.name, { skip: true })} disabled={busy}>건너뛰기</button>
+          <button type="submit" disabled={busy || value === ''} aria-label={`${row.name} 저장`}>저장</button>
+          <button type="button" onClick={() => onPut(row.name, { skip: true })} disabled={busy} aria-label={`${row.name} 건너뛰기`}>건너뛰기</button>
         </form>
       )}
     </li>
@@ -144,6 +149,7 @@ export default function EnvVarsCard({ deploy, onContinued, onRedeploy }) {
   const add = async (event) => {
     event.preventDefault()
     if (!NAME_PATTERN.test(newName)) { setNameError(NAME_MESSAGE); return }
+    if (rows?.some((r) => r.name === newName)) { setNameError('이미 목록에 있는 변수입니다'); return }
     setNameError('')
     if (await put(newName, { kind: newKind })) setNewName('')
   }
@@ -211,6 +217,7 @@ export default function EnvVarsCard({ deploy, onContinued, onRedeploy }) {
           spellCheck={false}
           aria-label="추가할 변수 이름"
           aria-invalid={Boolean(nameError)}
+          aria-describedby={nameError ? 'env-name-error' : undefined}
           disabled={busy}
         />
         <select value={newKind} onChange={(e) => setNewKind(e.target.value)} aria-label="추가할 변수 종류" disabled={busy}>
@@ -218,7 +225,7 @@ export default function EnvVarsCard({ deploy, onContinued, onRedeploy }) {
         </select>
         <button type="submit" disabled={busy || newName === ''}>변수 직접 추가</button>
       </form>
-      {nameError && <div className="small env-field-err" role="alert">{nameError}</div>}
+      {nameError && <div id="env-name-error" className="small env-field-err" role="alert">{nameError}</div>}
 
       <p className="muted small" style={{ margin: '12px 0 0' }}>자동으로 찾지 못한 변수가 있을 수 있습니다. 배포 후 앱이 시작하지 못하면 알려 드립니다.</p>
 
@@ -226,7 +233,7 @@ export default function EnvVarsCard({ deploy, onContinued, onRedeploy }) {
         <div className="notice warn">
           <div className="row spread">
             <span>다시 배포해야 적용됩니다</span>
-            <button onClick={redeploy} disabled={busy}>다시 배포</button>
+            {!isProgress(status) && <button onClick={redeploy} disabled={busy}>다시 배포</button>}
           </div>
         </div>
       )}
