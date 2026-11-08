@@ -253,6 +253,27 @@ details.env-group > summary { font-size: 14px; }
 .step.wait .step-bar { background: var(--warn); }
 .step.wait { color: var(--text); font-weight: 700; }
 
+/* 분석 결과 */
+.advice > .row { margin-bottom: 4px; }
+.advice-tier { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-top: 12px; font-size: 20px; font-weight: 700; }
+.advice-low { color: var(--warn); margin: 6px 0 0; }
+.advice-block { margin-top: 16px; }
+.advice-block h3 { margin: 0 0 4px; font-size: 14px; }
+.advice-block ul { margin: 0; padding-left: 20px; }
+.advice-block li { overflow-wrap: anywhere; }
+.advice-block > summary { font-size: 14px; }
+.advice-block > summary + ul { margin-top: 6px; }
+.advice-line { margin: 16px 0 0; overflow-wrap: anywhere; }
+.advice-need.off { color: var(--muted); }
+.advice-actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 20px; }
+.advice-foot { margin: 10px 0 0; }
+.advice-error { margin: 0 0 16px; }
+
+@media (max-width: 640px) {
+  .advice-actions { flex-direction: column; }
+  .advice-actions button { width: 100%; }
+}
+
 @media (max-width: 640px) {
   .topbar-note { display: none; }
   .account-boxes { grid-template-columns: 1fr; }
