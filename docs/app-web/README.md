@@ -1,6 +1,6 @@
 # 앱 + 웹 확장 설계 (초안)
 
-2026-11-09 브레인스토밍 결과를 문서로 옮긴 것이다. **아직 구현하지 않았다.** 기존 `docs/api-spec.md`, `docs/architecture.md`는 지금 코드의 기록이고, 이 폴더는 앞으로 바꿀 것의 설계다. 구현을 시작하면 해당 부분을 기존 문서로 옮긴다 (CLAUDE.md 규칙 10).
+2026-11-09 브레인스토밍 결과를 문서로 옮긴 것이다. **대부분 아직 구현하지 않았다** (구현된 부분은 아래 "구현 상태"). 기존 `docs/api-spec.md`, `docs/architecture.md`는 지금 코드의 기록이고, 이 폴더는 앞으로 바꿀 것의 설계다. 구현을 시작하면 해당 부분을 기존 문서로 옮긴다 (CLAUDE.md 규칙 10).
 
 | 문서 | 내용 |
 |---|---|
@@ -11,6 +11,11 @@
 | [05-flowcharts.md](./05-flowcharts.md) | 플로우차트 (사용자 여정, 로그인, 연결, 장애 복구) |
 | [06-screens.md](./06-screens.md) | 화면 목록과 와이어프레임 지침 (피그마 입력용) |
 | [07-community-and-plans.md](./07-community-and-plans.md) | 갤러리·게시판, 의견 정리와 추천, 무료·유료 요금제 (4단계 포함) |
+
+## 구현 상태
+
+- **계획 A (백엔드: 환경변수 감지·입력 + 배포 전 분석) - 구현됨** (2026-11-09, 브랜치 `feat/backend-env-advice`). 계획: [`../superpowers/plans/2026-11-09-backend-env-and-advice.md`](../superpowers/plans/2026-11-09-backend-env-and-advice.md). API는 `docs/api-spec.md`의 "Env"·"Advice", 구조는 `docs/architecture.md`로 옮겼다. 시크릿 값 저장(D8)과 사양 숫자·비용(D10)은 검증 전이라 아직 없고, 실제 AWS 배포로는 확인하지 않았다.
+- 나머지(화면, 운영 비서, 로그인 등)는 아직 구현하지 않았다.
 
 ## 사용자가 정한 것 (대화에서)
 

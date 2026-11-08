@@ -10,6 +10,8 @@
 | `builds` | `docker build`, ECR 리포지토리·로그인·푸시 | services | M2 |
 | `express` | Express Mode 생성·갱신·조회·대기·삭제, 태그로 리소스 찾기 | scheme · services | M1 |
 | `explains` | 한국어 에러 해설 (규칙 → LLM) | scheme · services · ui | M5 |
+| `envvars` | 소스에서 환경변수 이름 찾기(스캐너), 종류 분류(규칙 → AI 선택), 값 입력·건너뛰기, 컨테이너에 넣을 값, 실행 중 에러에서 이름 찾기 | models · scheme · crud · scan · services · router | 1단계 백엔드 (실제 AWS 검증 전) |
+| `advice` | 배포 전 분석 - 사양 수준·필요한 것·확신도 (읽기 전용, 숫자는 검증 전이라 비움) | scheme · services · router | 1단계 백엔드 (실제 AWS 검증 전) |
 | `accounts` | 사용자 AWS 계정 연결(CloudFormation+AssumeRole) · GitHub App 연결 - 연결·파이프라인 배선(private 클론 포함) 완료 | models · scheme · crud · services · router · cloudformation/ · ui | M6 (진행 중) |
 | `watches` | 코드 변경 감지 - 폴링(백그라운드) + 웹훅(서명 검증 + 디바운스) 둘 다 코드 완료 | services | M6 (코드 완료, 실제 검증 남음) |
 
@@ -50,6 +52,22 @@
 - 규칙 표(`EXPLAIN_RULES`)에 걸리면 LLM을 부르지 않는다. 새 에러를 만날 때마다 표에 추가한다.
 - 규칙에도 없으면 에러 시그니처(`step` + 정규화한 `error_msg`)로 캐시를 본다. 캐시에 있으면 LLM을 다시 부르지 않는다 (`Explain_Result.cached`).
 - LLM이 만든 해설만 캐시한다. LLM도 못 쓰면 기본 안내를 돌려주고, 캐시하지 않는다 — LLM이 돌아오면 다시 묻도록. 해설 실패가 배포 실패 처리를 막지 않는다.
+
+### envvars (1단계 백엔드 - 실제 AWS 배포로는 아직 검증 전)
+- **이름만 찾는다.** 스캐너(`Env_Scan_Service`)가 `.py` `.js` `.jsx` `.mjs` `.cjs` `.ts` `.tsx`, `docker-compose`, `.env.example` 계열에서 이름과 `파일:줄` 위치만 모은다. 값은 읽어도 저장하지 않고 "기본값이 있는지"만 남긴다. `.env`·`.env.local`·키 파일은 열지 않는다 (`repos`의 제외 필터를 느슨하게 하지 않았다). 한도: 파일 500개, 파일당 200KB.
+- **필수/기본값 판정.** 기본값이 없으면 필수. 예시 파일 값은 비어 있지 않고 `your`·`xxx`·`changeme`·`<`·`example`이 없을 때만 기본값으로 치되, 이름에 `KEY` `SECRET` `TOKEN` `PASSWORD` `PASSWD` `PWD` 낱말이 있으면(`SECRET_NAME_PARTS`) 예시 값이 있어도 기본값이 아니다 (예시에 진짜 키를 붙여 넣는 경우를 막는다). Vite 내장값(`import.meta.env.DEV` `MODE` `BASE_URL` `PROD` `SSR`)은 건너뛰고, pydantic `Field(alias=...)`는 대문자 이름처럼 생긴 별칭만 센다. pydantic-settings의 별칭 없는 필드명은 아직 못 찾는다.
+- **종류 분류.** 규칙이 먼저(변수를 쓰는 줄·같은 파일에서 그 변수를 받은 지역 변수의 쓰임 → 이름 낱말), 그래도 `unknown`인 것만 AI가 `database` `cache` `external_api` `secret` `config` `unknown` 중 하나를 고른다 (`Env_Kind_Pick`, `LLM_Client.llm_parse`). 프롬프트에는 이름과 주변 코드 최대 7줄(줄당 200자, `mask_text`)만 싣는다 — 경로·값·레포 전체는 보내지 않는다. 한 번에 최대 20개, AI를 못 쓰면 `unknown`으로 두고 정식 언어는 그대로 끝까지 간다.
+- **값 저장.** `config`만 `plain_value`에 저장하고 컨테이너 `environment`로 들어간다. 시크릿 종류는 값을 받지 않는다 (PUT 501, 결정 D8의 AWS 보안 저장소 검증 후). 응답에는 `has_value`만, 값은 쓰기 전용.
+- **첫 배포만 멈춘다.** 값이 빈 필수 변수가 있으면 `needs_input`으로 `deploying` 직전에 멈춘다. 서비스가 이미 있는 재배포는 멈추지 않고 경고 로그만 남기고, 값이 있는 변수는 갱신 때도 다시 보낸다. `skipped`는 멈춤 조건에서 빠진다.
+- **실행 중 에러에서 이름 찾기.** `pipeline_fail`이 에러 글(`KeyError: 'X'`, `Missing required environment variable X`, `X is not defined`)에서 대문자 이름만 최대 10개 뽑아 `source: runtime_error`, 필수로 올린다. 사용자가 이미 넣은 값·상태는 건드리지 않지만, 이미 있던 행의 `source`·`source_hint`는 덮어쓴다. 이 처리가 실패해도 배포 실패 기록은 막지 않는다. 해설 규칙 "필요한 환경변수가 설정되지 않았습니다."는 헬스체크 규칙보다 앞에 둔다 (변수가 없어 죽은 앱은 헬스체크 실패도 같이 나오기 때문).
+- 남은 것: 시크릿 값 저장(D8), 화면(2단계), 컨테이너 로그 기반 이름 찾기(D4 로그 접근 확인 후).
+
+### advice (1단계 백엔드 - 실제 AWS 배포로는 아직 검증 전)
+- `POST /api/deploys/advice`는 임시 폴더에 얕게 클론해 읽고 항상 지운다. 배포 기록·AWS 호출·DB 쓰기가 없다. 같은 `(repo_url, commit_sha)`는 메모리 캐시(최대 100, 프로세스 재시작 시 사라짐)를 쓴다.
+- 판정은 규칙뿐이다: 의존성 파일(`requirements.txt` `pyproject.toml` `package.json`)과 소스 일부를 읽어 신호를 모으고 `small/medium/large`와 확신도를 낸다. AI는 환경변수 종류 분류(`envvars`)에서만 쓴다. 심볼릭 링크는 따라가지 않고 테스트 파일은 건너뛴다.
+- **숫자는 비워 둔다.** `cpu` `memory`와 `cost`의 금액·기준일은 항상 `null`이다. Express Mode가 허용하는 CPU·메모리 조합과 요금 구성을 실제 배포로 확인한 뒤(D10) 채운다. 사용자가 수준을 고르는 기능(I-08)과 `deploys`의 `size_tier` 등 열도 그때까지 미룬다.
+- 정적 사이트는 마법사의 Node 템플릿이 `start` 없는 사이트를 처리하는지 확인하지 않았다 — `needs`에 `static_site`(`supported: true`)로 알리기만 한다.
+- `disk_write`는 정규식·AST 추정이라 임시·로그 쓰기를 잘못 잡을 수 있다.
 
 ### accounts (M6, 진행 중)
 - **AWS 연결 완료**: `POST /aws`로 `external_id` 발급 → 사용자가 `cloudformation/deploy_wizard_role.yaml`을 직접 다운로드해 콘솔에서 스택 생성(공개 URL이 없어 원클릭 링크 대신 수동 업로드) → 역할 ARN을 `PATCH /aws/{a_id}/role-arn`에 붙여넣으면 `sts:AssumeRole`로 검증(`verified`/`invalid`).

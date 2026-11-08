@@ -20,6 +20,8 @@
 │   ├── builds/                 ← services.py
 │   ├── express/                ← scheme.py  services.py
 │   ├── explains/               ← scheme.py  services.py  ui/
+│   ├── envvars/                ← models.py  scheme.py  crud.py  scan.py  services.py  router.py  (환경변수 이름 감지·입력)
+│   ├── advice/                 ← scheme.py  services.py  router.py  (배포 전 분석, DB 없음)
 │   ├── accounts/               ← scheme.py  crud.py  services.py  router.py  cloudformation/  ui/  (M6, 진행 중)
 │   └── watches/                ← services.py 만 (DB 없음, 상태는 Deploy에)  (M6, 진행 중 - 폴링만 완료)
 │
@@ -51,7 +53,7 @@ features/A  → features/B    services 끼리만 ✅ (B의 crud·models 를 직�
 ui/         → 같은 기능의 api.js, shared/ui, 다른 기능의 ui 컴포넌트 ✅
 ```
 
-기능 조립은 `features/deploys/pipeline.py` 한 곳에서만 한다. `repos`·`dockerfiles`·`builds`·`express`·`explains`는 서로를 모른다 (예외: `dockerfiles`는 레포 요약을 위해 `repos`의 services 를 쓴다). `accounts`·`watches`는 예외 — `deploys`가 배포에 쓸 AWS/GitHub 세션을 얻으려고 `accounts`의 services 를 부르고(M6, `pipeline.py`·`services_deploy_delete`·`services_deploy_get_remote`에 배선됨), `accounts`도 계정 삭제 시 연결을 끊으려고 `deploys`의 services 를 부른다(순환 임포트라 `accounts/services.py`에서는 함수 안에서 지연 임포트한다). `watches`는 `deploys`(폴링 대상 조회, 재배포 트리거)와 `accounts`(GitHub 토큰)의 services 만 부르고, 아무도 `watches`를 부르지 않는다 — `main.py`가 백그라운드 태스크로 직접 돌린다.
+기능 조립은 `features/deploys/pipeline.py` 한 곳에서만 한다. `repos`·`dockerfiles`·`builds`·`express`·`explains`는 서로를 모른다 (예외: `dockerfiles`는 레포 요약을 위해 `repos`의 services 를 쓴다). `envvars`는 `deploys`가 파이프라인(분석 단계 저장, 배포 직전 값 확인, 컨테이너에 넣을 값)과 목록의 `env_pending`을 채우려고 services 로만 부른다. 반대로 `envvars`가 배포 존재를 확인하려고 `deploys`의 services 를 부르는데, 순환 임포트라 `envvars/services.py`에서는 함수 안에서 지연 임포트한다. `advice`는 DB에 쓰지 않고 `repos`·`envvars`·`accounts`(GitHub 토큰)의 services 만 부르며, 아무도 `advice`를 부르지 않는다 — 라우터만 있다. `accounts`·`watches`는 예외 — `deploys`가 배포에 쓸 AWS/GitHub 세션을 얻으려고 `accounts`의 services 를 부르고(M6, `pipeline.py`·`services_deploy_delete`·`services_deploy_get_remote`에 배선됨), `accounts`도 계정 삭제 시 연결을 끊으려고 `deploys`의 services 를 부른다(순환 임포트라 `accounts/services.py`에서는 함수 안에서 지연 임포트한다). `watches`는 `deploys`(폴링 대상 조회, 재배포 트리거)와 `accounts`(GitHub 토큰)의 services 만 부르고, 아무도 `watches`를 부르지 않는다 — `main.py`가 백그라운드 태스크로 직접 돌린다.
 
 ## 계층
 
@@ -75,16 +77,18 @@ DB가 없는 기능(`repos`, `builds` …)은 `services.py`만 있다.
 | # | status | 하는 일 | 담당 |
 |---|--------|---------|------|
 | 1 | `cloning` | `git clone --depth 1` → 커밋 해시. GitHub 연결 있으면 설치 토큰으로 (M6) | `repos`(+`accounts`) |
-| 2 | `analyzing` | 매니페스트로 언어 판별(규칙), 인코딩 정리 | `repos` |
+| 2 | `analyzing` | 매니페스트로 언어 판별(규칙), 인코딩 정리. 이어서 소스에서 환경변수 **이름**만 찾아 `deploy_env_vars`에 저장 (규칙으로 종류 분류, 모르는 것만 AI가 목록 중 하나 선택) | `repos` + `envvars` |
 | 3 | `generating` | 정식: 템플릿+LLM 빈칸 / 실험: LLM 순수 생성 / 레포에 Dockerfile 있으면 그대로 | `dockerfiles` |
 | 4 | `building` | `docker build --platform linux/amd64`. 실패 시 Dockerfile 자가수정 (정식 2회·실험 1회) | `builds` + `dockerfiles` |
 | 5 | `pushing` | ECR 리포지토리 생성, 로그인(매번 새 토큰), 푸시 | `builds` |
-| 6 | `deploying` | Express Mode 서비스 생성(또는 갱신) → 배포 완료까지 폴링 | `express` |
+| ⏸ | `needs_input` | 첫 배포에서 값이 빈 필수 환경변수가 있으면 `deploying` 직전에 멈춰 사용자 입력을 기다린다. 실패가 아니라 대기다 — `PROGRESS_STATUSES`에 넣지 않아 재시작 복구(`pipeline_recover`)가 건드리지 않는다. `POST /env/continue`로 `deploying`부터 이어 간다 | `envvars` |
+| 6 | `deploying` | Express Mode 서비스 생성(또는 갱신, 일반 설정 값은 `primaryContainer.environment`로) → 배포 완료까지 폴링 | `express` |
 | 7 | `running` | 주소 저장 | |
 | ✗ | `failed` | 멈춘다. 에러 해설(규칙 → LLM)을 저장한다. **리소스는 지우지 않는다** | `explains` |
 
 - 블로킹 작업(git·docker·boto3)은 `asyncio.to_thread`로 돌린다.
 - 로그는 작업 스레드에서 `Deploy_Log_Buffer`에 쌓이고 1초마다 DB에 쓴다. 화면은 `GET /logs?after=`로 새 줄만 가져간다.
+- 환경변수 **값**은 로그·API 응답·AI 프롬프트·에러 글 어디에도 싣지 않는다. 스캐너는 `.env` 같은 제외 파일을 열지 않고, `.env.example`·compose는 이름만 읽는다. 로그에는 개수와 이름만 남긴다.
 - 서비스 ARN은 **받자마자** 저장한다. 이후에 실패해도 정리할 수 있어야 한다.
 - 서버가 재시작되면 진행 중이던 배포는 `failed`로 돌려놓는다 (`pipeline_recover`).
 - (M6) 코드 변경 감지 폴링(`Watch_Service.services_watch_poll_loop`)은 `main.py`의 `lifespan()`에서 시작하는 별도 백그라운드 태스크다. `pipeline_recover`(한 번 await, 시작을 막음)와 다르게 서버가 떠 있는 동안 계속 돌고, 종료 시 `cancel()` + await로 정리한다.
@@ -110,6 +114,7 @@ DB가 없는 기능(`repos`, `builds` …)은 `services.py`만 있다.
 - `deploys` — 배포 하나. 레포·브랜치·커밋, 판별 결과, 상태, Dockerfile, AWS 리소스 식별자, 주소, 에러와 해설, (M6) 연결된 `aws_account_id`/`github_installation_id`, `auto_redeploy`, `watch_*`
 - `deploy_logs` — 배포 로그 한 줄 (`d_id` FK, `ondelete=CASCADE`)
 - `deploy_issues` — 실패 이력 한 건 (`d_id` FK, `ondelete=CASCADE`) - 다시 배포해도 지워지지 않는다
+- `deploy_env_vars` — 배포별 환경변수 한 건 (`d_e_id` PK, `d_id` FK `ondelete=CASCADE`, `(d_id, name)` 유일). 이름·종류·필수 여부·찾은 위치·상태(`detected` `set` `skipped`)를 두고, 값은 일반 설정(`config`)만 `plain_value`에 둔다. 시크릿 종류 값은 저장하지 않는다 (`secret_ref` 열은 보안 저장소 검증 전까지 비어 있다). API는 값을 돌려주지 않는다 (`has_value`만)
 - `aws_accounts` (M6) — 연결된 AWS 계정. `role_arn`, 암호화된 `external_id_encrypted`, 검증 상태
 - `github_installations` (M6) — 연결된 GitHub App 설치. 토큰은 저장하지 않는다 (매번 새로 발급)
 

@@ -20,6 +20,8 @@ Base URL: `http://localhost:8081` · 전부 JSON · 인증 없음(로컬 전용)
 | GET | `/api/deploys/{d_id}/issues` | 문제 이력 - 다시 배포해도 지워지지 않는 지난 실패들 (최신순) | 200 `Deploy_Issue_Read[]` |
 | GET | `/api/deploys/{d_id}/health` | 공개 주소에 GET을 보내 본다 (AWS 권한 불필요) | 200 `Deploy_Health` |
 | POST | `/api/deploys/{d_id}/redeploy` | 다시 배포. 서비스가 있으면 새 이미지로 갱신 | 200 `Deploy_Read` |
+| POST | `/api/deploys/{d_id}/env/continue` | 이어서 배포 - 환경변수 입력을 마친 `needs_input` 배포를 `deploying` 단계부터 다시 돌린다 (아래 "Env"). `needs_input`이 아니면 409 → `queued` | 200 `Deploy_Read` |
+| POST | `/api/deploys/advice` | 배포 전 분석 - 레포를 읽기만 하고 사양 수준·필요한 것·확신도를 돌려준다. 배포 기록·AWS 호출 없음 (아래 "Advice") | 200 `Deploy_Advice` |
 | POST | `/api/deploys/{d_id}/stop` | 멈춤 - ECS 서비스만 삭제(요금 중단), 이미지·기록 유지. `running`만 가능(아니면 409) → `stopped` | 200 `Deploy_Read` |
 | POST | `/api/deploys/{d_id}/start` | 다시 켜기 - 남겨 둔 이미지로 배포 단계만 다시. `stopped`만 가능(아니면 409) → `queued` | 200 `Deploy_Read` |
 | DELETE | `/api/deploys/{d_id}` | ECS 서비스·ECR 리포지토리 삭제 후 기록을 `deleted`로 (`stopped`에서도 가능) | 200 `{message, deleted[]}` |
@@ -77,16 +79,19 @@ Base URL: `http://localhost:8081` · 전부 JSON · 인증 없음(로컬 전용)
   "auto_redeploy": true,
   "watch_commit_sha": null,
   "watch_checked_at": null,
+  "env_pending": 0,
   "created_at": "2026-09-21T06:10:00",
   "updated_at": "2026-09-21T06:11:02"
 }
 ```
 
+`env_pending`: 값이 비어 있는 필수 환경변수 수 (`required`이고 `status`가 `detected`인 것). DB 열이 아니라 조회할 때마다 센다. 환경변수가 없으면 0. `needs_input` 배포를 화면에 알리는 용도다.
+
 ### 값 목록
 
 | 필드 | 값 |
 |------|-----|
-| `status` | `queued` `cloning` `analyzing` `generating` `building` `pushing` `deploying` `running` `failed` `stopped` `deleting` `deleted` |
+| `status` | `queued` `cloning` `analyzing` `generating` `building` `pushing` `needs_input` `deploying` `running` `failed` `stopped` `deleting` `deleted` |
 | `support_level` | `official` `experimental` |
 | `dockerfile_source` | `template_llm` `template_rule` `llm_raw` `llm_fix` `repo` |
 | `explain.source` | `rule` `llm` `none` |
@@ -127,6 +132,129 @@ Base URL: `http://localhost:8081` · 전부 JSON · 인증 없음(로컬 전용)
 ```json
 { "d_id": 2, "health": "healthy", "status_code": 200, "detail": null }
 ```
+
+## Env (환경변수 - 1단계 백엔드, 실제 AWS 검증 전)
+
+배포가 `analyzing`에서 소스를 읽어 환경변수 **이름**만 찾아 `deploy_env_vars`에 넣는다 (값은 읽지 않는다). 사용자가 값을 넣거나 건너뛴다. 첫 배포에서 값이 빈 필수 변수가 남아 있으면 `deploying` 직전에 `needs_input`으로 멈추고, 사용자가 `POST /env/continue`를 눌러야 이어 간다. 이미 서비스가 있는 재배포는 멈추지 않고 경고 로그만 남긴다.
+
+| Method | Endpoint | 설명 | 성공 |
+|--------|----------|------|------|
+| GET | `/api/deploys/{d_id}/env` | 배포의 환경변수 목록 (이름순). 값은 싣지 않는다 | 200 `Env_Read[]` |
+| PUT | `/api/deploys/{d_id}/env/{name}` | 값 입력 · 종류 지정 · 건너뛰기. 없는 이름이면 사용자가 직접 추가한 것(`source: "user"`, 필수)으로 만든다 | 200 `Env_Read` |
+| DELETE | `/api/deploys/{d_id}/env/{name}/value` | 저장된 값만 지운다. 변수 행은 남는다 | 200 `Env_Read` |
+| POST | `/api/deploys/{d_id}/env/continue` | 이어서 배포 (위 Deploy 표). 값이 빈 필수 변수가 남았으면 409 | 200 `Deploy_Read` |
+
+### PUT `/api/deploys/{d_id}/env/{name}` 본문 `Env_Update`
+
+```json
+{ "value": "INFO", "kind": "config", "skip": null }
+```
+
+세 필드 모두 선택이다. 보낸 것만 바뀐다.
+
+- `value`: 값 (최대 2000자). **쓰기 전용** - 어떤 응답에도 다시 나오지 않는다. 일반 설정(`config`)만 저장한다.
+- `kind`: `database` `cache` `external_api` `secret` `config` `unknown` 중 하나. `unknown`인 변수는 종류를 먼저 고른 뒤에만 값을 넣을 수 있다. 시크릿 종류(`database` `cache` `external_api` `secret`)로 바꾸면 이미 저장된 일반 값은 지워지고 상태가 `detected`로 돌아간다.
+- `skip`: `true`면 `skipped`(이번에는 값 없이 간다 - 첫 배포 멈춤 조건에서 빠진다). `false`면 건너뛰기를 취소한다 (값이 있으면 `set`, 없으면 `detected`). `value`와 함께 보낼 수 없다.
+
+### `Env_Read`
+
+```json
+{
+  "d_e_id": 3, "d_id": 2, "name": "LOG_LEVEL", "required": true, "has_default": false,
+  "kind": "config", "source": "code", "source_hint": "app/main.py:12",
+  "status": "set", "has_value": true, "needs_redeploy": false
+}
+```
+
+| 필드 | 값 |
+|------|-----|
+| `kind` | `database` `cache` `external_api` `secret` `config` `unknown` |
+| `source` | `code` `compose` `example` `runtime_error` `user` |
+| `status` | `detected`(값 없음) `set`(값 있음) `skipped` |
+| `has_value` | 값이 저장돼 있는지만 알려 준다. **값 자체는 어디에도 돌려주지 않는다** |
+| `needs_redeploy` | PUT·DELETE 응답에서만 의미가 있다. 서비스가 이미 떠 있는 배포에서 값이 바뀌었으면 `true` (바뀐 값은 다시 배포해야 반영된다). 건너뛰기만 바꾼 경우는 `false` |
+
+`source_hint`는 `파일:줄` 위치다 (코드 줄 내용은 아니다). compose·예시 파일에서 찾았거나 직접 추가했으면 줄 번호가 없거나 `null`이다.
+
+### 상태 코드와 `detail`
+
+| 코드 | 언제 | `detail` |
+|------|------|----------|
+| 400 | 이름이 `[A-Za-z_][A-Za-z0-9_]*` 100자 이내가 아님 | `환경변수 이름이 올바르지 않습니다` |
+| 400 | `kind`가 목록에 없음 | `환경변수 종류가 올바르지 않습니다` |
+| 400 | `value`가 2000자 초과 | `값은 2000자까지 입력할 수 있습니다` |
+| 400 | `value`와 `skip: true`를 함께 보냄 | `건너뛰기와 값은 함께 보낼 수 없습니다` |
+| 400 | 종류가 `unknown`인데 `value`를 보냄 | `종류를 먼저 골라 주세요` |
+| 404 | 없는(또는 삭제된) `d_id` | `해당 id의 배포가 없습니다` |
+| 404 | DELETE `/value`에서 없는 이름 | `해당 환경변수가 없습니다` |
+| 409 | `/env/continue`인데 `needs_input`이 아님 | `입력이 필요한 상태의 배포만 이어서 배포할 수 있습니다` |
+| 409 | `/env/continue`인데 값이 빈 필수 변수가 남음 | `필수 환경변수에 값이 없습니다 :A, B` (이름만 나열) |
+| 501 | 시크릿 종류(`database` `cache` `external_api` `secret`)에 `value`를 보냄 | `시크릿 값 저장은 아직 지원하지 않습니다 (사용자 AWS 보안 저장소 검증 후 지원)` |
+| 500 | 저장 실패 | `환경변수 저장 실패 :<예외 종류>` / `환경변수 값 삭제 실패 :<예외 종류>` / `이어서 배포 실패 :...` (값은 에러에 싣지 않는다) |
+
+**시크릿 값은 아직 받지 않는다 (결정 D8 검증 대기).** 시크릿은 사용자 AWS의 보안 저장소에 두기로 했지만, Express Mode가 컨테이너에 `secrets`를 넘기는 방식과 CloudFormation 템플릿(v3) 권한이 검증되지 않았다 (규칙 2). 그래서 시크릿 종류는 종류 지정·건너뛰기만 되고 값은 501이다. 일반 설정(`config`)만 `primaryContainer.environment`로 컨테이너에 들어간다.
+
+### 파이프라인과의 관계
+
+- `analyzing`: 소스에서 이름 찾기 → 규칙으로 종류 분류 → 모르는 것만 AI가 목록 중 하나를 고름 (AI를 못 쓰면 `unknown`으로 둔다. 정식 언어는 AI 없이도 끝까지 간다). 로그에는 개수만 남긴다 (`환경변수 N개를 찾았습니다 (필수 M개)`).
+- `needs_input`: 첫 배포에서 값이 빈 필수 변수가 있으면 `deploying` 직전에 멈춘다. 실패가 아니라 대기라 `error_step`/`error_msg`는 비어 있고 로컬 이미지는 그대로다. 경고 로그는 이름만 적는다 (`환경변수 입력이 필요합니다 :A, B`). 서버를 다시 켜도 그대로 남는다 (`pipeline_recover`가 건드리지 않는다).
+- `POST /env/continue`: 상태를 `queued`로 바꾸고 `deploying` 단계부터 돌린다. 이미지가 지워졌으면(작업 종료 뒤) 처음부터 다시 만든다. `[다시 배포]`는 `needs_input`에서 멈춘 지점이 아니라 `cloning`부터 다시 한다.
+- 배포가 환경변수 때문에 실패하면(`KeyError: 'X'`, `Missing required environment variable X`, `X is not defined`) 에러 글에서 대문자 이름만 뽑아 `source: "runtime_error"`, 필수, 종류 `unknown`으로 목록에 올리고 "필요한 환경변수가 설정되지 않았습니다." 해설을 보여 준다.
+
+## Advice (배포 전 분석 - 1단계 백엔드)
+
+레포를 임시 폴더에 얕게 클론해 읽기만 하고 바로 지운다. 배포 기록·AWS 호출·DB 쓰기가 없다. 같은 레포·같은 커밋이면 서버 메모리 캐시(최대 100개)에서 돌려준다. 판정은 규칙이 하고 AI는 환경변수 종류를 고를 때만 쓴다.
+
+### POST `/api/deploys/advice`
+
+```json
+{ "repo_url": "https://github.com/kjfcvx12/private-test", "branch": "main", "github_installation_id": 1 }
+```
+
+본문은 `POST /api/deploys`와 같다 (`repo_url` 필수, `branch`·`aws_account_id`·`github_installation_id` 선택). `github_installation_id`를 주면 그 설치의 토큰으로 private 레포도 읽는다. `aws_account_id`는 받기만 하고 쓰지 않는다 (AWS 호출이 없다).
+
+### `Deploy_Advice`
+
+```json
+{
+  "tier": "medium",
+  "confidence": "high",
+  "cpu": null,
+  "memory": null,
+  "cost": { "monthly_min": null, "monthly_max": null, "currency": "USD", "basis_date": null, "note": "트래픽에 따라 늘어납니다" },
+  "reasons": ["sqlalchemy, psycopg2-binary 라이브러리를 사용해 중간 사양으로 잡았습니다 (requirements.txt)"],
+  "needs": [
+    { "kind": "database", "supported": false, "message": "마법사가 아직 만들어 주지 못합니다", "count": null },
+    { "kind": "env_vars", "supported": true, "message": null, "count": 3 }
+  ],
+  "unknowns": ["환경변수 FOO의 종류를 알 수 없습니다"],
+  "language": "python",
+  "support_level": "official",
+  "app_dir": ".",
+  "commit_sha": "089917e2486d0e09f188474cb23fe93eec652751"
+}
+```
+
+| 필드 | 값 |
+|------|-----|
+| `tier` | `small` `medium` `large`. 정적 사이트 → small, 무거운 라이브러리(torch, pandas, puppeteer 등) → large, DB·캐시·워커 라이브러리나 의존성 40개 초과 → medium, 나머지 small (정적 사이트 판정이 먼저) |
+| `confidence` | `high` `medium` `low`. 의존성 파일을 못 읽었거나 종류를 모르는 환경변수가 2개 이상이면 low, 1개이거나 실험 지원 언어면 medium, 나머지 high |
+| `needs[].kind` | `database` `cache` `worker` `env_vars` `disk_write` `static_site`. `supported: false`는 마법사가 아직 만들어 주지 못하는 것 (`message`로 이유). `env_vars`는 `count`가 있고 1개 이상일 때만 나온다 |
+| `cpu` `memory` | **항상 `null`.** Express Mode가 허용하는 CPU·메모리 조합을 실제 배포로 확인하기 전이다 (결정 D10) |
+| `cost` | 숫자(`monthly_min` `monthly_max` `basis_date`)는 **항상 `null`**. 요금 구성을 검증하기 전에는 비운다. `note`만 채운다 |
+
+### 상태 코드와 `detail`
+
+| 코드 | 언제 | `detail` |
+|------|------|----------|
+| 400 | 주소 형식이 틀림 | `https://github.com/소유자/레포 형식의 주소만 받습니다.` |
+| 400 | 브랜치 형식이 틀림 | `브랜치 이름이 올바르지 않습니다.` |
+| 400 | 커밋 조회 실패 | `레포를 조회할 수 없습니다 :<마스킹된 사유>` |
+| 400 | 클론 실패 | `레포를 가져올 수 없습니다 :<마스킹된 사유>` |
+| 400 | 지원하는 프로젝트가 아님 | `매니페스트 파일을 찾지 못했습니다. 지원하는 형식의 프로젝트가 아닙니다.` |
+| 500 | 그 밖의 분석 실패 | `분석 실패 :<마스킹된 사유>` |
+
+`disk_write`는 소스에서 파일을 쓰는 코드 흔적(`open(..., "w")`, `write_text`, `fs.writeFile` 등)을 정규식·AST로 찾는 **추정**이다. 테스트 파일은 건너뛰며, 임시 파일·로그 쓰기를 잘못 잡을 수 있다.
 
 ## Accounts (M6 - 진행 중)
 
