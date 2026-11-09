@@ -281,7 +281,7 @@ details.env-group > summary { font-size: 14px; }
 
 /* 폰 폭 - 상단 바·입력 줄·목록·공통 터치 크기 (기존 화면 정리) */
 @media (max-width: 640px) {
-  .page { padding: 16px 12px 48px; }
+  .page { padding: 16px 16px 48px; }
   .card { padding: 16px; }
   .topbar { flex-wrap: wrap; padding: 6px 16px; gap: 0 12px; }
   .brand, .topbar-link { display: inline-flex; align-items: center; min-height: 40px; }
@@ -309,13 +309,18 @@ details.env-group > summary { font-size: 14px; }
   .terminal { height: min(360px, 60vh); }
 }
 
-/* 계정 연결 폰 폭 - 상자 아래 버튼 줄은 모자라면 줄을 바꾸고, 화살표·대화상자 입력·안내 그림 입력 칸의 터치 크기를 맞춘다 */
-@media (max-width: 640px) {
+/* 계정 상자 아래 버튼 줄 - 상자 두 개가 나란히 좁아지는 900px 이하부터 모자라면 줄을 바꾼다 */
+@media (max-width: 900px) {
   .account-foot { display: flex; flex-wrap: wrap; gap: 8px; }
   .account-foot > div { flex: 1 1 auto; }
   .account-foot button { width: 100%; padding-left: 8px; padding-right: 8px; white-space: nowrap; }
+}
+
+/* 계정 연결 폰 폭 - 화살표·대화상자 입력·안내 그림 입력 칸·안내 단계 안 링크의 터치 크기를 맞춘다 */
+@media (max-width: 640px) {
   button.account-arrow { min-width: 40px; }
   dialog { padding: 16px; }
   dialog input.grow { width: 100%; }
   .shot-input { display: flex; align-items: center; min-height: 40px; }
+  .guide-step a { display: inline-block; padding-block: 10px; }
 }
