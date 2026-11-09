@@ -19,6 +19,10 @@ from features.envvars.services import Env_Service
 from features.incidents.services import Incident_Service
 
 
+# 자동 복구 중에 배포가 바뀌어 되돌린 결과를 기록하지 않을 때 (409 의 detail)
+DEPLOY_CHANGED_DETAIL="복구 중에 배포가 변경되어 기록을 반영하지 않았습니다"
+
+
 class Deploy_Service:
 
     # 전 배포 조회
@@ -435,12 +439,19 @@ class Deploy_Service:
         if previous is None or previous.healthy_since is None or not previous.image_uri:
             return None
 
+        # 지금 떠 있는 이미지와 같은 버전으로는 되돌릴 이유가 없다
+        deploy=await Deploy_Crud.crud_deploy_get_by_d_id(db, d_id)
+        if deploy is not None:
+            await db.refresh(deploy)
+            if deploy.image_uri == previous.image_uri:
+                return None
+
         return previous
 
 
     # 되돌린 결과 반영 - 배포의 이미지·커밋을 이전 버전으로, 나쁜 릴리스는 failed, 이전 버전은 current. 나쁜 커밋은 bad_commit_sha 에 남겨 자동 재배포를 막는다
     @staticmethod
-    async def services_deploy_apply_rollback(db: AsyncSession, d_id: int, release):
+    async def services_deploy_apply_rollback(db: AsyncSession, d_id: int, release, expected_image_uri: str | None = None):
         try:
             if release is None or release.d_id != d_id or release.state != 'previous' or not release.image_uri:
                 raise HTTPException(status_code=status.HTTP_409_CONFLICT,
@@ -451,6 +462,11 @@ class Deploy_Service:
             if not deploy or deploy.status == 'deleted':
                 raise HTTPException(status_code=status.HTTP_404_NOT_FOUND,
                                     detail='해당 id의 배포가 없습니다')
+
+            # expected_image_uri 가 있으면 복구하는 사이 배포가 바뀌지 않았을 때만 반영한다 (새 배포의 상태를 덮어쓰지 않게)
+            await db.refresh(deploy)
+            if expected_image_uri is not None and (deploy.status != 'running' or deploy.image_uri != expected_image_uri):
+                raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=DEPLOY_CHANGED_DETAIL)
 
             current=await Deploy_Crud.crud_deploy_release_get_current(db, d_id)
             bad_commit_sha=(current.commit_sha if current and current.commit_sha else None) or deploy.commit_sha

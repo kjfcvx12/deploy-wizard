@@ -152,3 +152,14 @@ class Incident_Crud:
     async def crud_incident_get_by_statuses(db:AsyncSession, statuses:tuple[str, ...]) -> list[Incident]:
         result=await db.execute(select(Incident).where(Incident.status.in_(statuses)).order_by(Incident.i_id.asc()))
         return result.scalars().all()
+
+
+    # 배포의 가장 최근 복구 시도 - 모든 인시던트를 통틀어 (시작 시각, 번호 내림차순)
+    @staticmethod
+    async def crud_incident_action_latest_by_d_id(db:AsyncSession, d_id:int) -> Recovery_Action | None:
+        result=await db.execute(select(Recovery_Action)
+                                .join(Incident, Incident.i_id == Recovery_Action.i_id)
+                                .where(Incident.d_id == d_id)
+                                .order_by(Recovery_Action.started_at.desc(), Recovery_Action.r_a_id.desc())
+                                .limit(1))
+        return result.scalars().first()
