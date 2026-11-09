@@ -8,7 +8,7 @@ from fastapi import HTTPException, status
 from shared.masking import mask_text
 
 from features.deploys.crud import Deploy_Crud
-from features.deploys.scheme import Deploy_Create, Deploy_Health
+from features.deploys.scheme import Deploy_Create, Deploy_Health, Deploy_Settings_Update
 from features.deploys.pipeline import Deploy_Pipeline, PROGRESS_STATUSES
 
 from features.repos.services import Repo_Service
@@ -419,3 +419,49 @@ class Deploy_Service:
     @staticmethod
     async def services_deploy_release_previous(db: AsyncSession, d_id: int):
         return await Deploy_Crud.crud_deploy_release_get_previous(db, d_id)
+
+
+    # 배포별 설정 변경 - 보낸 항목만 바꾼다 (자동 재배포, 자동 복구)
+    @staticmethod
+    async def services_deploy_settings_update(db: AsyncSession, d_id: int, body: Deploy_Settings_Update):
+        try:
+            await Deploy_Service.services_deploy_get_d_id(db, d_id)
+
+            changes=body.model_dump(exclude_none=True)
+
+            if not changes:
+                raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST,
+                                    detail='변경할 설정을 하나 이상 보내 주세요')
+
+            await Deploy_Crud.crud_deploy_update(db, d_id, changes)
+            await db.commit()
+
+            return await Deploy_Service.services_deploy_get_d_id(db, d_id)
+
+        except HTTPException:
+            raise
+
+        except Exception as e:
+            await db.rollback()
+            raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                                detail=f"설정 변경 실패 :{mask_text(str(e))}")
+
+
+    # 헬스체크 결과 반영 - running 인 배포만. health_state·last_health_at 을 갱신하고, 정상이면 current 릴리스의 healthy_since 를 처음 한 번 채운다
+    # 이미 running 이 아니면 아무것도 쓰지 않고 False (커밋하지 않는다)
+    @staticmethod
+    async def services_deploy_health_apply(db: AsyncSession, d_id: int, ok: bool, checked_at: datetime) -> bool:
+        deploy=await Deploy_Crud.crud_deploy_get_by_d_id(db, d_id)
+
+        if not deploy or deploy.status != 'running':
+            return False
+
+        await Deploy_Crud.crud_deploy_update(db, d_id, {"health_state": 'healthy' if ok else 'unhealthy', "last_health_at": checked_at})
+
+        if ok:
+            current=await Deploy_Crud.crud_deploy_release_get_current(db, d_id)
+            if current and current.healthy_since is None:
+                await Deploy_Crud.crud_deploy_release_mark_healthy(db, current.d_r_id, checked_at)
+
+        await db.commit()
+        return True

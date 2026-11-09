@@ -1,6 +1,7 @@
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 from sqlalchemy import update
+from datetime import datetime
 
 from features.deploys.models import Deploy, Deploy_Log, Deploy_Issue, Deploy_Release
 from features.deploys.scheme import Deploy_Create
@@ -182,3 +183,12 @@ class Deploy_Crud:
         db.add(db_release)
         await db.flush()
         return db_release
+
+
+    # 릴리스의 정상 확인 시각 기록 - 비어 있을 때만 채운다
+    @staticmethod
+    async def crud_deploy_release_mark_healthy(db:AsyncSession, d_r_id:int, healthy_since:datetime) -> int:
+        result=await db.execute(update(Deploy_Release)
+                                .where(Deploy_Release.d_r_id == d_r_id, Deploy_Release.healthy_since.is_(None))
+                                .values(healthy_since=healthy_since))
+        return result.rowcount

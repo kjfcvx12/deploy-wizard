@@ -27,6 +27,7 @@ from features.deploys.pipeline import Deploy_Pipeline
 from features.accounts import router as accounts
 from features.watches import router as watches
 from features.watches.services import Watch_Service
+from features.health.services import Health_Service
 
 
 DIST_DIR=Path(__file__).parent / "dist"
@@ -45,11 +46,19 @@ async def lifespan(app:FastAPI):
     # 코드 변경 감지 폴링 - 계속 도는 백그라운드 태스크 (M6)
     poll_task=asyncio.create_task(Watch_Service.services_watch_poll_loop())
 
+    # 헬스 감시 루프 - HEALTH_MONITOR_ENABLED 가 꺼져 있으면 None (D1)
+    health_task=Health_Service.services_health_monitor_start()
+
     yield
 
     poll_task.cancel()
     with contextlib.suppress(asyncio.CancelledError):
         await poll_task
+
+    if health_task is not None:
+        health_task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await health_task
     await async_engine.dispose()
 
 app=FastAPI(title="AWS 자동 배포 마법사", lifespan=lifespan)

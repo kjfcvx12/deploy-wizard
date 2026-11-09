@@ -19,6 +19,8 @@ Base URL: `http://localhost:8081` · 전부 JSON · 인증 없음(로컬 전용)
 | GET | `/api/deploys/{d_id}/logs?after=` | `d_l_id > after`인 로그 (최대 500줄) | 200 `Deploy_Log_Read[]` |
 | GET | `/api/deploys/{d_id}/issues` | 문제 이력 - 다시 배포해도 지워지지 않는 지난 실패들 (최신순) | 200 `Deploy_Issue_Read[]` |
 | GET | `/api/deploys/{d_id}/health` | 공개 주소에 GET을 보내 본다 (AWS 권한 불필요) | 200 `Deploy_Health` |
+| GET | `/api/deploys/{d_id}/health-history?hours=24` | 서버가 1분마다 남긴 헬스체크 이력 - 최근 `hours`시간(1~168), 최신 1440건을 오래된 것부터 | 200 `Health_Check_Read[]` |
+| PATCH | `/api/deploys/{d_id}/settings` | 배포별 설정 변경 - 보낸 항목만 바뀐다 (아래 "Settings") | 200 `Deploy_Read` |
 | POST | `/api/deploys/{d_id}/redeploy` | 다시 배포. 서비스가 있으면 새 이미지로 갱신 | 200 `Deploy_Read` |
 | POST | `/api/deploys/{d_id}/env/continue` | 이어서 배포 - 환경변수 입력을 마친 `needs_input` 배포를 `deploying` 단계부터 다시 돌린다 (아래 "Env"). `needs_input`이 아니면 409 → `queued` | 200 `Deploy_Read` |
 | POST | `/api/deploys/advice` | 배포 전 분석 - 레포를 읽기만 하고 사양 수준·필요한 것·확신도를 돌려준다. 배포 기록·AWS 호출 없음 (아래 "Advice") | 200 `Deploy_Advice` |
@@ -28,7 +30,7 @@ Base URL: `http://localhost:8081` · 전부 JSON · 인증 없음(로컬 전용)
 
 | 상태 코드 | 언제 |
 |-----------|------|
-| 400 | 레포 주소·브랜치 형식이 틀림, 레포 조회 실패 |
+| 400 | 레포 주소·브랜치 형식이 틀림, 레포 조회 실패, 설정 변경 본문이 비어 있음 |
 | 404 | 없는 `d_id`, 이미 삭제된 배포 |
 | 409 | 진행 중인 배포에 다시 배포·삭제 요청 |
 | 500 | AWS 삭제 실패 등 |
@@ -133,6 +135,28 @@ Base URL: `http://localhost:8081` · 전부 JSON · 인증 없음(로컬 전용)
 ```json
 { "default_branch": "main", "branches": ["main", "kjfcvx12", "oxo"] }
 ```
+
+### PATCH `/api/deploys/{d_id}/settings`
+
+```json
+{ "auto_redeploy": false, "auto_recover": true }
+```
+
+- 두 항목 모두 선택. 보내지 않은(또는 `null`) 항목은 그대로 둔다. 하나도 없으면(빈 본문) 400 `변경할 설정을 하나 이상 보내 주세요`.
+- 모르는 항목은 422 (`extra=forbid`) - `status` 같은 값은 여기서 못 바꾼다.
+- 없는 `d_id`, 삭제된 배포는 404. 응답은 바뀐 `Deploy_Read`.
+
+### GET `/api/deploys/{d_id}/health-history`
+
+`hours`는 1~168 (기본 24, 범위 밖은 422). `HEALTH_INTERVAL_SECONDS`(기본 60초)마다 `running` 이면서 주소가 있는 배포의 `endpoint + health_check_path`에 GET을 보내 남긴 기록이며, `HEALTH_RETENTION_DAYS`(기본 7일)보다 오래된 것은 지워진다. 응답은 시간순(오래된 것부터), 기간 안에 1440건을 넘으면 최신 1440건. 없는 배포는 404.
+
+### `Health_Check_Read`
+
+```json
+{ "h_c_id": 9001, "d_id": 2, "ok": false, "status_code": 502, "latency_ms": 5000, "detail": "HTTP 502", "checked_at": "2026-11-09T03:12:00" }
+```
+
+`ok`: 상태코드 400 미만이면 정상 (`GET /health`와 같은 기준). `status_code`/`latency_ms`는 응답이 없으면 null. `detail`은 실패 사유 한 줄(`HTTP 503`, `시간 초과`, `연결 실패` 등, 마스킹 후 저장, 응답 헤더·본문은 넣지 않는다). `checked_at`은 UTC. 리다이렉트는 같은 호스트 안에서만 따라간다.
 
 ### `Deploy_Health`
 

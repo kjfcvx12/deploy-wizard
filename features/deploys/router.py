@@ -1,11 +1,14 @@
-from fastapi import APIRouter, Depends, status
+from fastapi import APIRouter, Depends, Query, status
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from shared.database import get_db
 
-from features.deploys.scheme import Deploy_Read, Deploy_Create, Deploy_Log_Read, Deploy_Issue_Read, Deploy_Health
+from features.deploys.scheme import Deploy_Read, Deploy_Create, Deploy_Log_Read, Deploy_Issue_Read, Deploy_Health, Deploy_Settings_Update
 from features.deploys.services import Deploy_Service
+
+from features.health.scheme import Health_Check_Read
+from features.health.services import Health_Service
 
 from features.repos.scheme import Repo_Remote
 
@@ -53,6 +56,18 @@ async def router_deploy_get_issues(d_id: int, db: AsyncSession = Depends(get_db)
 @router.get('/{d_id}/health', response_model=Deploy_Health)
 async def router_deploy_health(d_id: int, db: AsyncSession = Depends(get_db)):
     return await Deploy_Service.services_deploy_health(db, d_id)
+
+
+# GET 헬스체크 이력 - 시간순, 최대 1440건
+@router.get('/{d_id}/health-history', response_model=list[Health_Check_Read])
+async def router_deploy_health_history(d_id: int, hours: int = Query(24, ge=1, le=168), db: AsyncSession = Depends(get_db)):
+    return await Health_Service.services_health_history(db, d_id, hours)
+
+
+# PATCH 배포별 설정 변경 (자동 재배포, 자동 복구)
+@router.patch('/{d_id}/settings', response_model=Deploy_Read)
+async def router_deploy_settings_update(d_id: int, body: Deploy_Settings_Update, db: AsyncSession = Depends(get_db)):
+    return await Deploy_Service.services_deploy_settings_update(db, d_id, body)
 
 
 # POST 다시 배포

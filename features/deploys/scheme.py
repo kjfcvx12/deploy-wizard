@@ -1,4 +1,4 @@
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 from datetime import datetime
 from typing import Annotated
 import json
@@ -121,3 +121,11 @@ class Deploy_Health(BaseModel):
     health: str
     status_code: int | None = None
     detail: str | None = None
+
+
+# 배포별 설정 변경 - 보낸 항목만 바꾼다 (모르는 항목은 거부)
+class Deploy_Settings_Update(BaseModel):
+    auto_redeploy: bool | None = None
+    auto_recover: bool | None = None
+
+    model_config = ConfigDict(extra='forbid')
