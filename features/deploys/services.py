@@ -415,6 +415,12 @@ class Deploy_Service:
                                 detail=f"릴리스 기록 실패 :{mask_text(str(e))}")
 
 
+    # 현재 릴리스 조회 - 인시던트가 "새 버전 배포 직후인가"를 볼 때 쓴다. 없으면 None
+    @staticmethod
+    async def services_deploy_release_current(db: AsyncSession, d_id: int):
+        return await Deploy_Crud.crud_deploy_release_get_current(db, d_id)
+
+
     # 되돌리기 대상 조회 - 직전 정상 버전(previous) 중 이미지 주소가 있는 가장 최근 것. 없으면 None
     @staticmethod
     async def services_deploy_release_previous(db: AsyncSession, d_id: int):

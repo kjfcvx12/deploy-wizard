@@ -378,6 +378,54 @@ Base URL: `http://localhost:8081` · 전부 JSON · 인증 없음(로컬 전용)
 
 폴링(`Watch_Service.services_watch_poll_loop`, `WATCH_POLL_SECONDS` 기본 3600초)은 API가 없다 - `main.py` 백그라운드 태스크로만 돈다.
 
+## Incidents (D1 - 장애 감지·원인 설명, 조회만)
+
+서버가 만들고 닫는다. 사용자가 만들거나 지우는 API는 없다. 설계는 `docs/app-web/04-api-spec.md` §3.
+
+| Method | Endpoint | 설명 | 성공 |
+|--------|----------|------|------|
+| GET | `/api/incidents?status=&d_id=&after=` | 인시던트 목록, 최신순 100건 | 200 `Incident_Read[]` |
+| GET | `/api/incidents/{i_id}` | 한 건과 복구 시도 이력 | 200 `Incident_Detail` |
+| GET | `/api/deploys/{d_id}/incidents?after=` | 한 배포의 인시던트들, 최신순 100건 | 200 `Incident_Read[]` |
+
+- `status`는 `open` `recovering` `resolved` `needs_action` 중 하나 (그 밖의 값은 400). `d_id`는 선택 필터. `after`는 `i_id` 커서(1 이상, 아니면 422) - 그보다 오래된(`i_id`가 작은) 것부터 최신순으로 100건.
+- `/api/deploys/{d_id}/incidents` 는 인시던트 라우터(`features/incidents/router.py`)가 받는다. 없는 배포(삭제된 배포 포함)는 404 `해당 id의 배포가 없습니다`. 없는 `i_id`는 404 `해당 id의 인시던트가 없습니다`.
+
+### 인시던트가 열리고 닫히는 때
+
+- 헬스 감시가 `running` 배포의 점검 결과를 저장한 직후 훅이 불린다. **마지막 성공 이후 연속 실패가 `HEALTH_FAILURE_THRESHOLD`(기본 3)번이 되면** `open` 인시던트를 만든다. 끝나지 않은(`open`·`recovering`·`needs_action`) 인시던트가 이미 있으면 새로 만들지 않는다 (배포마다 하나).
+- `kind`: 새 버전 배포 후 `NEW_RELEASE_WINDOW_SECONDS`(기본 900초) 안이고 되돌릴 이전 릴리스가 있으면 `bad_release`, 최근 실패가 모두 연결 거부면 `crash_loop`, 그 밖에는 `unhealthy`.
+- 원인 수집·설명·알림은 백그라운드 태스크가 한다 (모니터를 붙잡지 않는다). 서비스 상태 조회(`describe`, 읽기 전용)와 최근 헬스체크 5줄을 마스킹해 `evidence`(4000자 이하)에 저장하고, 규칙 표로 `explain`을 만든다. 규칙에 없으면 `source: "none"` 기본 안내. 처리 중 오류가 나면 `needs_action`으로 돌리고 마스킹한 오류를 `evidence` 끝에 덧붙인다.
+- 자동 복구가 꺼져 있으면(`auto_recover=false`) 바로 `needs_action`. 켜져 있으면 복구 단계로 넘어간다 (복구 실행은 다음 작업).
+- 정상으로 돌아오면 `open`·`needs_action` 인시던트를 `resolved`(+`resolved_at`)로 닫는다. `recovering`은 감시가 닫지 않는다.
+
+### `Incident_Read` / `Incident_Detail`
+
+```json
+{
+  "i_id": 7, "d_id": 2, "kind": "unhealthy", "status": "open",
+  "summary": "앱이 오류로 응답하고 있습니다.",
+  "explain": {
+    "summary": "앱이 오류로 응답하고 있습니다.",
+    "cause": "앱이 떠 있지만 헬스체크 요청에 서버 오류(5xx)로 답하고 있습니다. …",
+    "fix_where": "AWS 콘솔 ECS 서비스의 로그 탭(CloudWatch Logs)에서 오류 메시지를 확인하고, 해당 코드가 있는 레포 파일을 고칩니다.",
+    "actions": ["로그에서 마지막 오류 줄을 확인합니다."],
+    "source": "rule"
+  },
+  "evidence": "서비스 상태: ACTIVE (-)\n최근 헬스체크:\n- 2026-11-09 03:12:00 실패 코드=503 …",
+  "detected_at": "2026-11-09T03:12:30", "resolved_at": null,
+  "created_at": "…", "updated_at": "…",
+  "actions": [
+    { "r_a_id": 11, "i_id": 7, "action": "restart", "d_r_id": null, "result": "failed", "detail": "…", "started_at": "…", "finished_at": "…" }
+  ]
+}
+```
+
+- `Incident_Read`는 `actions`만 없다. `explain`은 저장된 JSON을 푼 객체이고, 아직 만들어지기 전(또는 읽을 수 없으면)이면 null. `source`: `rule` `llm` `none`.
+- `fix_where`는 사용자 레포·설정·콘솔 위치를 가리키는 안내 문장이다. 마법사가 사용자 코드를 고치지는 않는다.
+- `explain`·`evidence`·`summary`는 저장 전에 마스킹한다 (토큰이 섞여 나가지 않는다).
+- `actions[]`는 `started_at` 순서. 이 작업에서는 항상 비어 있다 (복구 실행은 다음 작업).
+
 ## 기타
 
 | Method | Endpoint | 설명 |
