@@ -3,11 +3,14 @@ import { ActivityIndicator, FlatList, Pressable, RefreshControl, StyleSheet, Tex
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import { Stack, useFocusEffect, useRouter } from 'expo-router'
 import { deployApi } from '../src/api'
+import BellButton from '../src/components/ops/BellButton'
 import HealthDot from '../src/components/ops/HealthDot'
 import ProblemBanner from '../src/components/ops/ProblemBanner'
+import QuickLinks from '../src/components/ops/QuickLinks'
 import StatusBadge from '../src/components/StatusBadge'
 import { isProgress, repoName } from '../src/constants'
 import { usePolling } from '../src/hooks/usePolling'
+import { useUnreadCount } from '../src/hooks/useUnreadCount'
 import { radius, spacing, useColors } from '../src/theme'
 
 // 목록 갱신 간격 (웹 DeployListPage 와 같다) - 진행 중이면 3초, 아니면 15초, 실패하면 10초
@@ -95,19 +98,22 @@ export default function DeployListScreen() {
   const insets = useSafeAreaInsets()
   const [pulling, setPulling] = useState(false)
   const { data, error, loading, refresh } = usePolling(() => deployApi.getAll(), listDelay, [])
+  const { count: unread, refresh: refreshUnread } = useUnreadCount()
 
   // 열린 인시던트가 있는 배포 - 목록 위에 배너로 알린다
   const problems = data ? data.filter((d) => d.open_incident_id) : []
 
   const goNew = () => router.push('/new')
   const goAccounts = () => router.push('/accounts')
+  const goNotifications = () => router.push('/notifications')
 
-  // 다른 화면에서 돌아오면 목록을 다시 받는다 (계정 연결·새 배포·상세에서 바뀐 것이 낡은 카드로 남지 않게). 처음 열 때는 usePolling 이 이미 받는다
+  // 다른 화면에서 돌아오면 목록과 안 읽은 알림 수를 다시 받는다 (계정 연결·새 배포·상세·알림 화면에서 바뀐 것이 낡게 남지 않게). 처음 열 때는 usePolling 이 이미 받는다
   const focusedOnce = useRef(false)
   useFocusEffect(useCallback(() => {
     if (!focusedOnce.current) { focusedOnce.current = true; return }
     refresh()
-  }, [refresh]))
+    refreshUnread()
+  }, [refresh, refreshUnread]))
 
   // 끌어당겨 새로고침
   const onPull = async () => {
@@ -135,16 +141,17 @@ export default function DeployListScreen() {
   }
 
   return (
-    <>
+    <View style={styles.screen}>
       <Stack.Screen options={{
         title: '배포',
         headerRight: () => (
           <View style={styles.headerRight}>
-            <ActionButton flat label="계정 연결" onPress={goAccounts} />
+            <BellButton count={unread} onPress={goNotifications} />
             <ActionButton flat label="＋ 새 배포" onPress={goNew} />
           </View>
         ),
       }} />
+      <QuickLinks links={[{ label: '계정 연결', onPress: goAccounts }]} />
       <FlatList
         testID="deploy-list"
         data={data || []}
@@ -161,11 +168,12 @@ export default function DeployListScreen() {
         contentContainerStyle={[styles.content, { paddingBottom: spacing.xl * 2 + insets.bottom }]}
         style={{ backgroundColor: colors.bg }}
       />
-    </>
+    </View>
   )
 }
 
 const styles = StyleSheet.create({
+  screen: { flex: 1 },
   content: { padding: spacing.lg, paddingBottom: spacing.xl * 2, gap: spacing.md },
   card: {
     flexDirection: 'row',
