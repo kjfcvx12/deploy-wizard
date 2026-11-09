@@ -1,12 +1,172 @@
-import { Text, View } from 'react-native'
-import { useColors } from '../src/theme'
+import { useState } from 'react'
+import { ActivityIndicator, FlatList, Pressable, RefreshControl, StyleSheet, Text, View } from 'react-native'
+import { Stack, useRouter } from 'expo-router'
+import { deployApi } from '../src/api'
+import StatusBadge from '../src/components/StatusBadge'
+import { isProgress, repoName } from '../src/constants'
+import { usePolling } from '../src/hooks/usePolling'
+import { radius, spacing, useColors } from '../src/theme'
 
-// 배포 목록 화면 자리 (다음 작업에서 채운다)
-export default function Index() {
+// 목록 갱신 간격 (웹 DeployListPage 와 같다) - 진행 중이면 3초, 아니면 15초, 실패하면 10초
+const FAST_MS = 3000
+const SLOW_MS = 15000
+const RETRY_MS = 10000
+
+// 다음 조회까지 기다릴 시간을 정한다
+function listDelay(value, error) {
+  if (error) return RETRY_MS
+  return value.some((d) => isProgress(d.status)) ? FAST_MS : SLOW_MS
+}
+
+// 카드 한 줄 메타 - #번호 · 브랜치 · 언어 · 주소 · 환경변수 안내 (웹과 같은 조립)
+function metaLine(deploy) {
+  return `#${deploy.d_id}`
+    + (deploy.branch ? ` · ${deploy.branch}` : '')
+    + (deploy.language ? ` · ${deploy.language}` : '')
+    + (deploy.endpoint ? ` · ${deploy.endpoint.replace('https://', '')}` : '')
+    + (deploy.env_pending > 0 ? ` · 환경변수 ${deploy.env_pending}개 입력 필요` : '')
+}
+
+// ＋ 새 배포 버튼 - 헤더에서는 글자만(flat), 빈 화면에서는 채운 버튼
+function NewDeployButton({ onPress, flat = false }) {
   const colors = useColors()
   return (
-    <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.bg }}>
-      <Text style={{ color: colors.text }}>배포 마법사</Text>
+    <Pressable
+      accessibilityRole="button"
+      onPress={onPress}
+      style={({ pressed }) => [styles.primary, !flat && { backgroundColor: colors.accent }, { opacity: pressed ? 0.6 : 1 }]}
+    >
+      <Text style={[styles.primaryText, { color: flat ? colors.accent : colors.accentText }]}>＋ 새 배포</Text>
+    </Pressable>
+  )
+}
+
+// 서버에 닿지 못했을 때의 안내와 다시 시도 버튼
+function ErrorNotice({ message, onRetry }) {
+  const colors = useColors()
+  return (
+    <View style={[styles.notice, { backgroundColor: colors.errBg }]}>
+      <Text style={[styles.noticeText, { color: colors.err }]}>서버에 연결할 수 없습니다 :{message}</Text>
+      <Pressable
+        accessibilityRole="button"
+        onPress={onRetry}
+        style={({ pressed }) => [styles.secondary, { borderColor: colors.err, opacity: pressed ? 0.7 : 1 }]}
+      >
+        <Text style={[styles.secondaryText, { color: colors.err }]}>다시 시도</Text>
+      </Pressable>
     </View>
   )
 }
+
+// 배포 한 건 카드 - 누르면 상세 화면으로 간다
+function DeployCard({ deploy, onPress }) {
+  const colors = useColors()
+  return (
+    <Pressable
+      accessibilityRole="button"
+      onPress={onPress}
+      style={({ pressed }) => [
+        styles.card,
+        { backgroundColor: pressed ? colors.surface2 : colors.surface, borderColor: colors.border },
+      ]}
+    >
+      <View style={styles.cardBody}>
+        <Text style={[styles.name, { color: colors.text }]}>{repoName(deploy.repo_url)}</Text>
+        <Text style={[styles.meta, { color: colors.muted }]}>{metaLine(deploy)}</Text>
+      </View>
+      <StatusBadge status={deploy.status} />
+    </Pressable>
+  )
+}
+
+// 배포 목록 화면 (S-02) - 내가 배포한 서비스와 현재 상태
+export default function DeployListScreen() {
+  const colors = useColors()
+  const router = useRouter()
+  const [pulling, setPulling] = useState(false)
+  const { data, error, loading, refresh } = usePolling(() => deployApi.getAll(), listDelay, [])
+
+  const goNew = () => router.push('/new')
+
+  // 끌어당겨 새로고침
+  const onPull = async () => {
+    setPulling(true)
+    try {
+      await refresh()
+    } finally {
+      setPulling(false)
+    }
+  }
+
+  // 목록이 비었거나 아직 없을 때 보여 줄 것
+  let empty = null
+  if (!data && loading) {
+    empty = <ActivityIndicator accessibilityLabel="불러오는 중" size="large" color={colors.accent} style={styles.spinner} />
+  } else if (!data && error) {
+    empty = <ErrorNotice message={error.message} onRetry={refresh} />
+  } else if (data && data.length === 0) {
+    empty = (
+      <View style={styles.empty}>
+        <Text style={[styles.emptyText, { color: colors.muted }]}>아직 배포한 것이 없습니다.</Text>
+        <NewDeployButton onPress={goNew} />
+      </View>
+    )
+  }
+
+  return (
+    <>
+      <Stack.Screen options={{ title: '배포', headerRight: () => <NewDeployButton flat onPress={goNew} /> }} />
+      <FlatList
+        data={data || []}
+        keyExtractor={(deploy) => String(deploy.d_id)}
+        renderItem={({ item }) => <DeployCard deploy={item} onPress={() => router.push(`/deploys/${item.d_id}`)} />}
+        ListHeaderComponent={data && error ? <ErrorNotice message={error.message} onRetry={refresh} /> : null}
+        ListEmptyComponent={empty}
+        refreshControl={<RefreshControl refreshing={pulling} onRefresh={onPull} tintColor={colors.accent} colors={[colors.accent]} />}
+        contentContainerStyle={styles.content}
+        style={{ backgroundColor: colors.bg }}
+      />
+    </>
+  )
+}
+
+const styles = StyleSheet.create({
+  content: { padding: spacing.lg, paddingBottom: spacing.xl * 2, gap: spacing.md },
+  card: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    justifyContent: 'space-between',
+    gap: spacing.md,
+    minHeight: 64,
+    padding: spacing.lg,
+    borderWidth: 1,
+    borderRadius: radius.md,
+  },
+  cardBody: { flex: 1, minWidth: 0 },
+  name: { fontSize: 16, fontWeight: '700' },
+  meta: { fontSize: 13, marginTop: spacing.xs },
+  primary: {
+    minHeight: 44,
+    minWidth: 44,
+    paddingHorizontal: spacing.lg,
+    borderRadius: radius.md,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  primaryText: { fontSize: 15, fontWeight: '700' },
+  secondary: {
+    minHeight: 44,
+    alignSelf: 'flex-start',
+    paddingHorizontal: spacing.lg,
+    borderWidth: 1,
+    borderRadius: radius.md,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  secondaryText: { fontSize: 15, fontWeight: '700' },
+  notice: { padding: spacing.lg, borderRadius: radius.md, gap: spacing.md },
+  noticeText: { fontSize: 14 },
+  empty: { alignItems: 'center', gap: spacing.lg, paddingVertical: spacing.xl * 2 },
+  emptyText: { fontSize: 15, textAlign: 'center' },
+  spinner: { marginTop: spacing.xl * 2 },
+})
