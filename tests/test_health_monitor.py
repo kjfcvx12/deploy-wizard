@@ -359,6 +359,8 @@ async def test_health_default_checker_rules(monkeypatch):
             return httpx.Response(200, text="SECRET BODY")
         if request.url.path == "/moved":
             return httpx.Response(302, headers={"location": "/ok"})
+        if request.url.path == "/loop":
+            return httpx.Response(302, headers={"location": "/loop"})
         if request.url.path == "/offsite":
             return httpx.Response(302, headers={"location": "https://evil.example.net/steal"})
         return httpx.Response(503, text="boom")
@@ -377,10 +379,17 @@ async def test_health_default_checker_rules(monkeypatch):
     ok, code, _, _=await Health_Service.services_health_default_checker("https://svc.example.com/moved")
     assert (ok, code) == (True, 200)
 
+    # 다른 호스트로 가는 리다이렉트는 따라가지 않고, 정상으로 치지도 않는다
     seen.clear()
-    ok, code, _, _=await Health_Service.services_health_default_checker("https://svc.example.com/offsite")
+    ok, code, _, detail=await Health_Service.services_health_default_checker("https://svc.example.com/offsite")
     assert all("evil.example.net" not in u for u in seen)
-    assert ok is True and code == 302
+    assert (ok, code, detail) == (False, 302, "다른 호스트로 이동")
+
+    # 같은 호스트 안에서 끝없이 도는 리다이렉트는 횟수 제한 뒤 실패
+    seen.clear()
+    ok, code, _, detail=await Health_Service.services_health_default_checker("https://svc.example.com/loop")
+    assert (ok, code, detail) == (False, 302, "리다이렉트 반복")
+    assert len(seen) == 6
 
 
 @pytest.mark.asyncio
@@ -399,3 +408,53 @@ async def test_health_default_checker_connection_error_has_short_masked_detail(m
 
     assert ok is False and code is None
     assert detail and "ghp_" not in detail and len(detail) <= 200
+
+
+@pytest.mark.asyncio
+async def test_health_check_once_skips_deploy_stopped_during_checks(db, monkeypatch):
+    stays=await make_deploy(db, endpoint="https://stays.example.com")
+    flips=await make_deploy(db, endpoint="https://flips.example.com")
+    await db.commit()
+
+    hooked=[]
+
+    async def hook(db_arg, d_id, ok):
+        hooked.append(d_id)
+
+    monkeypatch.setattr(Incident_Service, "services_incident_on_result", staticmethod(hook))
+
+    # 점검하는 동안 다른 세션이 배포를 멈춘다
+    async def flip_to_stopped():
+        async with AsyncSessionLocal() as other:
+            (await other.get(Deploy, flips)).status='stopped'
+            await other.commit()
+        return (False, 503, 5, "HTTP 503")
+
+    checked=await Health_Service.services_health_check_once(db, now=NOW, checker=fake_checker({
+        "https://stays.example.com/health": (True, 200, 5, None),
+        "https://flips.example.com/health": flip_to_stopped,
+    }))
+
+    assert checked == [stays]
+    assert hooked == [stays]
+    assert await Health_Crud.crud_health_get_recent(db, flips) == []
+    assert len(await Health_Crud.crud_health_get_recent(db, stays)) == 1
+
+    async with AsyncSessionLocal() as fresh:
+        stopped=await fresh.get(Deploy, flips)
+        running=await fresh.get(Deploy, stays)
+    assert (stopped.status, stopped.health_state, stopped.last_health_at) == ('stopped', 'unknown', None)
+    assert (running.health_state, running.last_health_at) == ('healthy', NOW)
+
+
+@pytest.mark.asyncio
+async def test_health_consecutive_failures_orders_by_checked_at_then_id(db):
+    d_id=await make_deploy(db)
+    # h_c_id 는 뒤지만 checked_at 이 성공보다 앞선 실패는 "성공 이후"가 아니다
+    await Health_Crud.crud_health_create(db, d_id, True, checked_at=NOW)
+    await Health_Crud.crud_health_create(db, d_id, False, checked_at=NOW - timedelta(minutes=5))
+    await Health_Crud.crud_health_create(db, d_id, False, checked_at=NOW + timedelta(minutes=1))
+    await Health_Crud.crud_health_create(db, d_id, False, checked_at=NOW + timedelta(minutes=2))
+    await db.commit()
+
+    assert await Health_Service.services_health_consecutive_failures(db, d_id) == 2

@@ -51,14 +51,14 @@ async def lifespan(app:FastAPI):
 
     yield
 
-    poll_task.cancel()
-    with contextlib.suppress(asyncio.CancelledError):
-        await poll_task
-
-    if health_task is not None:
-        health_task.cancel()
+    # 둘 다 먼저 취소한 뒤 하나씩 기다린다 - 한쪽 종료가 꼬여도 다른 쪽이 남지 않게
+    background_tasks=[task for task in (poll_task, health_task) if task is not None]
+    for task in background_tasks:
+        task.cancel()
+    for task in background_tasks:
         with contextlib.suppress(asyncio.CancelledError):
-            await health_task
+            await task
+
     await async_engine.dispose()
 
 app=FastAPI(title="AWS 자동 배포 마법사", lifespan=lifespan)

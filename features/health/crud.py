@@ -1,6 +1,6 @@
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
-from sqlalchemy import delete, func
+from sqlalchemy import delete, func, or_, and_
 from datetime import datetime
 
 from features.health.models import Health_Check
@@ -29,15 +29,23 @@ class Health_Crud:
         return result.scalars().all()
 
 
-    # 마지막 성공 이후 연속 실패 수 - 성공이 한 번도 없으면 전부 센다
+    # 마지막 성공 이후 연속 실패 수 - checked_at, h_c_id 순서 기준. 성공이 한 번도 없으면 전부 센다
     @staticmethod
     async def crud_health_count_failures_after_last_ok(db:AsyncSession, d_id:int) -> int:
-        last_ok=await db.execute(select(func.max(Health_Check.h_c_id))
-                                 .where(Health_Check.d_id == d_id, Health_Check.ok.is_(True)))
-        last_ok_id=last_ok.scalar() or 0
+        last_ok=await db.execute(select(Health_Check.h_c_id)
+                                 .where(Health_Check.d_id == d_id, Health_Check.ok.is_(True))
+                                 .order_by(Health_Check.checked_at.desc(), Health_Check.h_c_id.desc())
+                                 .limit(1))
+        last_ok_id=last_ok.scalar()
 
-        result=await db.execute(select(func.count(Health_Check.h_c_id))
-                                .where(Health_Check.d_id == d_id, Health_Check.ok.is_(False), Health_Check.h_c_id > last_ok_id))
+        query=select(func.count(Health_Check.h_c_id)).where(Health_Check.d_id == d_id, Health_Check.ok.is_(False))
+        if last_ok_id is not None:
+            # 시각은 파라미터로 다시 묶지 않고 저장된 값 그대로 비교한다 (저장 형식이 달라도 어긋나지 않게)
+            ok_at=select(Health_Check.checked_at).where(Health_Check.h_c_id == last_ok_id).scalar_subquery()
+            query=query.where(or_(Health_Check.checked_at > ok_at,
+                                  and_(Health_Check.checked_at == ok_at, Health_Check.h_c_id > last_ok_id)))
+
+        result=await db.execute(query)
         return result.scalar() or 0
 
 

@@ -50,31 +50,38 @@ class Health_Service:
 
 
     # 기본 점검기 - 주소에 GET. 상태코드 400 미만이면 정상 (services_deploy_health 와 같은 기준)
-    # 리다이렉트는 같은 호스트 안에서만 따라간다 - 다른 호스트로 가는 응답은 거기서 멈추고 그 응답을 결과로 본다
+    # 리다이렉트는 같은 호스트 안에서만 따라간다 - 다른 호스트로 가거나 횟수 제한을 넘으면 정상으로 치지 않는다
     @staticmethod
     async def services_health_default_checker(url:str) -> tuple[bool, int | None, int | None, str | None]:
         started=time.perf_counter()
 
         try:
+            problem=None
+
             async with httpx.AsyncClient(timeout=settings.health_timeout_seconds, follow_redirects=False) as client:
                 current=url
                 response=await client.get(current)
 
-                for _ in range(HEALTH_MAX_REDIRECTS):
+                for hop in range(HEALTH_MAX_REDIRECTS + 1):
                     location=response.headers.get("location")
                     if response.status_code not in (301, 302, 303, 307, 308) or not location:
                         break
 
                     target=urljoin(current, location)
                     if urlsplit(target).netloc != urlsplit(url).netloc:
+                        problem="다른 호스트로 이동"
+                        break
+
+                    if hop == HEALTH_MAX_REDIRECTS:
+                        problem="리다이렉트 반복"
                         break
 
                     current=target
                     response=await client.get(current)
 
             latency_ms=int((time.perf_counter() - started) * 1000)
-            ok=response.status_code < 400
-            return ok, response.status_code, latency_ms, None if ok else f"HTTP {response.status_code}"
+            ok=response.status_code < 400 and problem is None
+            return ok, response.status_code, latency_ms, None if ok else (problem or f"HTTP {response.status_code}")
 
         except httpx.TimeoutException:
             return False, None, int((time.perf_counter() - started) * 1000), "시간 초과"

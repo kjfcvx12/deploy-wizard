@@ -453,7 +453,13 @@ class Deploy_Service:
     async def services_deploy_health_apply(db: AsyncSession, d_id: int, ok: bool, checked_at: datetime) -> bool:
         deploy=await Deploy_Crud.crud_deploy_get_by_d_id(db, d_id)
 
-        if not deploy or deploy.status != 'running':
+        if not deploy:
+            return False
+
+        # 세션이 이미 들고 있는 객체는 점검하는 사이 바뀐 상태를 모른다 - DB 의 지금 값으로 새로 읽는다
+        await db.refresh(deploy)
+
+        if deploy.status != 'running':
             return False
 
         await Deploy_Crud.crud_deploy_update(db, d_id, {"health_state": 'healthy' if ok else 'unhealthy', "last_health_at": checked_at})
