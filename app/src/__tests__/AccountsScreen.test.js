@@ -1,5 +1,5 @@
 import { StrictMode } from 'react'
-import { Platform, ScrollView, StyleSheet } from 'react-native'
+import { AppState, Linking, Platform, ScrollView, StyleSheet } from 'react-native'
 import { SafeAreaProvider } from 'react-native-safe-area-context'
 import { render, screen, fireEvent, act, waitFor } from '@testing-library/react-native'
 import { accountApi } from '../api'
@@ -38,6 +38,9 @@ jest.mock('../api', () => ({
     attachRole: jest.fn(),
     getTemplateStatus: jest.fn(),
     setConnectionAws: jest.fn(),
+    getGithubInstallUrl: jest.fn(),
+    checkGithub: jest.fn(),
+    setConnectionGithub: jest.fn(),
   },
 }))
 jest.mock('../confirm', () => ({ confirmAction: jest.fn() }))
@@ -59,6 +62,9 @@ beforeEach(() => {
   accountApi.attachRole.mockReset()
   accountApi.getTemplateStatus.mockReset()
   accountApi.setConnectionAws.mockReset()
+  accountApi.getGithubInstallUrl.mockReset()
+  accountApi.checkGithub.mockReset()
+  accountApi.setConnectionGithub.mockReset()
   confirmAction.mockReset()
   readPickedBlock.mockReset().mockResolvedValue(null)
   writePickedBlock.mockReset().mockResolvedValue(undefined)
@@ -462,6 +468,133 @@ describe('계정 연결 화면 - 메시지가 화면 밖에 있을 때', () => {
     await fireEvent.press(screen.getByRole('button', { name: '운영 계정 AWS 계정 추가' }))
     expect(await screen.findByText('역할 만들고 붙여넣기 — 운영 계정')).toBeTruthy()
     expect(accountApi.createConnectionAws).toHaveBeenCalledWith(1)
+  })
+})
+
+describe('계정 연결 화면 - GitHub 상자와 앱 복귀', () => {
+  let listeners
+  const GH = { g_id: 5, installation_id: 1001, account_login: 'kjfcvx12', account_type: 'User', repository_selection: 'all', status: 'active' }
+  const CHECK = { g_id: 5, account_login: 'kjfcvx12', repository_count: 3, repositories: ['a', 'b', 'c'] }
+  const WITH_GH = [{ ...block(1, '운영 계정'), github: GH }]
+
+  beforeEach(() => {
+    listeners = []
+    jest.spyOn(AppState, 'addEventListener').mockImplementation((type, cb) => {
+      if (type === 'change') listeners.push(cb)
+      return { remove: () => { listeners = listeners.filter((l) => l !== cb) } }
+    })
+    jest.spyOn(Linking, 'openURL').mockReset().mockResolvedValue(true)
+  })
+  afterEach(() => { jest.restoreAllMocks() })
+
+  const goAway = async () => { await act(async () => { listeners.forEach((l) => l('background')) }) }
+  const comeBack = async () => { await act(async () => { listeners.forEach((l) => l('active')) }) }
+
+  test('블록마다 GitHub 상자가 카드 안에 들어간다', async () => {
+    await render(<AccountsScreen />)
+    await screen.findByText('운영 계정')
+    expect(screen.getAllByText('GitHub 계정')).toHaveLength(2)
+    expect(screen.getByRole('button', { name: '개발 계정 GitHub 계정 추가' })).toBeEnabled()
+    expect(accountApi.listGithub).toHaveBeenCalledTimes(1)
+  })
+
+  test('앱이 다시 활성이 될 때마다 목록을 한 번 다시 받는다', async () => {
+    accountApi.getConnections.mockResolvedValue(ONE)
+    await render(<AccountsScreen />)
+    await screen.findByText('운영 계정')
+    expect(accountApi.getConnections).toHaveBeenCalledTimes(1)
+    await comeBack()
+    expect(accountApi.getConnections).toHaveBeenCalledTimes(1)
+    await goAway()
+    expect(accountApi.getConnections).toHaveBeenCalledTimes(1)
+    await comeBack()
+    expect(accountApi.getConnections).toHaveBeenCalledTimes(2)
+    expect(accountApi.listGithub).toHaveBeenCalledTimes(2)
+    await comeBack()
+    expect(accountApi.getConnections).toHaveBeenCalledTimes(2)
+    await goAway()
+    await comeBack()
+    expect(accountApi.getConnections).toHaveBeenCalledTimes(3)
+  })
+
+  test('언마운트한 뒤에는 복귀해도 다시 받지 않고 리스너도 없다', async () => {
+    accountApi.getConnections.mockResolvedValue(ONE)
+    const { unmount } = await render(<AccountsScreen />)
+    await screen.findByText('운영 계정')
+    await unmount()
+    expect(listeners).toHaveLength(0)
+    await goAway()
+    await comeBack()
+    expect(accountApi.getConnections).toHaveBeenCalledTimes(1)
+  })
+
+  test('StrictMode 에서도 복귀 한 번에 다시 받기는 한 번이다', async () => {
+    accountApi.getConnections.mockResolvedValue(ONE)
+    await render(<StrictMode><AccountsScreen /></StrictMode>)
+    await screen.findByText('운영 계정')
+    const before = accountApi.getConnections.mock.calls.length
+    expect(listeners).toHaveLength(1)
+    await goAway()
+    await comeBack()
+    expect(accountApi.getConnections).toHaveBeenCalledTimes(before + 1)
+  })
+
+  test('설치 화면을 열고 돌아와 블록에 설치가 생기면 확인을 한 번 하고 알림을 맨 위에 보인다', async () => {
+    accountApi.getConnections.mockResolvedValueOnce(ONE).mockResolvedValue(WITH_GH)
+    accountApi.listGithub.mockResolvedValue([GH])
+    accountApi.getGithubInstallUrl.mockResolvedValue({ url: 'https://github.com/apps/deploy-wizard/installations/new?state=1' })
+    accountApi.checkGithub.mockResolvedValue(CHECK)
+    await render(<AccountsScreen />)
+    await screen.findByText('운영 계정')
+    await fireEvent.press(screen.getByRole('button', { name: '운영 계정 GitHub 계정 추가' }))
+    expect(await screen.findByText('GitHub 설치 화면에서 설치를 마치고 이 앱으로 돌아오세요.')).toBeTruthy()
+    expect(accountApi.getGithubInstallUrl).toHaveBeenCalledWith(1)
+    expect(Linking.openURL).toHaveBeenCalledTimes(1)
+    expect(accountApi.checkGithub).not.toHaveBeenCalled()
+    await goAway()
+    await comeBack()
+    expect(await screen.findByText('GitHub 연결 확인됨 — kjfcvx12 · 레포 3개에 접근할 수 있습니다 (a, b, c)')).toBeTruthy()
+    expect(accountApi.checkGithub).toHaveBeenCalledTimes(1)
+    expect(accountApi.checkGithub).toHaveBeenCalledWith(5)
+    expect(screen.getByRole('button', { name: '운영 계정 GitHub 연결 확인' })).toBeEnabled()
+    // 한 번 더 돌아와도 다시 확인하지 않는다
+    await goAway()
+    await comeBack()
+    expect(accountApi.checkGithub).toHaveBeenCalledTimes(1)
+  })
+
+  test('계정 추가를 누르지 않고 돌아왔을 때 설치가 생겨도 확인하지 않는다', async () => {
+    accountApi.getConnections.mockResolvedValueOnce(ONE).mockResolvedValue(WITH_GH)
+    accountApi.listGithub.mockResolvedValue([GH])
+    await render(<AccountsScreen />)
+    await screen.findByText('운영 계정')
+    await goAway()
+    await comeBack()
+    expect(await screen.findByText('kjfcvx12')).toBeTruthy()
+    expect(accountApi.checkGithub).not.toHaveBeenCalled()
+  })
+
+  test('연결 해제는 확인 없이 PATCH 하고 목록을 다시 받는다', async () => {
+    accountApi.getConnections.mockResolvedValueOnce(WITH_GH).mockResolvedValue(ONE)
+    accountApi.listGithub.mockResolvedValue([GH])
+    accountApi.setConnectionGithub.mockResolvedValue({})
+    await render(<AccountsScreen />)
+    await screen.findByText('kjfcvx12')
+    await fireEvent.press(screen.getByRole('button', { name: '운영 계정 GitHub 연결 해제' }))
+    await waitFor(() => expect(screen.queryByText('kjfcvx12')).toBeNull())
+    expect(confirmAction).not.toHaveBeenCalled()
+    expect(accountApi.setConnectionGithub).toHaveBeenCalledWith(1, null)
+  })
+
+  test('설치 주소를 못 받으면 서버 메시지가 화면 위에 보이고 모든 버튼이 풀린다', async () => {
+    accountApi.getGithubInstallUrl.mockRejectedValue(new Error('GitHub App이 등록되지 않았습니다.'))
+    await render(<AccountsScreen />)
+    await screen.findByText('운영 계정')
+    await fireEvent.press(screen.getByRole('button', { name: '개발 계정 GitHub 계정 추가' }))
+    expect(await screen.findByText('GitHub App이 등록되지 않았습니다.')).toBeTruthy()
+    expect(Linking.openURL).not.toHaveBeenCalled()
+    expect(screen.getByRole('button', { name: '운영 계정 GitHub 계정 추가' })).toBeEnabled()
+    expect(screen.getByRole('button', { name: '개발 계정 GitHub 계정 추가' })).toBeEnabled()
   })
 })
 

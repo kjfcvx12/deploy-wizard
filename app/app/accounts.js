@@ -8,8 +8,10 @@ import { readPickedBlock, writePickedBlock } from '../src/accounts/pickedBlock'
 import AddBlockForm from '../src/components/accounts/AddBlockForm'
 import AwsBox from '../src/components/accounts/AwsBox'
 import BlockCard from '../src/components/accounts/BlockCard'
+import GithubBox from '../src/components/accounts/GithubBox'
 import { Button, Notice } from '../src/components/ui'
 import { confirmAction } from '../src/confirm'
+import { useOnForeground } from '../src/hooks/useOnForeground'
 import { spacing, useColors } from '../src/theme'
 
 // 계정 연결 화면 (웹 AccountsPage) - 블록 하나 = AWS 계정 하나 + GitHub 하나. 블록은 세로 카드 목록으로 보인다
@@ -89,6 +91,9 @@ export default function AccountsScreen() {
   }
 
   useEffect(() => { reload() }, [])
+
+  // GitHub 설치 화면(브라우저)에서 앱으로 돌아오면 목록을 한 번 다시 받는다 (딥링크가 없어 돌아온 것을 이렇게 안다)
+  useOnForeground(() => { reload() })
 
   // 한 가지 일을 하는 동안 버튼을 잠그고, 실패하면 빨간 알림에 서버 메시지를 보인다 (끝나면 반드시 푼다)
   const run = async (work) => {
@@ -184,6 +189,14 @@ export default function AccountsScreen() {
                 connections={connections}
                 awsAccounts={data.aws}
                 templateStatus={templateStatus}
+                busy={busy}
+                run={run}
+                reload={reload}
+                setNotice={setNotice}
+              />
+              <GithubBox
+                block={block}
+                installations={data.github}
                 busy={busy}
                 run={run}
                 reload={reload}
