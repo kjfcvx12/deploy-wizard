@@ -274,6 +274,25 @@ details.env-group > summary { font-size: 14px; }
   .advice-actions button { width: 100%; }
 }
 
+/* 목록 - 긴 레포 이름·주소가 칸을 밀어내지 않게 줄바꿈한다 */
+.deploy-item > div { min-width: 0; }
+.deploy-item .badge { flex: none; }
+.deploy-name, .deploy-meta { overflow-wrap: anywhere; }
+
+/* 폰 폭 - 상단 바·입력 줄·목록·공통 터치 크기 (기존 화면 정리) */
+@media (max-width: 640px) {
+  .page { padding: 16px 12px 48px; }
+  .card { padding: 16px; }
+  .topbar { flex-wrap: wrap; padding: 6px 16px; gap: 0 12px; }
+  .brand, .topbar-link { display: inline-flex; align-items: center; min-height: 40px; }
+  .brand { gap: .3em; }
+  .topbar-link { padding: 0 8px; margin-right: -8px; }
+  button, input, select { min-height: 40px; }
+  form.card > .row > * { flex: 1 1 100%; }
+  .deploy-item { align-items: flex-start; padding: 12px 4px; }
+  .deploy-item .badge { margin-top: 2px; }
+}
+
 @media (max-width: 640px) {
   .topbar-note { display: none; }
   .account-boxes { grid-template-columns: 1fr; }
