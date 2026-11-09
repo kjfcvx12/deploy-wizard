@@ -19,6 +19,7 @@ from features.explains.services import Explain_Service
 from features.accounts.services import Aws_Account_Service, Github_Service
 from features.envvars.services import Env_Service
 from features.envvars.scheme import Env_Found
+from features.notifications.services import Notification_Service
 
 # 배포 파이프라인 (M3)
 # 클론 -> 언어 판별(규칙) -> Dockerfile 생성(템플릿+LLM) -> 빌드 -> 푸시 -> 배포
@@ -342,8 +343,19 @@ class Deploy_Pipeline:
         buffer.buffer_add(f"배포 완료 :{status.endpoint}", 'cmd')
         await Deploy_Pipeline.pipeline_update(d_id, status='running', endpoint=status.endpoint)
         await Deploy_Pipeline.pipeline_release_record(d_id, buffer)
+        Deploy_Pipeline.pipeline_notify(d_id, 'deploy_succeeded', buffer)
 
         await asyncio.to_thread(Build_Service.services_build_remove_local, [image_tag, image_uri])
+
+
+    # 완료·실패 알림 - 백그라운드로 띄우고 기다리지 않는다. 알림이 어떻게 되든 파이프라인은 그대로 간다
+    @staticmethod
+    def pipeline_notify(d_id:int, kind:str, buffer:Deploy_Log_Buffer|None=None) -> None:
+        try:
+            Notification_Service.services_notification_deploy_fire(d_id, kind)
+        except Exception as e:
+            if buffer is not None:
+                buffer.buffer_add(f"알림을 건너뜁니다 ({type(e).__name__})", 'warn')
 
 
     # 릴리스 기록 - running 에 닿은 배포만. 기록이 실패해도 이미 떠 있는 배포를 실패로 만들지 않는다
@@ -389,6 +401,7 @@ class Deploy_Pipeline:
         await Deploy_Pipeline.pipeline_update(d_id, status='failed', error_step=error_step,
                                               error_msg=error_msg, explain=explain_json)
         await Deploy_Pipeline.pipeline_record_issue(d_id, error_step, error_msg, explain_json)
+        Deploy_Pipeline.pipeline_notify(d_id, 'deploy_failed', buffer)
 
 
     # 문제 이력 남기기 - 다시 배포해도 지난 실패를 모아서 볼 수 있게

@@ -78,9 +78,12 @@ class Settings(BaseSettings):
     mail_password:str|None=Field(None, alias="MAIL_PASSWORD")
     mail_from:str|None=Field(None, alias="MAIL_FROM")
     mail_to:str|None=Field(None, alias="MAIL_TO")
+    # SMTP 접속·전송 제한 시간(초) - 느린 메일 서버가 알림 흐름을 오래 붙잡지 않게
+    mail_timeout_seconds:int=Field(10, alias="MAIL_TIMEOUT_SECONDS")
 
     # D1 - 앱 푸시(Expo)와 알림에 넣을 앱 링크
     expo_push_url:str=Field("https://exp.host/--/api/v2/push/send", alias="EXPO_PUSH_URL")
+    expo_push_timeout_seconds:int=Field(10, alias="EXPO_PUSH_TIMEOUT_SECONDS")
     app_link_base:str=Field("deploywizard://", alias="APP_LINK_BASE")
 
     class Config:

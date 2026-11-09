@@ -542,6 +542,8 @@ async def test_incident_resolve_notifies_recovered_only_when_recovery_was_tried(
     notified.clear()
 
     await record(db, d_id, True)
+    # 모니터 경로의 해제 알림은 백그라운드 태스크로 나간다
+    await Incident_Service.services_incident_tasks_wait()
 
     assert notified == [(incident.i_id, 'incident_recovered')]
 

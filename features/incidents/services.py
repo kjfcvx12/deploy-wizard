@@ -197,11 +197,41 @@ class Incident_Service:
             logger.warning("인시던트 알림 실패 i_id=%s kind=%s : %s", incident.i_id, kind, mask_text(str(e))[:200])
 
 
+    # 알림을 백그라운드 태스크로 띄운다 - 모니터의 직렬 루프·세션 안에서 SMTP·Expo 를 기다리지 않게. 자기 세션을 쓰고 오류는 마스킹해 삼킨다
+    # spawner 는 시험용 - (i_id, kind) 를 받아 대신 처리하는 함수
+    @staticmethod
+    def services_incident_notify_spawn(i_id:int, kind:str, spawner=None) -> asyncio.Task | None:
+        if spawner is not None:
+            spawner(i_id, kind)
+            return None
+
+        task=asyncio.create_task(Incident_Service.services_incident_notify_task(i_id, kind))
+        INCIDENT_TASKS.add(task)
+        task.add_done_callback(INCIDENT_TASKS.discard)
+        return task
+
+
+    # 알림 태스크 본체 - 인시던트를 새 세션으로 읽어 알린다
+    @staticmethod
+    async def services_incident_notify_task(i_id:int, kind:str) -> None:
+        try:
+            async with AsyncSessionLocal() as db:
+                incident=await Incident_Crud.crud_incident_get_by_i_id(db, i_id)
+                if incident is not None:
+                    await Incident_Service.services_incident_notify(db, incident, kind)
+
+        except asyncio.CancelledError:
+            raise
+
+        except Exception as e:
+            logger.warning("인시던트 알림 태스크 실패 i_id=%s kind=%s : %s", i_id, kind, mask_text(str(e))[:200])
+
+
     # 헬스체크 결과를 받아 인시던트를 열고 닫는다 - 모니터의 세션 안에서 DB 만 쓰고 바로 돌아온다 (AWS 조회·설명은 백그라운드 태스크가 한다)
     # 연속 실패가 기준(기본 3)에 닿고 끝나지 않은 인시던트가 없으면 열고, 정상으로 돌아오면 open|needs_action 을 닫는다
-    # spawner 는 시험용 - i_id 를 받아 처리를 시작하는 함수 (기본은 백그라운드 태스크)
+    # spawner 는 시험용 - i_id 를 받아 처리를 시작하는 함수 (기본은 백그라운드 태스크). notify_spawner 는 해제 알림용 (i_id, kind)
     @staticmethod
-    async def services_incident_on_result(db:AsyncSession, d_id:int, ok:bool, now:datetime|None=None, spawner=None) -> Incident | None:
+    async def services_incident_on_result(db:AsyncSession, d_id:int, ok:bool, now:datetime|None=None, spawner=None, notify_spawner=None) -> Incident | None:
         from features.deploys.services import Deploy_Service
         from features.health.services import Health_Service
 
@@ -218,7 +248,7 @@ class Incident_Service:
                 return None
 
             if ok:
-                return await Incident_Service.services_incident_resolve(db, d_id, now)
+                return await Incident_Service.services_incident_resolve(db, d_id, now, notify_spawner)
 
             failures=await Health_Service.services_health_consecutive_failures(db, d_id)
             if failures < settings.health_failure_threshold:
@@ -367,9 +397,9 @@ class Incident_Service:
 
 
     # 정상으로 돌아오면 닫는다 - open|needs_action 만 (recovering 은 복구 쪽이 직접 확인해서 닫는다)
-    # 복구 시도가 있었던 인시던트만 "복구됨" 알림을 보낸다
+    # 복구 시도가 있었던 인시던트만 "복구됨" 알림을 보낸다 - 모니터 경로이므로 알림은 백그라운드로 띄운다 (메일·푸시가 느려도 다른 배포 점검이 밀리지 않게)
     @staticmethod
-    async def services_incident_resolve(db:AsyncSession, d_id:int, now:datetime|None=None) -> Incident | None:
+    async def services_incident_resolve(db:AsyncSession, d_id:int, now:datetime|None=None, notify_spawner=None) -> Incident | None:
         incident=await Incident_Crud.crud_incident_get_unresolved_by_d_id(db, d_id)
 
         if incident is None or incident.status == 'recovering':
@@ -388,7 +418,10 @@ class Incident_Service:
         await db.refresh(incident)
 
         if had_actions:
-            await Incident_Service.services_incident_notify(db, incident, 'incident_recovered')
+            try:
+                Incident_Service.services_incident_notify_spawn(i_id, 'incident_recovered', notify_spawner)
+            except Exception as e:
+                logger.warning("복구 알림을 띄우지 못했습니다 i_id=%s : %s", i_id, mask_text(str(e))[:200])
 
         return incident
 

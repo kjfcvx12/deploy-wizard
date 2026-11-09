@@ -5,7 +5,7 @@ from datetime import datetime
 from httpx import AsyncClient, ASGITransport
 
 from shared.database import Base, async_engine, AsyncSessionLocal
-from shared.settings import settings
+from shared.settings import settings, Settings
 
 # 모델을 import 해야 create_all 이 테이블을 안다
 from features.accounts import models as account_models
@@ -166,8 +166,10 @@ def test_ops_settings_defaults():
     assert settings.new_release_window_seconds == 900
     assert settings.mail_port == 587
     assert settings.mail_host is None and settings.mail_to is None
-    assert settings.expo_push_url == "https://exp.host/--/api/v2/push/send"
+    # 시험 전체가 발송 주소를 막아 두므로 기본값은 설정 정의에서 읽는다
+    assert Settings.model_fields["expo_push_url"].default == "https://exp.host/--/api/v2/push/send"
     assert settings.app_link_base == "deploywizard://"
+    assert settings.mail_timeout_seconds == 10 and settings.expo_push_timeout_seconds == 10
 
 
 @pytest.mark.asyncio

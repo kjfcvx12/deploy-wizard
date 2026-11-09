@@ -424,7 +424,61 @@ Base URL: `http://localhost:8081` · 전부 JSON · 인증 없음(로컬 전용)
 - `Incident_Read`는 `actions`만 없다. `explain`은 저장된 JSON을 푼 객체이고, 아직 만들어지기 전(또는 읽을 수 없으면)이면 null. `source`: `rule` `llm` `none`.
 - `fix_where`는 사용자 레포·설정·콘솔 위치를 가리키는 안내 문장이다. 마법사가 사용자 코드를 고치지는 않는다.
 - `explain`·`evidence`·`summary`는 저장 전에 마스킹한다 (토큰이 섞여 나가지 않는다).
-- `actions[]`는 `started_at` 순서. 이 작업에서는 항상 비어 있다 (복구 실행은 다음 작업).
+- `actions[]`는 `started_at` 순서 (자동 복구가 한 재시작·되돌리기 기록).
+
+## Notifications · Devices (D1 - 알림, 앱 안·메일·Expo 푸시)
+
+설계는 `docs/app-web/04-api-spec.md` §4·5·7. 로그인 전(1~2단계)에는 모든 줄의 `u_id` 가 null 이고 사용자 필터가 없다.
+
+| Method | Endpoint | 설명 | 성공 |
+|--------|----------|------|------|
+| GET | `/api/notifications?after=&unread=` | 앱 안 알림 목록(`channel=inapp`), 최신순 100건 | 200 `Notification_Read[]` |
+| GET | `/api/notifications/unread-count` | 읽지 않은 수 | 200 `{ "count": 2 }` |
+| POST | `/api/notifications/{n_id}/read` | 한 건 읽음 (이미 읽은 건 그대로) | 200 `Notification_Read` |
+| POST | `/api/notifications/read-all` | 모두 읽음 | 200 `{ "updated": 3 }` |
+| GET | `/api/notifications/settings` | 알림 설정 | 200 `Notification_Setting_Read` |
+| PATCH | `/api/notifications/settings` | 알림 설정 일부 수정 | 200 `Notification_Setting_Read` |
+| POST | `/api/devices` | 푸시 기기 등록 `{expo_token, platform}` (같은 토큰이면 갱신) | 201 `Device_Read` |
+| DELETE | `/api/devices/{p_d_id}` | 기기 등록 해제 | 200 `{ "message": "…" }` |
+
+- `after` 는 `n_id` 커서(1 이상, 아니면 422) - 그보다 오래된 것부터 최신순 100건. `unread=true` 면 읽지 않은 것만. 없는 `n_id`(또는 앱 안 알림이 아닌 줄)는 404 `해당 id의 알림이 없습니다`.
+- `expo_token` 은 `^(Exponent|Expo)PushToken\[.+\]$` 형식, `platform` 은 `ios` `android` (아니면 422). 없는 `p_d_id` 는 404 `해당 id의 기기가 없습니다`.
+- 설정은 한 줄뿐이고 처음 읽을 때 기본값(메일 켬, 푸시 켬, 여섯 종류 모두)으로 만든다. PATCH 본문에 모르는 항목이나 모르는 `kinds` 값이 있으면 422.
+
+### `Notification_Read`
+```json
+{ "n_id": 31, "d_id": 2, "i_id": 7, "kind": "incident_recovered", "channel": "inapp", "title": "서비스를 되돌려 복구했습니다",
+  "body": "무슨 일: …", "status": "sent", "read_at": null, "sent_at": "…", "created_at": "…" }
+```
+
+### `Device_Read` (토큰 전체는 응답에 없다 - 끝 6자리만)
+```json
+{ "p_d_id": 1, "platform": "ios", "token_tail": "xyz789]", "created_at": "…", "last_seen_at": "…" }
+```
+
+### `Notification_Setting_Read` / PATCH 본문
+```json
+{ "notify_email": true, "notify_push": false, "kinds": ["incident_opened", "incident_recovered", "incident_needs_action", "deploy_succeeded", "deploy_failed", "new_commit"] }
+```
+PATCH 는 보낸 항목만 바꾼다 (`notify_email`·`notify_push` 는 true/false, `kinds` 는 위 여섯 가지 중 일부).
+
+### 알림이 만들어지는 때 (서버 안 - API 아님)
+
+| `kind` | 언제 |
+|--------|------|
+| `incident_opened` | 인시던트의 원인 설명이 저장된 직후 |
+| `incident_recovered` | 복구 시도가 있었던 인시던트가 정상으로 돌아왔을 때 |
+| `incident_needs_action` | 자동 복구로 풀지 못했거나 자동 복구가 꺼져 있어 사람이 봐야 할 때 |
+| `deploy_succeeded` | 파이프라인이 `running` 에 닿았을 때 |
+| `deploy_failed` | 파이프라인이 `failed` 로 멈췄을 때 |
+| `new_commit` | 자동 재배포가 꺼진 배포에서 새 커밋을 처음 봤을 때 (커밋마다 한 번) |
+
+- 종류가 설정에서 꺼져 있으면 아무것도 만들지 않는다. 켜져 있으면 `inapp` 줄을 항상 남기고, `notify_email` 이 켜져 있고 `MAIL_HOST`·`MAIL_TO` 가 있으면 `email` 줄, `notify_push` 가 켜져 있고 등록된 기기가 있으면 `push` 줄을 남긴다 (`queued` -> `sent|failed`, 실패 이유는 마스킹한 `error`). 메일 설정이 없으면 줄도 남기지 않는다.
+- 인시던트 알림은 (인시던트, `kind`, 채널)마다 한 줄 - 같은 알림을 다시 보내려 해도 건너뛴다. `new_commit` 은 (배포, 커밋, 채널)마다 한 줄.
+- 본문 순서: 무슨 일 -> 왜 -> 어디를 고치나(`explain.fix_where`) -> 자동으로 한 일과 결과(`recovery_actions`) -> 앱 링크(`APP_LINK_BASE` + `incidents/{i_id}` 또는 `deploys/{d_id}`). 제목·본문은 모두 `mask_text` 를 거친다.
+- 메일: STARTTLS + 로그인, 제목 `[배포 마법사] {서비스 이름} {제목}`, 제한 시간 `MAIL_TIMEOUT_SECONDS`(10초).
+- 푸시: `EXPO_PUSH_URL` 로 기기마다 `{to, title, body, data:{link}}` 한 건씩 100건 묶음 POST (제한 시간 `EXPO_PUSH_TIMEOUT_SECONDS`, 10초). 본문은 120자 이하 한 줄이고 로그 원문은 넣지 않는다. 응답 표의 `details.error == "DeviceNotRegistered"` 인 기기는 지운다.
+- 느린 SMTP·Expo 가 흐름을 붙잡지 않는다 - 헬스 감시 경로의 복구 알림과 파이프라인·폴링·웹훅의 알림은 백그라운드 태스크로 보낸다. 어떤 채널이 실패해도 인시던트 처리·파이프라인·폴링은 멈추지 않는다.
 
 ## 기타
 

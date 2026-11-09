@@ -29,6 +29,8 @@ from features.deploys.pipeline import Deploy_Pipeline
 from features.accounts import router as accounts
 from features.watches import router as watches
 from features.incidents import router as incidents
+from features.notifications import router as notifications
+from features.notifications.services import Notification_Service
 from features.incidents.services import Incident_Service
 from features.incidents.recovery import Recovery_Service
 from features.watches.services import Watch_Service
@@ -75,6 +77,7 @@ async def lifespan(app:FastAPI):
 
     # 인시던트 처리 중이던 태스크도 취소하고 기다린다
     await Incident_Service.services_incident_tasks_cancel()
+    await Notification_Service.services_notification_tasks_cancel()
 
     await async_engine.dispose()
 
@@ -99,6 +102,7 @@ app.include_router(envvars.router)
 app.include_router(accounts.router)
 app.include_router(watches.router)
 app.include_router(incidents.router)
+app.include_router(notifications.router)
 
 
 # 빌드된 프론트가 있으면 같이 서빙한다 (npm run build -> dist/)
