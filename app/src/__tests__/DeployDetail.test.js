@@ -516,7 +516,7 @@ describe('배포 상세 화면 - 인시던트 카드와 헬스 점', () => {
     await open({ ...base, open_incident_id: 12, auto_recover: true })
     expect(await screen.findByText('앱이 오류로 응답하고 있습니다.')).toBeTruthy()
     expect(incidentApi.getOne).toHaveBeenCalledWith(12)
-    await fireEvent.press(screen.getByRole('button', { name: /배포 #7/ }))
+    await fireEvent.press(screen.getByRole('button', { name: /배포 #7 문제 상세 보기/ }))
     expect(mockPush).toHaveBeenCalledWith('/incidents/12')
   })
 

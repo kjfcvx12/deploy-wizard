@@ -233,6 +233,8 @@ function DeployDetail({ d_id }) {
 
         <IssueHistory issues={issues} />
 
+        <Button label="설정" accessibilityLabel={`배포 #${d_id} 설정`} onPress={() => router.push(`/deploy-settings/${d_id}`)} />
+
         {idle && (
           <View style={styles.stack}>
             {status !== 'stopped' && status !== 'needs_input' && <Button label="다시 배포" onPress={redeploy} disabled={busy} />}
