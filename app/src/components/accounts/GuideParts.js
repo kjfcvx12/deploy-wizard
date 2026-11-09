@@ -9,8 +9,8 @@ export const TEMPLATE_FILE = 'deploy_wizard_role.yaml'
 const OPEN_ERROR = '주소를 열 수 없습니다'
 const COPY_ERROR = '복사하지 못했습니다'
 
-// 안내 창 틀 - 전체 화면 Modal 안에 제목과 스크롤. 키보드가 입력칸을 가리지 않게 감싼다. 뒤로 가기는 onClose
-export function GuideModal({ title, onClose, children }) {
+// 안내 창 틀 - 전체 화면 Modal 안에 제목과 오른쪽 위 닫기(= 나중에)와 스크롤. 키보드가 입력칸을 가리지 않게 감싼다. 뒤로 가기는 onClose
+export function GuideModal({ title, closeLabel, onClose, children }) {
   const colors = useColors()
   const insets = useSafeAreaInsets()
   return (
@@ -26,7 +26,10 @@ export function GuideModal({ title, onClose, children }) {
           keyboardDismissMode="on-drag"
           automaticallyAdjustKeyboardInsets
         >
-          <Text accessibilityRole="header" style={[styles.title, wrapAnywhere, { color: colors.text }]}>{title}</Text>
+          <View style={styles.head}>
+            <Text accessibilityRole="header" style={[styles.title, wrapAnywhere, { color: colors.text }]}>{title}</Text>
+            <Button label="닫기" accessibilityLabel={closeLabel} onPress={onClose} style={styles.close} />
+          </View>
           {children}
         </ScrollView>
       </KeyboardAvoidingView>
@@ -34,11 +37,15 @@ export function GuideModal({ title, onClose, children }) {
   )
 }
 
-// 바깥 주소 열기·복사 실패를 안내 안에 보이는 작은 훅 - 실패 글에는 값을 싣지 않는다
+// 바깥 주소 열기(error, 맨 위)·복사(copyError, 복사 단계 안) 실패를 안내 안에 보이는 작은 훅 - 실패 글에는 값을 싣지 않는다
 export function useGuideActions() {
   const [error, setError] = useState('')
+  const [copyError, setCopyError] = useState('')
   const alive = useRef(true)
-  useEffect(() => () => { alive.current = false }, [])
+  useEffect(() => {
+    alive.current = true
+    return () => { alive.current = false }
+  }, [])
   // 주소 열기 - api 가 true 면 API 주소 아래의 파일(템플릿)이다
   const open = async (url, opts) => {
     setError('')
@@ -48,10 +55,10 @@ export function useGuideActions() {
   // 값 복사 - 성공 여부를 돌려준다
   const copy = async (value) => {
     const ok = await copyText(value)
-    if (alive.current) setError(ok ? '' : COPY_ERROR)
+    if (alive.current) setCopyError(ok ? '' : COPY_ERROR)
     return ok
   }
-  return { error, open, copy }
+  return { error, copyError, open, copy }
 }
 
 // 단계 - 번호와 제목, 설명
@@ -113,7 +120,10 @@ export function ShotField({ label, name, value, onCopy, owner }) {
   const [done, setDone] = useState(false)
   const timer = useRef(null)
   const alive = useRef(true)
-  useEffect(() => () => { alive.current = false; clearTimeout(timer.current) }, [])
+  useEffect(() => {
+    alive.current = true
+    return () => { alive.current = false; clearTimeout(timer.current) }
+  }, [])
 
   // 복사하고 잠깐 복사됨으로 바꾼다
   const press = async () => {
@@ -150,7 +160,9 @@ export function GuideError({ children }) {
 const styles = StyleSheet.create({
   flex: { flex: 1 },
   content: { padding: spacing.lg, gap: spacing.md },
-  title: { fontSize: 20, fontWeight: '700' },
+  head: { flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between', gap: spacing.md },
+  title: { flex: 1, fontSize: 20, fontWeight: '700' },
+  close: { minWidth: 64 },
   step: { flexDirection: 'row', gap: spacing.md },
   num: { width: 28, height: 28, borderRadius: 14, alignItems: 'center', justifyContent: 'center' },
   numText: { fontSize: 14, fontWeight: '700' },

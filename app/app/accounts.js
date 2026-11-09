@@ -143,6 +143,11 @@ export default function AccountsScreen() {
     scrollRef.current?.scrollTo?.({ y: e.nativeEvent.layout.y, animated: true })
   }
 
+  // 오류·알림이 새로 뜨면 맨 위로 올려 보인다 - 아래쪽 블록의 동작 결과가 화면 밖에 남지 않게 (안내 Modal 안의 오류는 화면 상태가 아니라 해당 없음)
+  useEffect(() => {
+    if (error || notice) scrollRef.current?.scrollTo?.({ y: 0, animated: true })
+  }, [error, notice])
+
   const connections = data?.connections
   let body = null
   if (!connections && loadError) {

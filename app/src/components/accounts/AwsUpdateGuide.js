@@ -12,7 +12,7 @@ export default function AwsUpdateGuide({ info, busy, error, onCheck, onClose }) 
   const label = info.label
 
   return (
-    <GuideModal title={`스택 업데이트가 필요합니다 — ${label}`} onClose={onClose}>
+    <GuideModal title={`스택 업데이트가 필요합니다 — ${label}`} closeLabel={`${label} 업데이트 안내 닫기`} onClose={onClose}>
       <Para muted>
         {`배포 마법사에 기능이 추가되면서 필요한 권한이 늘었습니다. 지금 연결된 역할은 예전 권한(버전 ${info.current_version})이라 일부 기능이 AWS에서 거부됩니다. 최신 템플릿(버전 ${info.latest_version})으로 스택을 한 번 업데이트하면 됩니다. 연결과 ExternalId는 그대로이고, 비용은 없습니다.`}
       </Para>

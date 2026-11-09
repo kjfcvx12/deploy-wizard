@@ -24,7 +24,7 @@ export default function AwsGuide({ setup, resume, busy, error, onSubmit, onClose
   }
 
   return (
-    <GuideModal title={`역할 만들고 붙여넣기 — ${label}`} onClose={onClose}>
+    <GuideModal title={`역할 만들고 붙여넣기 — ${label}`} closeLabel={`${label} 안내 닫기`} onClose={onClose}>
       {resume ? (
         <Para muted>ExternalId는 처음 한 번만 보여주기 때문에 다시 볼 수 없습니다. 스택을 이미 만들었다면 [출력] 탭의 RoleArn을 아래에 붙여넣으세요. 아직 안 만들었다면 이 블록의 AWS 연결을 해제하고 새로 시작하세요.</Para>
       ) : (
@@ -65,6 +65,7 @@ export default function AwsGuide({ setup, resume, busy, error, onSubmit, onClose
               <ShotField owner={label} name="ExternalId" label="ExternalId" value={setup.external_id} onCopy={actions.copy} />
               <ShotLine><ShotItem>다음</ShotItem></ShotLine>
             </Shot>
+            <GuideError>{actions.copyError}</GuideError>
             <Para muted>ExternalId는 지금 한 번만 보여줍니다. 이 창을 닫으면 다시 볼 수 없습니다.</Para>
           </Step>
 

@@ -1,3 +1,4 @@
+import { StrictMode } from 'react'
 import { Platform, ScrollView, StyleSheet } from 'react-native'
 import { SafeAreaProvider } from 'react-native-safe-area-context'
 import { render, screen, fireEvent, act, waitFor } from '@testing-library/react-native'
@@ -33,6 +34,8 @@ jest.mock('../api', () => ({
     createConnection: jest.fn(),
     deleteConnection: jest.fn(),
     createConnectionAws: jest.fn(),
+    reverifyAws: jest.fn(),
+    attachRole: jest.fn(),
     getTemplateStatus: jest.fn(),
     setConnectionAws: jest.fn(),
   },
@@ -52,6 +55,8 @@ beforeEach(() => {
   accountApi.createConnection.mockReset()
   accountApi.deleteConnection.mockReset()
   accountApi.createConnectionAws.mockReset()
+  accountApi.reverifyAws.mockReset()
+  accountApi.attachRole.mockReset()
   accountApi.getTemplateStatus.mockReset()
   accountApi.setConnectionAws.mockReset()
   confirmAction.mockReset()
@@ -392,6 +397,71 @@ describe('계정 연결 화면 - AWS 상자', () => {
     await fireEvent.press(screen.getByText('공용 AWS'))
     await waitFor(() => expect(accountApi.setConnectionAws).toHaveBeenCalledWith(1, 5))
     await waitFor(() => expect(accountApi.getConnections).toHaveBeenCalledTimes(2))
+  })
+})
+
+describe('계정 연결 화면 - 메시지가 화면 밖에 있을 때', () => {
+  const THREE = [
+    { c_id: 1, label: '운영 계정', aws: null, github: null },
+    { c_id: 2, label: '개발 계정', aws: null, github: null },
+    { c_id: 3, label: '실험 계정', aws: aws(3), github: null },
+  ]
+  const SETUP9 = { a_id: 9, label: '운영 계정', external_id: 'EXT-1', our_account_id: '111122223333', template_download_url: '/api/accounts/aws/template', stack_create_url: 'https://console.aws.amazon.com/cloudformation/home#/stacks/create' }
+
+  beforeEach(() => {
+    accountApi.getConnections.mockResolvedValue(THREE)
+    accountApi.listAws.mockResolvedValue([THREE[2].aws])
+    accountApi.getTemplateStatus.mockResolvedValue(tstatus(3))
+  })
+
+  test('아래쪽 블록에서 실패하면 오류를 보이고 맨 위로 스크롤한다', async () => {
+    accountApi.createConnectionAws.mockRejectedValue(new Error('이 블록에는 이미 AWS 계정이 연결되어 있습니다'))
+    await render(<AccountsScreen />)
+    await screen.findByText('실험 계정')
+    ScrollView.prototype.scrollTo.mockClear()
+    await fireEvent.press(screen.getByRole('button', { name: '개발 계정 AWS 계정 추가' }))
+    expect(await screen.findByText('이 블록에는 이미 AWS 계정이 연결되어 있습니다')).toBeTruthy()
+    expect(ScrollView.prototype.scrollTo).toHaveBeenCalledWith({ y: 0, animated: true })
+  })
+
+  test('마지막 블록의 연결 확인 알림도 맨 위로 스크롤해 보인다', async () => {
+    accountApi.reverifyAws.mockResolvedValue(THREE[2].aws)
+    await render(<AccountsScreen />)
+    await screen.findByText('실험 계정')
+    ScrollView.prototype.scrollTo.mockClear()
+    await fireEvent.press(screen.getByRole('button', { name: '실험 계정 AWS 연결 확인' }))
+    expect(await screen.findByText(/AWS 계정 연결 확인됨/)).toBeTruthy()
+    expect(ScrollView.prototype.scrollTo).toHaveBeenCalledWith({ y: 0, animated: true })
+  })
+
+  test('메시지가 없으면 스크롤하지 않는다', async () => {
+    ScrollView.prototype.scrollTo.mockClear()
+    await render(<AccountsScreen />)
+    await screen.findByText('실험 계정')
+    expect(ScrollView.prototype.scrollTo).not.toHaveBeenCalled()
+  })
+
+  test('안내(Modal) 안의 오류는 화면을 스크롤하지 않는다', async () => {
+    accountApi.createConnectionAws.mockResolvedValue(SETUP9)
+    accountApi.attachRole.mockRejectedValue(new Error('역할을 빌릴 수 없습니다'))
+    await render(<AccountsScreen />)
+    await screen.findByText('실험 계정')
+    await fireEvent.press(screen.getByRole('button', { name: '운영 계정 AWS 계정 추가' }))
+    await screen.findByText('역할 만들고 붙여넣기 — 운영 계정')
+    ScrollView.prototype.scrollTo.mockClear()
+    await fireEvent.changeText(screen.getByPlaceholderText('arn:aws:iam::...:role/DeployWizardCrossAccountRole'), 'arn:aws:iam::222222222222:role/X')
+    await fireEvent.press(screen.getByRole('button', { name: '운영 계정 역할 ARN 확인' }))
+    expect(await screen.findByText('역할을 빌릴 수 없습니다')).toBeTruthy()
+    expect(ScrollView.prototype.scrollTo).not.toHaveBeenCalled()
+  })
+
+  test('StrictMode 에서도 계정 추가가 끝까지 되어 안내가 열린다', async () => {
+    accountApi.createConnectionAws.mockResolvedValue(SETUP9)
+    await render(<StrictMode><AccountsScreen /></StrictMode>)
+    await screen.findByText('실험 계정')
+    await fireEvent.press(screen.getByRole('button', { name: '운영 계정 AWS 계정 추가' }))
+    expect(await screen.findByText('역할 만들고 붙여넣기 — 운영 계정')).toBeTruthy()
+    expect(accountApi.createConnectionAws).toHaveBeenCalledWith(1)
   })
 })
 

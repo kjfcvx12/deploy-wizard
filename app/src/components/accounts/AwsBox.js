@@ -28,7 +28,10 @@ export default function AwsBox({ block, connections, awsAccounts, templateStatus
   const [updateError, setUpdateError] = useState('')
   const [picking, setPicking] = useState(false)
   const alive = useRef(true)
-  useEffect(() => () => { alive.current = false }, [])
+  useEffect(() => {
+    alive.current = true
+    return () => { alive.current = false }
+  }, [])
 
   // 이 블록이 쓰지 않는 AWS 계정들 - 고르기 목록
   const others = (awsAccounts || []).filter((item) => item.a_id !== account?.a_id)

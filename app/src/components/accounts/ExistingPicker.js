@@ -7,7 +7,7 @@ export default function ExistingPicker({ title, items, onPick, onClose }) {
   const colors = useColors()
   return (
     <Modal visible transparent animationType="fade" onRequestClose={onClose} testID="picker-modal">
-      <View style={styles.overlay}>
+      <View style={[styles.overlay, { backgroundColor: colors.scrim }]}>
         <Pressable accessible={false} importantForAccessibility="no" style={StyleSheet.absoluteFill} onPress={onClose} />
         <View style={[styles.sheet, { backgroundColor: colors.surface, borderColor: colors.border }]}>
           <Text accessibilityRole="header" style={[styles.title, wrapAnywhere, { color: colors.text }]}>{title}</Text>
@@ -33,7 +33,7 @@ export default function ExistingPicker({ title, items, onPick, onClose }) {
 }
 
 const styles = StyleSheet.create({
-  overlay: { flex: 1, justifyContent: 'center', padding: spacing.lg, backgroundColor: 'rgba(0,0,0,0.45)' },
+  overlay: { flex: 1, justifyContent: 'center', padding: spacing.lg },
   sheet: { borderWidth: 1, borderRadius: radius.lg, padding: spacing.lg, gap: spacing.md },
   title: { fontSize: 17, fontWeight: '700' },
   list: { maxHeight: 360 },

@@ -24,6 +24,7 @@ export const lightColors = {
   termCmd: '#7fb2ff',
   termWarn: '#f3c969',
   termErr: '#ff8a8a',
+  scrim: 'rgba(0,0,0,0.45)',
 }
 
 export const darkColors = {
@@ -48,6 +49,7 @@ export const darkColors = {
   termCmd: '#7fb2ff',
   termWarn: '#f3c969',
   termErr: '#ff8a8a',
+  scrim: 'rgba(0,0,0,0.6)',
 }
 
 // 간격(pt)과 모서리 반지름 (웹 --radius 10px)

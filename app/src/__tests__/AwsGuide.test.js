@@ -1,6 +1,7 @@
-import { Linking, Platform } from 'react-native'
+import { Linking, Platform, StyleSheet } from 'react-native'
 import * as Clipboard from 'expo-clipboard'
-import { render, screen, fireEvent, act } from '@testing-library/react-native'
+import { StrictMode } from 'react'
+import { render, screen, fireEvent, act, within } from '@testing-library/react-native'
 import AwsGuide from '../components/accounts/AwsGuide'
 import AwsUpdateGuide from '../components/accounts/AwsUpdateGuide'
 import ExistingPicker from '../components/accounts/ExistingPicker'
@@ -105,6 +106,8 @@ describe('AWS 연결 안내 - 7단계', () => {
     expect(screen.queryByText('복사됨')).toBeNull()
     await fireEvent.press(screen.getByRole('button', { name: '운영 계정 스택 이름 복사' }))
     expect(screen.getAllByText('복사하지 못했습니다')).toHaveLength(1)
+    // 복사 버튼이 있는 3단계 안에 오류가 보인다 (맨 위로 되돌아가지 않아도 된다)
+    expect(within(screen.getAllByTestId('guide-step')[2]).getByText('복사하지 못했습니다')).toBeTruthy()
     expect(screen.queryByText(new RegExp(`clipboard`))).toBeNull()
   })
 
@@ -113,6 +116,38 @@ describe('AWS 연결 안내 - 7단계', () => {
     const values = a11yValues()
     expect(values.length).toBeGreaterThan(5)
     for (const v of values) expect(v).not.toContain(SECRET)
+  })
+})
+
+describe('AWS 연결 안내 - 닫기 버튼과 StrictMode', () => {
+  test('오른쪽 위 닫기는 나중에와 같이 닫고, 접근성 이름에 계정 이름이 있다', async () => {
+    const onClose = jest.fn()
+    await guide({ onClose })
+    await fireEvent.press(screen.getByRole('button', { name: '운영 계정 안내 닫기' }))
+    expect(onClose).toHaveBeenCalledTimes(1)
+  })
+
+  test('닫기 버튼의 눌림 크기는 44 이상이다', async () => {
+    await guide()
+    const style = StyleSheet.flatten(screen.getByRole('button', { name: '운영 계정 안내 닫기' }).props.style)
+    expect(style.minHeight).toBeGreaterThanOrEqual(44)
+    expect(style.minWidth).toBeGreaterThanOrEqual(44)
+  })
+
+  test('열기 실패는 복사 단계 안이 아니라 맨 위에 보인다', async () => {
+    Linking.openURL.mockRejectedValueOnce(new Error('x'))
+    await guide()
+    await fireEvent.press(screen.getByRole('button', { name: '운영 계정 콘솔 열기' }))
+    expect(await screen.findByText('주소를 열 수 없습니다')).toBeTruthy()
+    expect(within(screen.getAllByTestId('guide-step')[2]).queryByText('주소를 열 수 없습니다')).toBeNull()
+  })
+
+  test('StrictMode 에서도 복사와 주소 열기가 동작한다', async () => {
+    await render(<StrictMode><AwsGuide setup={SETUP} busy={false} error="" onSubmit={jest.fn()} onClose={jest.fn()} /></StrictMode>)
+    await fireEvent.press(screen.getByRole('button', { name: '운영 계정 ExternalId 복사' }))
+    expect(await screen.findByRole('button', { name: '운영 계정 ExternalId 복사됨' })).toBeTruthy()
+    await fireEvent.press(screen.getByRole('button', { name: '운영 계정 콘솔 열기' }))
+    expect(Linking.openURL).toHaveBeenCalledWith(CONSOLE)
   })
 })
 
@@ -289,6 +324,13 @@ describe('스택 업데이트 안내', () => {
     expect(screen.getByText('아직 예전 버전(0)입니다. 스택 상태가 UPDATE_COMPLETE 인지 확인한 뒤 다시 눌러 주세요.')).toBeTruthy()
     await fireEvent.press(screen.getByRole('button', { name: '운영 AWS 업데이트 확인' }))
     expect(onCheck).toHaveBeenCalledTimes(1)
+  })
+
+  test('오른쪽 위 닫기도 닫는다', async () => {
+    const onClose = jest.fn()
+    await update({ onClose })
+    await fireEvent.press(screen.getByRole('button', { name: '운영 AWS 업데이트 안내 닫기' }))
+    expect(onClose).toHaveBeenCalledTimes(1)
   })
 
   test('나중에는 닫고 서버 오류는 안내 안에 보인다', async () => {
