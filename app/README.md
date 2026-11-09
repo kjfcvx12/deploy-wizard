@@ -38,11 +38,11 @@ src/api.js        서버 호출 (웹의 api.js 와 같은 의미)
 src/constants.js  상태·환경변수·분석 라벨 (웹 constants.js 와 같은 값)
 src/envGroups.js  환경변수 행 묶음 규칙
 src/theme.js      색 토큰, 간격, useColors()
-src/components/   화면 조각 (StatusBadge)
+src/components/   화면 조각 (StatusBadge, AdvicePanel, ConnectionPicker)
 src/hooks/        usePolling (주기 호출, 백그라운드에서는 멈춤)
 ```
 
 ## 확인한 것과 못 한 것
 
-- 확인함: `npx jest` (API 클라이언트, 상수, 환경변수 묶음, 테마, 폴링 훅, 배포 목록 화면), `npx expo export --platform web`
+- 확인함: `npx jest` (API 클라이언트, 상수, 환경변수 묶음, 테마, 폴링 훅, 배포 목록 화면, 새 배포 화면과 분석 패널), `npx expo export --platform web`
 - 확인 못 함: 실제 iOS / 안드로이드 기기와 에뮬레이터에서의 실행. 이 PC 에서는 돌려 보지 못했다.
