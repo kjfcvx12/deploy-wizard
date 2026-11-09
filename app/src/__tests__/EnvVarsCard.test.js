@@ -1,8 +1,14 @@
 import { AccessibilityInfo } from 'react-native'
 import { render, screen, fireEvent, waitFor, act } from '@testing-library/react-native'
 import { envApi } from '../api'
+import { kindLabel } from '../constants'
 import EnvVarsCard from '../components/EnvVarsCard'
 
+// kindLabel 은 줄(EnvRow)을 그릴 때만 불린다 - 줄이 몇 번 그려졌는지 세는 데 쓴다
+jest.mock('../constants', () => {
+  const actual = jest.requireActual('../constants')
+  return { ...actual, kindLabel: jest.fn(actual.kindLabel) }
+})
 jest.mock('../api', () => ({
   envApi: { getAll: jest.fn(), put: jest.fn(), clearValue: jest.fn(), continueDeploy: jest.fn() },
 }))
@@ -59,7 +65,7 @@ afterEach(() => {
 const deploy = (status = 'needs_input') => ({ d_id: 7, status })
 const open = async (props = {}) => {
   const onContinued = jest.fn()
-  const onRedeploy = jest.fn()
+  const onRedeploy = props.onRedeploy || jest.fn()
   const ui = (d) => <EnvVarsCard onContinued={onContinued} onRedeploy={onRedeploy} deploy={d} />
   const view = await render(ui(props.deploy || deploy()))
   await screen.findByText('환경변수')
@@ -323,6 +329,33 @@ describe('환경변수 카드 - 다시 배포 안내', () => {
     expect(screen.queryByText('다시 배포해야 적용됩니다')).toBeNull()
   })
 
+  test('부모의 다시 배포가 실패(false)하면 안내와 버튼을 남긴다', async () => {
+    redeployRows()
+    const onRedeploy = jest.fn().mockResolvedValue(false)
+    await open({ deploy: deploy('running'), onRedeploy })
+    await fireEvent.changeText(input('LOG_LEVEL'), 'debug')
+    await fireEvent.press(button('LOG_LEVEL 저장'))
+    await screen.findByText('다시 배포해야 적용됩니다')
+    await fireEvent.press(button('다시 배포'))
+    await waitFor(() => expect(onRedeploy).toHaveBeenCalledTimes(1))
+    expect(screen.getByText('다시 배포해야 적용됩니다')).toBeTruthy()
+    expect(button('다시 배포')).toBeTruthy()
+  })
+
+  test('부모의 다시 배포가 던져도 안내를 남긴다, 성공(true)이면 지운다', async () => {
+    redeployRows()
+    const onRedeploy = jest.fn().mockRejectedValueOnce(new Error('x')).mockResolvedValueOnce(true)
+    await open({ deploy: deploy('running'), onRedeploy })
+    await fireEvent.changeText(input('LOG_LEVEL'), 'debug')
+    await fireEvent.press(button('LOG_LEVEL 저장'))
+    await screen.findByText('다시 배포해야 적용됩니다')
+    await fireEvent.press(button('다시 배포'))
+    await waitFor(() => expect(onRedeploy).toHaveBeenCalledTimes(1))
+    expect(screen.getByText('다시 배포해야 적용됩니다')).toBeTruthy()
+    await fireEvent.press(button('다시 배포'))
+    await waitFor(() => expect(screen.queryByText('다시 배포해야 적용됩니다')).toBeNull())
+  })
+
   test('진행 중이면 문구만 보이고 다시 배포 버튼은 없다', async () => {
     redeployRows()
     await open({ deploy: deploy('building') })
@@ -349,6 +382,33 @@ describe('환경변수 카드 - 요청 순서', () => {
   })
 })
 
+describe('환경변수 카드 - 실패와 다시 그리기', () => {
+  test('변경이 실패해도 밀려난 상태 갱신을 대신해 목록을 다시 받는다', async () => {
+    const { view, ui } = await open({ deploy: deploy('running') })
+    // 상태가 바뀌어 시작한 목록 요청이 끝나지 않는 동안 서버의 LOG_LEVEL 은 이미 입력된 상태가 되었다
+    envApi.getAll.mockImplementationOnce(() => new Promise(() => {}))
+    await view.rerender(ui(deploy('failed')))
+    rows[2].status = 'set'
+    envApi.put.mockRejectedValueOnce(new Error('요청 실패 (500)'))
+    await fireEvent.press(button('DATABASE_URL 건너뛰기'))
+    expect(await screen.findByText('요청 실패 (500)')).toBeTruthy()
+    await waitFor(() => expect(screen.queryByLabelText('LOG_LEVEL 값')).toBeNull())
+  })
+
+  test('이름 입력창에 글자를 쳐도 줄은 다시 그려지지 않는다', async () => {
+    await open()
+    const before = kindLabel.mock.calls.length
+    expect(before).toBeGreaterThan(0)
+    await fireEvent.changeText(screen.getByLabelText('추가할 변수 이름'), 'A')
+    await fireEvent.changeText(screen.getByLabelText('추가할 변수 이름'), 'AB')
+    expect(screen.getByLabelText('추가할 변수 이름').props.value).toBe('AB')
+    expect(kindLabel.mock.calls.length).toBe(before)
+    // 줄 자신의 입력은 그 줄만 다시 그린다
+    await fireEvent.changeText(input('LOG_LEVEL'), 'x')
+    expect(kindLabel.mock.calls.length).toBeGreaterThan(before)
+  })
+})
+
 describe('환경변수 카드 - 접근성', () => {
   test('저장·건너뛰기 버튼 이름에 변수 이름이 들어 있다', async () => {
     await open()
@@ -358,10 +418,40 @@ describe('환경변수 카드 - 접근성', () => {
     expect(input('LOG_LEVEL')).toBeTruthy()
   })
 
-  test('변경이 끝나면 제목으로 읽기 초점을 옮긴다', async () => {
-    const spy = jest.spyOn(AccessibilityInfo, 'sendAccessibilityEvent').mockImplementation(() => {})
+  test('줄 단위 변경(건너뛰기 등)은 읽기 초점을 옮기지 않는다', async () => {
+    const spy = jest.spyOn(AccessibilityInfo, 'sendAccessibilityEvent').mockImplementation(() => {}).mockClear()
     await open()
     await fireEvent.press(button('LOG_LEVEL 건너뛰기'))
+    await waitFor(() => expect(screen.queryByLabelText('LOG_LEVEL 값')).toBeNull())
+    expect(spy).not.toHaveBeenCalled()
+  })
+
+  test('변수 직접 추가가 끝나면 제목으로 읽기 초점을 옮긴다', async () => {
+    const spy = jest.spyOn(AccessibilityInfo, 'sendAccessibilityEvent').mockImplementation(() => {}).mockClear()
+    await open()
+    await fireEvent.changeText(screen.getByLabelText('추가할 변수 이름'), 'API_BASE_URL')
+    await fireEvent.press(button('변수 직접 추가'))
     await waitFor(() => expect(spy).toHaveBeenCalledWith(expect.anything(), 'focus'))
+  })
+
+  test('변경은 됐는데 목록을 못 받으면 제목으로 읽기 초점을 옮겨 오류를 알린다', async () => {
+    const spy = jest.spyOn(AccessibilityInfo, 'sendAccessibilityEvent').mockImplementation(() => {}).mockClear()
+    await open()
+    envApi.getAll.mockRejectedValueOnce(new Error('서버에 연결할 수 없습니다'))
+    await fireEvent.press(button('LOG_LEVEL 건너뛰기'))
+    expect(await screen.findByText('서버에 연결할 수 없습니다')).toBeTruthy()
+    expect(spy).toHaveBeenCalledWith(expect.anything(), 'focus')
+  })
+
+  test('접는 묶음 머리글 이름에는 ▸ ▾ 글자가 없고 글자 자체는 읽기에서 숨긴다', async () => {
+    await open()
+    const header = screen.getByRole('button', { name: '입력 완료, 1개' })
+    expect(header.props.accessibilityLabel).not.toMatch(/[▸▾]/)
+    expect(header.props.accessibilityState.expanded).toBe(false)
+    const glyph = screen.getAllByTestId('fold-glyph', { hidden: true })[0]
+    expect(glyph.props.accessibilityElementsHidden).toBe(true)
+    expect(glyph.props.importantForAccessibility).toBe('no-hide-descendants')
+    await fireEvent.press(header)
+    expect(screen.getByRole('button', { name: '입력 완료, 1개' }).props.accessibilityState.expanded).toBe(true)
   })
 })

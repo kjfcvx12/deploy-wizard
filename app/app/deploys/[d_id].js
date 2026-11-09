@@ -88,23 +88,27 @@ function DeployDetail({ d_id }) {
 
   // 동작 하나를 실행한다 - 실행하는 동안 버튼을 잠그고, 실패하면 빨간 알림을 띄운다
   const perform = async (call, onDone) => {
-    if (busyRef.current) return
+    if (busyRef.current) return false
     busyRef.current = true
     setBusy(true)
     setActionError('')
     try {
       await call()
       onDone()
+      return true
     } catch (e) {
       setActionError(e.message)
+      return false
     } finally {
       busyRef.current = false
       setBusy(false)
     }
   }
 
+  // 다시 배포 - 성공 여부(true/false)를 돌려주는 쪽은 환경변수 카드용이다 (성공했을 때만 안내를 지운다)
+  const redeployNow = () => perform(() => deployApi.redeploy(d_id), bumpRound)
   // 눌렀을 때 동작이 끝나기를 기다리지 않도록 값을 돌려주지 않는다
-  const redeploy = () => { perform(() => deployApi.redeploy(d_id), bumpRound) }
+  const redeploy = () => { redeployNow() }
   const start = () => { perform(() => deployApi.start(d_id), bumpRound) }
 
   // 멈춤 - 요금이 나가는 서비스만 내린다. 이미지는 남아서 [다시 켜기]가 빌드 없이 끝난다
@@ -175,7 +179,7 @@ function DeployDetail({ d_id }) {
           <StepProgress status={status} errorStep={deploy.error_step} />
         </Card>
 
-        {showsEnvCard(status) && <EnvVarsCard deploy={deploy} onContinued={bumpRound} onRedeploy={redeploy} />}
+        {showsEnvCard(status) && <EnvVarsCard deploy={deploy} onContinued={bumpRound} onRedeploy={redeployNow} />}
 
         {status === 'running' && deploy.endpoint && (
           <EndpointCard endpoint={deploy.endpoint} health={health} onError={setActionError} />
@@ -235,6 +239,8 @@ function DeployDetail({ d_id }) {
       <ScrollView
         refreshControl={<RefreshControl refreshing={pulling} onRefresh={onPull} tintColor={colors.accent} colors={[colors.accent]} />}
         keyboardShouldPersistTaps="handled"
+        keyboardDismissMode="on-drag"
+        automaticallyAdjustKeyboardInsets
         contentContainerStyle={styles.content}
         style={{ backgroundColor: colors.bg }}
       >

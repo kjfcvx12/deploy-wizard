@@ -74,6 +74,17 @@ const isDisabled = (name) => !!screen.getByRole('button', { name }).props.access
 // 확인 창의 버튼을 이름으로 찾는다
 const alertButton = (name) => Alert.alert.mock.calls[0][2].find((b) => b.text === name)
 
+describe('배포 상세 화면 - 키보드', () => {
+  test('환경변수 입력칸이 있는 바깥 스크롤은 키보드 인셋 보정과 끌어서 닫기를 켠다', async () => {
+    await open({ ...base, status: 'needs_input', endpoint: null })
+    // 첫 번째 그려진 호스트 요소가 화면 전체를 감싸는 스크롤이다
+    const outer = screen.root
+    expect(outer.props.automaticallyAdjustKeyboardInsets).toBe(true)
+    expect(outer.props.keyboardDismissMode).toBe('on-drag')
+    expect(outer.props.keyboardShouldPersistTaps).toBe('handled')
+  })
+})
+
 describe('배포 상세 화면 - 상태별 화면', () => {
   test('running: 머리글, 주소 카드, 응답 정상 배지, 요금 안내, 동작 버튼', async () => {
     await open()

@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { memo, useState } from 'react'
 import { StyleSheet, Text, TextInput, View } from 'react-native'
 import { ENV_KINDS, ENV_SECRET_KINDS, kindLabel } from '../constants'
 import { monoFont, radius, spacing, useColors, wrapAnywhere } from '../theme'
@@ -17,7 +17,7 @@ function Pill({ text, tone = 'plain' }) {
 }
 
 // 변수 한 줄 - 종류에 따라 값 입력 / 종류 고르기 / 시크릿 안내를 다르게 보여 준다. 값은 이 줄의 입력칸 상태에만 있다
-export default function EnvRow({ row, busy, onPut, onClear }) {
+function EnvRow({ row, busy, onPut, onClear }) {
   const colors = useColors()
   const [value, setValue] = useState('')
   // 다섯 종류가 아닌 값은 모르는 종류로 다룬다 - 값 입력창을 절대 주지 않기 위해서다
@@ -91,6 +91,9 @@ export default function EnvRow({ row, busy, onPut, onClear }) {
     </View>
   )
 }
+
+// 같은 줄 데이터와 같은 콜백이면 다시 그리지 않는다
+export default memo(EnvRow)
 
 const styles = StyleSheet.create({
   row: { paddingVertical: spacing.md, borderTopWidth: 1, gap: spacing.sm },
