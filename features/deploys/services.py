@@ -318,9 +318,11 @@ class Deploy_Service:
 
                 if not dry_run:
                     await Deploy_Crud.crud_deploy_update(db, d_id, update_data)
-                    # 이미지를 지웠으니 직전 버전(previous)은 되돌릴 곳이 아니다 - current 는 같은 태그로 다시 빌드되니 둔다
+                    # 이미지를 지웠으니 직전 버전(previous)은 되돌릴 곳이 아니다 - current 는 같은 태그로 다시 빌드되니 두되,
+                    # 정상 확인 시각은 비운다 (다시 켠 뒤 첫 정상 점검에서 채워진다. 안 비우면 새 버전이 나온 뒤 이 죽은 이미지가 되돌리기 대상이 된다)
                     if purge:
                         await Deploy_Crud.crud_deploy_release_move_state(db, d_id, 'previous', 'old')
+                        await Deploy_Crud.crud_deploy_release_clear_healthy(db, d_id, 'current')
                     await db.commit()
 
             except Exception as e:

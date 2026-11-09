@@ -1,5 +1,7 @@
 import pytest
+from botocore.exceptions import ClientError
 
+from features.incidents.crud import Incident_Crud
 from features.incidents.recovery import Recovery_Service, BOOKKEEPING_DETAIL, UNRECORDED_DETAIL, RESUME_DETAIL
 from features.accounts.services import Aws_Account_Service
 
@@ -64,16 +66,35 @@ async def test_rollback_wait_timeout_blocks_later_automatic_actions(db, notified
     await assert_later_recovery_is_blocked(db, d_id, 'unhealthy')
 
 
-# 갱신 호출 자체가 실패하면 AWS 에 간 것이 없으니 표식을 남기지 않는다
+# 갱신 호출이 거절이 아닌 예외(읽기 시간 초과 등)로 끝나면 AWS 가 받았는지 알 수 없다 - 표식을 남기고 이후 자동 복구를 막는다
 @pytest.mark.asyncio
-async def test_rollback_update_failure_does_not_block(db, notified):
+async def test_rollback_update_ambiguous_failure_blocks_later_automatic_actions(db, notified):
     d_id=await make_deploy(db)
     i_id=await make_incident(db, d_id, kind='bad_release')
-    fakes=Fakes(fail_update=RuntimeError("AccessDenied"))
+    fakes=Fakes(fail_update=TimeoutError("Read timeout on endpoint URL"))
+
+    await Recovery_Service.services_recovery_start(db, i_id, **fakes.kwargs())
+
+    assert len(fakes.updates) == 1
+    rows=await action_rows(i_id)
+    assert [(row.action, row.result) for row in rows] == [('rollback', 'failed')]
+    assert rows[0].detail.startswith(UNRECORDED_DETAIL) and "TimeoutError" in rows[0].detail
+
+    await assert_later_recovery_is_blocked(db, d_id, 'unhealthy')
+
+
+# AWS 가 거절 응답(ClientError)을 준 경우는 아무것도 적용되지 않았으니 표식을 남기지 않는다
+@pytest.mark.asyncio
+async def test_rollback_update_client_error_does_not_block(db, notified):
+    d_id=await make_deploy(db)
+    i_id=await make_incident(db, d_id, kind='bad_release')
+    rejection=ClientError({"Error": {"Code": "AccessDeniedException", "Message": "denied"}}, "UpdateExpressGatewayService")
+    fakes=Fakes(fail_update=rejection)
 
     await Recovery_Service.services_recovery_start(db, i_id, **fakes.kwargs())
 
     rows=await action_rows(i_id)
+    assert [(row.action, row.result) for row in rows] == [('rollback', 'failed')]
     assert not rows[0].detail.startswith((BOOKKEEPING_DETAIL, UNRECORDED_DETAIL))
 
     later=await make_incident(db, d_id, kind='unhealthy')
@@ -81,6 +102,30 @@ async def test_rollback_update_failure_does_not_block(db, notified):
     await Recovery_Service.services_recovery_start(db, later, **again.kwargs())
 
     assert len(again.updates) == 1
+
+
+# 되돌리기 갱신이 나간 뒤 시도를 끝내는 기록(finish/commit)이 실패해도 표식은 남는다
+@pytest.mark.asyncio
+async def test_rollback_finish_failure_still_marks_the_action(db, notified, monkeypatch):
+    d_id=await make_deploy(db)
+    i_id=await make_incident(db, d_id, kind='bad_release')
+    fakes=Fakes(healthy_images=(PREV_IMAGE,))
+
+    async def failing_finish(*args, **kwargs):
+        raise RuntimeError("database is locked")
+
+    monkeypatch.setattr(Incident_Crud, "crud_incident_action_finish", staticmethod(failing_finish))
+
+    await Recovery_Service.services_recovery_start(db, i_id, **fakes.kwargs())
+
+    assert len(fakes.updates) == 1 and fakes.updates[0][2] == PREV_IMAGE
+    rows=await action_rows(i_id)
+    assert [(row.action, row.result) for row in rows] == [('rollback', 'failed')]
+    assert rows[0].detail.startswith(UNRECORDED_DETAIL) and "database is locked" in rows[0].detail
+    assert (await fresh_incident(i_id)).status == 'needs_action'
+
+    monkeypatch.undo()
+    await assert_later_recovery_is_blocked(db, d_id, 'unhealthy')
 
 
 # (c) 서버가 되돌리기 도중 꺼졌다 켜지면 running 인 되돌리기 시도에 표식이 남는다 (재시작 시도는 그대로)

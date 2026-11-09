@@ -1,14 +1,15 @@
 import pytest
-from sqlalchemy import update
+from datetime import datetime
+from sqlalchemy import update, select
 
 from shared.database import AsyncSessionLocal
 
 from features.deploys import services as deploys_services_module
-from features.deploys.models import Deploy
+from features.deploys.models import Deploy, Deploy_Release
 from features.deploys.services import Deploy_Service
 from features.incidents.recovery import Recovery_Service
 
-from recovery_helpers import db, notified, aws_session, Fakes, make_deploy, make_incident, fresh_incident, release_states, PREV_IMAGE
+from recovery_helpers import db, notified, aws_session, Fakes, make_deploy, make_incident, fresh_incident, release_states, PREV_IMAGE, CUR_IMAGE
 
 pytestmark=pytest.mark.usefixtures("aws_session")
 
@@ -55,6 +56,37 @@ async def test_session_end_purge_removes_rollback_target(db, notified, aws_delet
 
     assert fakes.updates == []
     assert (await fresh_incident(i_id)).status == 'needs_action'
+
+
+# 이미지를 지운 뒤 같은 태그로 다시 빌드한 current 의 정상 확인 시각은 비워진다 - 그 뒤 새 버전을 배포해도 죽은 이미지가 되돌리기 대상이 되지 않는다
+@pytest.mark.asyncio
+async def test_purge_clears_current_healthy_since_so_a_later_release_has_no_dead_target(db, aws_deletes):
+    d_id=await make_deploy(db)
+    await set_repository(d_id)
+    async with AsyncSessionLocal() as session:
+        await session.execute(update(Deploy_Release).where(Deploy_Release.d_id == d_id, Deploy_Release.state == 'current')
+                              .values(healthy_since=datetime(2026, 11, 2)))
+        await session.commit()
+
+    await Deploy_Service.services_deploy_session_end(db)
+
+    async with AsyncSessionLocal() as session:
+        current=(await session.execute(select(Deploy_Release).where(Deploy_Release.d_id == d_id, Deploy_Release.state == 'current'))).scalars().one()
+        assert current.healthy_since is None
+
+    # 다시 켜서 같은 태그로 다시 빌드된 뒤 새 커밋을 배포한다
+    async with AsyncSessionLocal() as session:
+        await session.execute(update(Deploy).where(Deploy.d_id == d_id).values(status='running', service_arn="arn:aws:ecs:x:1:service/s",
+                                                                              image_uri=CUR_IMAGE))
+        await session.commit()
+    async with AsyncSessionLocal() as session:
+        await session.execute(update(Deploy).where(Deploy.d_id == d_id).values(commit_sha="e" * 40, image_uri=CUR_IMAGE + "2"))
+        await session.commit()
+    async with AsyncSessionLocal() as session:
+        await Deploy_Service.services_deploy_release_record(session, d_id)
+
+    assert await release_states(d_id) == [('a', 'old'), ('c', 'previous'), ('e', 'current')]
+    assert await Deploy_Service.services_deploy_release_rollback_target(db, d_id) is None
 
 
 # 이미지를 남기는 작업 종료(--keep-images)와 보기만(dry_run)은 되돌리기 대상을 건드리지 않는다

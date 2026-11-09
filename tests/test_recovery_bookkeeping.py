@@ -7,7 +7,7 @@ from shared.database import AsyncSessionLocal
 
 from features.deploys.models import Deploy, Deploy_Release
 from features.deploys.services import Deploy_Service, DEPLOY_CHANGED_DETAIL
-from features.incidents.recovery import Recovery_Service, BOOKKEEPING_DETAIL
+from features.incidents.recovery import Recovery_Service, BOOKKEEPING_DETAIL, UNRECORDED_DETAIL
 from features.accounts.services import Aws_Account_Service
 
 from recovery_helpers import (_now, db, notified, aws_session, Fakes, make_deploy, make_incident, fresh_incident, fresh_deploy,
@@ -126,7 +126,9 @@ async def test_rollback_skips_bookkeeping_when_deploy_changed(db, notified, chan
 
     assert len(fakes.updates) == 1
     rows=await action_rows(i_id)
-    assert [(row.action, row.result, row.detail) for row in rows] == [('rollback', 'failed', DEPLOY_CHANGED_DETAIL)]
+    # 갱신이 나간 뒤 배포가 바뀌었어도 표식은 붙는다 (새 릴리스가 생기면 풀린다)
+    assert [(row.action, row.result) for row in rows] == [('rollback', 'failed')]
+    assert rows[0].detail.startswith(UNRECORDED_DETAIL) and DEPLOY_CHANGED_DETAIL in rows[0].detail
     assert (await fresh_incident(i_id)).status == 'needs_action'
     assert notified == [(i_id, 'incident_needs_action')]
 

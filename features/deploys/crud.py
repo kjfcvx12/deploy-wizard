@@ -194,6 +194,15 @@ class Deploy_Crud:
         return result.rowcount
 
 
+    # 배포의 state 인 릴리스들의 정상 확인 시각을 비운다 - 이미지를 지운 뒤에는 다시 확인되기 전까지 정상 버전이 아니다
+    @staticmethod
+    async def crud_deploy_release_clear_healthy(db:AsyncSession, d_id:int, state:str) -> int:
+        result=await db.execute(update(Deploy_Release)
+                                .where(Deploy_Release.d_id == d_id, Deploy_Release.state == state)
+                                .values(healthy_since=None))
+        return result.rowcount
+
+
     # 릴리스 한 줄의 상태 바꾸기
     @staticmethod
     async def crud_deploy_release_set_state(db:AsyncSession, d_r_id:int, state:str) -> int:

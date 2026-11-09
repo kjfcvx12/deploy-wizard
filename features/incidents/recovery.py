@@ -4,6 +4,7 @@ from datetime import timedelta
 
 from sqlalchemy.ext.asyncio import AsyncSession
 from fastapi import HTTPException
+from botocore.exceptions import ClientError
 
 from shared.settings import settings
 from shared.masking import mask_text
@@ -103,8 +104,11 @@ class Recovery_Service:
             logger.warning("자동 복구 실패 i_id=%s : %s", i_id, mask_text(str(e))[:200])
             try:
                 await db.rollback()
-                await Incident_Crud.crud_incident_action_fail_running(db, i_id, mask_text(f"{type(e).__name__}: {e}")[:DETAIL_MAX],
-                                                                      Incident_Service.services_incident_now())
+                detail=mask_text(f"{type(e).__name__}: {e}")[:DETAIL_MAX]
+                now=Incident_Service.services_incident_now()
+                # 끝내는 기록이 실패한 경우에도 되돌리기가 AWS 에 갔을 수 있다 - 멈춰 있던 되돌리기 시도는 서버 재개 때처럼 모두 표식을 붙인다
+                await Incident_Crud.crud_incident_action_fail_running(db, i_id, Recovery_State.services_recovery_mark_unrecorded(detail), now, 'rollback')
+                await Incident_Crud.crud_incident_action_fail_running(db, i_id, detail, now)
                 await db.commit()
             except Exception:
                 await db.rollback()
@@ -153,7 +157,7 @@ class Recovery_Service:
     # 동작 하나 - recovering 으로 바꾸고 시도를 기록한 뒤 갱신 -> 완료 대기 -> 대기 -> 검증. 'ok'|'failed'|'closed'(그 사이 인시던트가 닫힘)를 돌려준다
     @staticmethod
     async def services_recovery_act(db:AsyncSession, incident:Incident, action:str, release, updater, waiter, sleeper, checker) -> tuple[str, str | None]:
-        from features.deploys.services import Deploy_Service, DEPLOY_CHANGED_DETAIL
+        from features.deploys.services import Deploy_Service
 
         i_id, d_id=incident.i_id, incident.d_id
         rel_id, rel_image=(release.d_r_id, release.image_uri) if release else (None, None)
@@ -167,7 +171,8 @@ class Recovery_Service:
         r_a_id=record.r_a_id
 
         result, detail, halt='failed', None, None
-        update_sent=False
+        update_attempted=False
+        update_rejected=False
 
         try:
             deploy=await Deploy_Service.services_deploy_get_d_id(db, d_id)
@@ -190,8 +195,13 @@ class Recovery_Service:
 
             if halt is None:
                 update=updater or Express_Service.services_express_update
-                await asyncio.to_thread(update, session, service_arn, image_uri, port, path, environment=environment)
-                update_sent=True
+                update_attempted=True
+                try:
+                    await asyncio.to_thread(update, session, service_arn, image_uri, port, path, environment=environment)
+                except ClientError:
+                    # AWS 가 거절 응답을 준 것 - 아무것도 적용되지 않았다
+                    update_rejected=True
+                    raise
 
                 wait=waiter or Express_Service.services_express_wait
                 await asyncio.to_thread(wait, session, service_arn)
@@ -209,9 +219,9 @@ class Recovery_Service:
             await db.rollback()
             detail=mask_text(f"{type(e).__name__}: {e}")[:DETAIL_MAX]
 
-        # 되돌리기 갱신이 AWS 에 갔는데 기록에는 반영되지 않았으면 표식을 남긴다 - 기록(deploys.image_uri)은 나쁜 이미지 그대로라 이후 자동 복구를 막아야 한다
-        # (그 사이 배포가 바뀐 경우는 새 배포가 기록을 대신하므로 제외)
-        if action == 'rollback' and update_sent and result != 'ok' and detail != DEPLOY_CHANGED_DETAIL:
+        # 되돌리기 갱신이 AWS 에 갔을 수 있는데 기록에는 반영되지 않았으면 표식을 남긴다 - 기록(deploys.image_uri)은 나쁜 이미지 그대로라 이후 자동 복구를 막아야 한다
+        # 갱신 호출이 예외로 끝나도 (시간 초과처럼) AWS 가 받았는지 알 수 없으니 표식을 남긴다. AWS 가 거절한 경우(ClientError)만 제외
+        if action == 'rollback' and update_attempted and not update_rejected and result != 'ok':
             detail=Recovery_State.services_recovery_mark_unrecorded(detail)
 
         await Incident_Crud.crud_incident_action_finish(db, r_a_id, result, detail, Incident_Service.services_incident_now())
