@@ -16,7 +16,7 @@
 
 - **계획 A (백엔드: 환경변수 감지·입력 + 배포 전 분석) - 구현됨** (2026-11-09, 브랜치 `feat/backend-env-advice`). 계획: [`../superpowers/plans/2026-11-09-backend-env-and-advice.md`](../superpowers/plans/2026-11-09-backend-env-and-advice.md). API는 `docs/api-spec.md`의 "Env"·"Advice", 구조는 `docs/architecture.md`로 옮겼다. 시크릿 값 저장(D8)과 사양 숫자·비용(D10)은 검증 전이라 아직 없고, 실제 AWS 배포로는 확인하지 않았다.
 - **계획 B (웹 화면: 환경변수 입력 카드 S-19 + 배포 전 분석 두 단계 S-20) - 구현됨** (2026-11-09, 브랜치 `feat/web-env-advice`). 계획: [`../superpowers/plans/2026-11-09-web-env-and-advice-ui.md`](../superpowers/plans/2026-11-09-web-env-and-advice-ui.md). 화면 설명은 `docs/ui-spec.md`로 옮겼다. 수준 선택 UI(`size_tier` 없음, D10)와 시크릿 값 입력(D8)은 만들지 않았다. 확인은 빌드와 모의 API를 쓴 브라우저 점검뿐이고 실제 백엔드·AWS로는 해 보지 않았다.
-- 나머지(운영 비서, 로그인, 앱 등)는 아직 구현하지 않았다. 기존 화면(목록·상세·계정)의 좁은 화면 정리는 계획 B 뒤 별도 작업으로 한다.
+- 나머지(운영 비서, 로그인, 앱 등)는 아직 구현하지 않았다. 기존 화면(목록·상세·계정)의 좁은 화면 정리는 구현했다 (2026-11-09, 브랜치 `feat/responsive-existing`, 합치는 것은 나중에). 규칙과 확인 범위는 `docs/ui-spec.md`의 "반응형" 절.
 
 ## 사용자가 정한 것 (대화에서)
 
