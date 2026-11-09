@@ -1,4 +1,4 @@
-import { lightColors, darkColors, spacing, radius } from '../theme'
+import { lightColors, darkColors, spacing, radius, monoFont } from '../theme'
 
 const TOKENS = ['bg', 'surface', 'surface2', 'border', 'text', 'muted', 'accent', 'accentText',
   'ok', 'okBg', 'warn', 'warnBg', 'err', 'errBg', 'infoBg', 'termBg', 'termText', 'termMuted', 'termCmd', 'termWarn', 'termErr']
@@ -14,5 +14,9 @@ describe('theme', () => {
     expect(darkColors.bg).toBe('#0d131c')
     expect(radius.md).toBe(10)
     expect(spacing.lg).toBe(16)
+  })
+
+  test('고정폭 글꼴은 iOS 에서 Menlo', () => {
+    expect(monoFont).toBe('Menlo')
   })
 })

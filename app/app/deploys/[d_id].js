@@ -3,6 +3,7 @@ import { ActivityIndicator, RefreshControl, ScrollView, StyleSheet, Text, View }
 import { Stack, useLocalSearchParams, useRouter } from 'expo-router'
 import { deployApi } from '../../src/api'
 import EndpointCard from '../../src/components/EndpointCard'
+import EnvVarsCard from '../../src/components/EnvVarsCard'
 import ExplainCard from '../../src/components/ExplainCard'
 import IssueHistory from '../../src/components/IssueHistory'
 import LogTerminal, { appendLogs } from '../../src/components/LogTerminal'
@@ -174,10 +175,7 @@ function DeployDetail({ d_id }) {
           <StepProgress status={status} errorStep={deploy.error_step} />
         </Card>
 
-        {showsEnvCard(status) && (
-          // 슬롯 - 환경변수 카드는 Task 5 가 여기에 붙인다 (<EnvVarsCard deploy onContinued={bumpRound} onRedeploy={redeploy} />). 값은 이 화면에 나오지 않는다
-          <View testID="env-card-slot" />
-        )}
+        {showsEnvCard(status) && <EnvVarsCard deploy={deploy} onContinued={bumpRound} onRedeploy={redeploy} />}
 
         {status === 'running' && deploy.endpoint && (
           <EndpointCard endpoint={deploy.endpoint} health={health} onError={setActionError} />

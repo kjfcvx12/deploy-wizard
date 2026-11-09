@@ -21,7 +21,7 @@ export function Notice({ tone = 'err', children, testID }) {
 }
 
 // 버튼 - variant: default(테두리) | primary(채움) | danger(빨강 테두리). 눌림 높이는 44pt 이상
-export function Button({ label, onPress, disabled, variant = 'default', style }) {
+export function Button({ label, onPress, disabled, variant = 'default', style, accessibilityLabel }) {
   const colors = useColors()
   const filled = variant === 'primary'
   const border = variant === 'danger' ? colors.err : colors.border
@@ -29,6 +29,7 @@ export function Button({ label, onPress, disabled, variant = 'default', style })
   return (
     <Pressable
       accessibilityRole="button"
+      accessibilityLabel={accessibilityLabel}
       accessibilityState={{ disabled: !!disabled }}
       disabled={disabled}
       onPress={onPress}

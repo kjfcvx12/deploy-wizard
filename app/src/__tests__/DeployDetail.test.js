@@ -1,7 +1,7 @@
 import { Alert, AppState, Linking } from 'react-native'
 import * as Clipboard from 'expo-clipboard'
 import { render, screen, fireEvent, act } from '@testing-library/react-native'
-import { deployApi } from '../api'
+import { deployApi, envApi } from '../api'
 import DeployDetail from '../../app/deploys/[d_id]'
 
 const mockReplace = jest.fn()
@@ -16,6 +16,7 @@ jest.mock('../api', () => ({
     getOne: jest.fn(), getLogs: jest.fn(), getIssues: jest.fn(), getHealth: jest.fn(),
     redeploy: jest.fn(), stop: jest.fn(), start: jest.fn(), remove: jest.fn(),
   },
+  envApi: { getAll: jest.fn(), put: jest.fn(), clearValue: jest.fn(), continueDeploy: jest.fn() },
 }))
 
 const ENDPOINT = 'https://deploy-wizard-example-service-abcdefghij.ecs.ap-northeast-2.on.aws'
@@ -46,6 +47,8 @@ beforeEach(() => {
   deployApi.getLogs.mockResolvedValue([])
   deployApi.getIssues.mockResolvedValue([])
   deployApi.getHealth.mockResolvedValue({ health: 'healthy' })
+  for (const fn of Object.values(envApi)) fn.mockReset()
+  envApi.getAll.mockResolvedValue([])
   Clipboard.setStringAsync.mockReset().mockResolvedValue(true)
   jest.spyOn(AppState, 'addEventListener').mockImplementation(() => ({ remove: jest.fn() }))
   jest.spyOn(console, 'error')
@@ -126,7 +129,7 @@ describe('배포 상세 화면 - 상태별 화면', () => {
     expect(screen.getByLabelText('푸시 완료')).toBeTruthy()
     expect(screen.getByLabelText('배포 입력 대기')).toBeTruthy()
     expect(screen.getByLabelText('완료 대기')).toBeTruthy()
-    expect(screen.getByTestId('env-card-slot')).toBeTruthy()
+    expect(await screen.findByText('입력할 환경변수를 찾지 못했습니다. [이어서 배포]를 눌러 계속하세요.')).toBeTruthy()
     expect(screen.queryByText('다시 배포')).toBeNull()
     expect(screen.queryByText('멈춤', { exact: true })).toBeNull()
     expect(screen.getByText('삭제')).toBeTruthy()
