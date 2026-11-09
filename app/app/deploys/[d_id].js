@@ -8,11 +8,14 @@ import EnvVarsCard from '../../src/components/EnvVarsCard'
 import ExplainCard from '../../src/components/ExplainCard'
 import IssueHistory from '../../src/components/IssueHistory'
 import LogTerminal, { appendLogs } from '../../src/components/LogTerminal'
+import HealthDot from '../../src/components/ops/HealthDot'
+import IncidentCard from '../../src/components/ops/IncidentCard'
 import StatusBadge from '../../src/components/StatusBadge'
 import StepProgress from '../../src/components/StepProgress'
 import { Button, Card, Collapsible, Notice } from '../../src/components/ui'
 import { isProgress, repoName, showsEnvCard } from '../../src/constants'
 import { confirmAction } from '../../src/confirm'
+import { confirmStopDeploy } from '../../src/deployConfirms'
 import { STOP_POLLING, usePolling } from '../../src/hooks/usePolling'
 import { monoFont, radius, spacing, useColors } from '../../src/theme'
 
@@ -114,13 +117,7 @@ function DeployDetail({ d_id }) {
   const start = () => { perform(() => deployApi.start(d_id), bumpRound) }
 
   // 멈춤 - 요금이 나가는 서비스만 내린다. 이미지는 남아서 [다시 켜기]가 빌드 없이 끝난다
-  const askStop = () => confirmAction({
-    title: '이 배포를 멈출까요?',
-    message: 'ECS 서비스를 내려서 컨테이너 요금이 멈춥니다. 주소는 접속되지 않게 됩니다. 이미지와 설정은 남겨 두므로 [다시 켜기] 한 번으로 다시 띄울 수 있습니다.',
-    cancelText: '그대로 두기',
-    confirmText: '멈춤',
-    onConfirm: () => { perform(() => deployApi.stop(d_id), bumpRound) },
-  })
+  const askStop = () => confirmStopDeploy(() => { perform(() => deployApi.stop(d_id), bumpRound) })
 
   // 목록으로 돌아간다 - 아래에 목록이 있으면 그 목록으로 되돌아가 낡은 목록이 남지 않게 하고, 없으면(주소로 바로 들어온 경우) 목록으로 바꾼다
   const backToList = () => {
@@ -183,6 +180,7 @@ function DeployDetail({ d_id }) {
           <View style={styles.badges}>
             {deploy.support_level === 'experimental' && <Tag text="실험 지원" />}
             {deploy.fix_count > 0 && <Tag text={`자가수정 ${deploy.fix_count}회`} />}
+            {status === 'running' && <HealthDot state={deploy.health_state} withLabel />}
           </View>
           <StepProgress status={status} errorStep={deploy.error_step} />
         </Card>
@@ -191,6 +189,10 @@ function DeployDetail({ d_id }) {
 
         {status === 'running' && deploy.endpoint && (
           <EndpointCard endpoint={deploy.endpoint} health={health} onError={setActionError} />
+        )}
+
+        {!!deploy.open_incident_id && (
+          <IncidentCard d_id={deploy.d_id} i_id={deploy.open_incident_id} onPress={() => router.push(`/incidents/${deploy.open_incident_id}`)} />
         )}
 
         {status === 'stopped' && (

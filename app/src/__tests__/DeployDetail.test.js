@@ -2,7 +2,7 @@ import { Alert, AppState, Linking, Platform, StyleSheet } from 'react-native'
 import { SafeAreaProvider } from 'react-native-safe-area-context'
 import * as Clipboard from 'expo-clipboard'
 import { render, screen, fireEvent, act } from '@testing-library/react-native'
-import { deployApi, envApi } from '../api'
+import { deployApi, envApi, incidentApi } from '../api'
 import DeployDetail from '../../app/deploys/[d_id]'
 import { monoFont } from '../theme'
 
@@ -21,9 +21,10 @@ jest.mock('react-native/Libraries/Components/Keyboard/KeyboardAvoidingView', () 
   }
 })
 const mockDismissTo = jest.fn()
+const mockPush = jest.fn()
 let mockCanGoBack = true
 jest.mock('expo-router', () => ({
-  useRouter: () => ({ replace: mockReplace, dismissTo: mockDismissTo, canGoBack: () => mockCanGoBack, push: jest.fn() }),
+  useRouter: () => ({ replace: mockReplace, dismissTo: mockDismissTo, canGoBack: () => mockCanGoBack, push: mockPush }),
   useLocalSearchParams: () => ({ d_id: '7' }),
   Stack: { Screen: () => null },
 }))
@@ -34,6 +35,7 @@ jest.mock('../api', () => ({
     redeploy: jest.fn(), stop: jest.fn(), start: jest.fn(), remove: jest.fn(),
   },
   envApi: { getAll: jest.fn(), put: jest.fn(), clearValue: jest.fn(), continueDeploy: jest.fn() },
+  incidentApi: { getOne: jest.fn() },
 }))
 
 const ENDPOINT = 'https://deploy-wizard-example-service-abcdefghij.ecs.ap-northeast-2.on.aws'
@@ -59,6 +61,7 @@ beforeEach(() => {
   jest.useFakeTimers()
   mockReplace.mockClear()
   mockDismissTo.mockClear()
+  mockPush.mockClear()
   mockCanGoBack = true
   current = base
   for (const fn of Object.values(deployApi)) fn.mockReset()
@@ -69,6 +72,7 @@ beforeEach(() => {
   for (const fn of Object.values(envApi)) fn.mockReset()
   envApi.getAll.mockResolvedValue([])
   Clipboard.setStringAsync.mockReset().mockResolvedValue(true)
+  incidentApi.getOne.mockReset().mockResolvedValue({ i_id: 12, status: 'recovering', summary: '앱이 오류로 응답하고 있습니다.' })
   jest.spyOn(AppState, 'addEventListener').mockImplementation(() => ({ remove: jest.fn() }))
   jest.spyOn(console, 'error')
 })
@@ -504,5 +508,31 @@ describe('배포 상세 화면 - 안전 영역과 글꼴', () => {
     await fireEvent.press(screen.getByText(/Dockerfile/))
     expect(StyleSheet.flatten(screen.getByText(/줄 1/).props.style).fontFamily).toBe(monoFont)
     expect(StyleSheet.flatten(screen.getByText(/FROM node:20/).props.style).fontFamily).toBe(monoFont)
+  })
+})
+
+describe('배포 상세 화면 - 인시던트 카드와 헬스 점', () => {
+  test('open_incident_id 가 있으면 요약이 든 카드가 나오고, 누르면 인시던트 화면으로 간다', async () => {
+    await open({ ...base, open_incident_id: 12, auto_recover: true })
+    expect(await screen.findByText('앱이 오류로 응답하고 있습니다.')).toBeTruthy()
+    expect(incidentApi.getOne).toHaveBeenCalledWith(12)
+    await fireEvent.press(screen.getByRole('button', { name: /배포 #7/ }))
+    expect(mockPush).toHaveBeenCalledWith('/incidents/12')
+  })
+
+  test('open_incident_id 가 없으면 카드도, 인시던트 조회도 없다', async () => {
+    await open({ ...base, open_incident_id: null })
+    expect(screen.queryByText('처리 중인 문제가 있습니다')).toBeNull()
+    expect(incidentApi.getOne).not.toHaveBeenCalled()
+  })
+
+  test('running 이면 머리 카드에 헬스 점과 글자가 붙고, 아니면 붙지 않는다', async () => {
+    await open({ ...base, health_state: 'unhealthy' })
+    expect(screen.getByLabelText('서버 응답 응답 없음')).toBeTruthy()
+  })
+
+  test('running 이 아니면 헬스 점이 없다', async () => {
+    await open({ ...base, status: 'stopped', endpoint: null, health_state: 'healthy' })
+    expect(screen.queryByTestId('health-dot')).toBeNull()
   })
 })

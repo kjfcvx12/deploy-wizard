@@ -1,7 +1,7 @@
 import { RECOVERY_ACTION_LABEL, RECOVERY_RESULT_LABEL, RECOVERY_RESULT_TONE } from './constants'
 
 // 서버 시각을 밀리초로 읽는다 - 서버는 UTC 를 Z 없이 보내므로 시간대 표시가 없으면 UTC 로 본다 (읽을 수 없으면 NaN)
-const toMs = (iso) => {
+export const toMs = (iso) => {
   if (typeof iso !== 'string' || !iso) return NaN
   const hasZone = /(?:Z|[+-]\d{2}:?\d{2})$/i.test(iso)
   return new Date(hasZone ? iso : `${iso}Z`).getTime()

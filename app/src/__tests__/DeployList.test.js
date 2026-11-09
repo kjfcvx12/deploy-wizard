@@ -219,3 +219,47 @@ describe('StatusBadge', () => {
     expect(screen.getByText('weird')).toBeTruthy()
   })
 })
+
+describe('배포 목록 화면 - 문제 배너와 헬스 점', () => {
+  const withIncident = { ...deploys[0], open_incident_id: 12, auto_recover: true, health_state: 'unhealthy' }
+
+  test('open_incident_id 가 있는 배포만 배너가 나오고, 누르면 인시던트 화면으로 간다', async () => {
+    deployApi.getAll.mockResolvedValue([withIncident, { ...deploys[1], open_incident_id: null }])
+    await render(<DeployList />)
+    expect(await screen.findByText('acme/api에 문제가 있습니다 · 자동 복구 중')).toBeTruthy()
+    expect(screen.queryByText(/acme\/web에 문제가 있습니다/)).toBeNull()
+    await fireEvent.press(screen.getByRole('button', { name: /acme\/api에 문제가 있습니다/ }))
+    expect(mockPush).toHaveBeenCalledWith('/incidents/12')
+    expect(mockPush).not.toHaveBeenCalledWith('/deploys/7')
+  })
+
+  test('자동 복구가 꺼진 배포는 확인이 필요합니다 문구', async () => {
+    deployApi.getAll.mockResolvedValue([{ ...withIncident, auto_recover: false }])
+    await render(<DeployList />)
+    expect(await screen.findByText('acme/api에 문제가 있습니다 · 확인이 필요합니다')).toBeTruthy()
+  })
+
+  test('열린 인시던트가 없으면 배너가 하나도 없다 (옛 서버 응답처럼 필드가 없어도 된다)', async () => {
+    deployApi.getAll.mockResolvedValue(deploys)
+    await render(<DeployList />)
+    await screen.findByText('acme/api')
+    expect(screen.queryByText(/에 문제가 있습니다/)).toBeNull()
+  })
+
+  test('실행 중인 카드에만 헬스 점이 붙는다', async () => {
+    deployApi.getAll.mockResolvedValue([withIncident, { ...deploys[1], health_state: 'healthy' }])
+    await render(<DeployList />)
+    await screen.findByText('acme/api')
+    expect(screen.getAllByTestId('health-dot')).toHaveLength(1)
+    expect(screen.getByLabelText('서버 응답 응답 없음')).toBeTruthy()
+  })
+
+  test('연결 오류와 배너가 함께 나올 수 있다', async () => {
+    deployApi.getAll.mockResolvedValueOnce([withIncident]).mockRejectedValue(new Error('연결 끊김'))
+    await render(<DeployList />)
+    await screen.findByText('acme/api에 문제가 있습니다 · 자동 복구 중')
+    await act(async () => { jest.advanceTimersByTime(15000) })
+    expect(await screen.findByText('서버에 연결할 수 없습니다 :연결 끊김')).toBeTruthy()
+    expect(screen.getByText('acme/api에 문제가 있습니다 · 자동 복구 중')).toBeTruthy()
+  })
+})

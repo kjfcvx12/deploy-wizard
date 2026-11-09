@@ -3,6 +3,8 @@ import { ActivityIndicator, FlatList, Pressable, RefreshControl, StyleSheet, Tex
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import { Stack, useFocusEffect, useRouter } from 'expo-router'
 import { deployApi } from '../src/api'
+import HealthDot from '../src/components/ops/HealthDot'
+import ProblemBanner from '../src/components/ops/ProblemBanner'
 import StatusBadge from '../src/components/StatusBadge'
 import { isProgress, repoName } from '../src/constants'
 import { usePolling } from '../src/hooks/usePolling'
@@ -78,7 +80,10 @@ function DeployCard({ deploy, onPress }) {
         <Text style={[styles.name, { color: colors.text }]}>{repoName(deploy.repo_url)}</Text>
         <Text style={[styles.meta, { color: colors.muted }]}>{metaLine(deploy)}</Text>
       </View>
-      <StatusBadge status={deploy.status} />
+      <View style={styles.badges}>
+        <StatusBadge status={deploy.status} />
+        {deploy.status === 'running' && <HealthDot state={deploy.health_state} />}
+      </View>
     </Pressable>
   )
 }
@@ -90,6 +95,9 @@ export default function DeployListScreen() {
   const insets = useSafeAreaInsets()
   const [pulling, setPulling] = useState(false)
   const { data, error, loading, refresh } = usePolling(() => deployApi.getAll(), listDelay, [])
+
+  // 열린 인시던트가 있는 배포 - 목록 위에 배너로 알린다
+  const problems = data ? data.filter((d) => d.open_incident_id) : []
 
   const goNew = () => router.push('/new')
   const goAccounts = () => router.push('/accounts')
@@ -142,7 +150,12 @@ export default function DeployListScreen() {
         data={data || []}
         keyExtractor={(deploy) => String(deploy.d_id)}
         renderItem={({ item }) => <DeployCard deploy={item} onPress={() => router.push(`/deploys/${item.d_id}`)} />}
-        ListHeaderComponent={data && error ? <ErrorNotice message={error.message} onRetry={refresh} /> : null}
+        ListHeaderComponent={(data && error) || problems.length > 0 ? (
+          <View style={styles.header}>
+            {data && error ? <ErrorNotice message={error.message} onRetry={refresh} /> : null}
+            {problems.map((d) => <ProblemBanner key={d.d_id} deploy={d} onPress={() => router.push(`/incidents/${d.open_incident_id}`)} />)}
+          </View>
+        ) : null}
         ListEmptyComponent={empty}
         refreshControl={<RefreshControl refreshing={pulling} onRefresh={onPull} tintColor={colors.accent} colors={[colors.accent]} />}
         contentContainerStyle={[styles.content, { paddingBottom: spacing.xl * 2 + insets.bottom }]}
@@ -165,6 +178,8 @@ const styles = StyleSheet.create({
     borderRadius: radius.md,
   },
   cardBody: { flex: 1, minWidth: 0 },
+  badges: { alignItems: 'flex-end', gap: spacing.sm },
+  header: { gap: spacing.md },
   name: { fontSize: 16, fontWeight: '700' },
   meta: { fontSize: 13, marginTop: spacing.xs },
   headerRight: { flexDirection: 'row', alignItems: 'center' },
