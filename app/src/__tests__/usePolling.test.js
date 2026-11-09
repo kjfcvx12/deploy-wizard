@@ -1,6 +1,6 @@
 import { AppState } from 'react-native'
 import { renderHook, act } from '@testing-library/react-native'
-import { usePolling } from '../hooks/usePolling'
+import { usePolling, STOP_POLLING } from '../hooks/usePolling'
 
 let listeners = []
 let appState = 'active'
@@ -159,5 +159,94 @@ describe('usePolling', () => {
     expect(fn).toHaveBeenCalledTimes(2)
     await tick(3000)
     expect(fn).toHaveBeenCalledTimes(3)
+  })
+
+  test('간격 계산이 던져도 조회 실패로 보지 않고 직전 간격(없으면 15초)으로 이어 간다', async () => {
+    const fn = jest.fn().mockResolvedValue('a')
+    const getDelayMs = jest.fn().mockReturnValueOnce(2000).mockImplementationOnce(() => { throw new Error('계산 실패') }).mockReturnValue(2000)
+    const { result } = await renderHook(() => usePolling(fn, getDelayMs, []))
+    await tick(2000)
+    expect(fn).toHaveBeenCalledTimes(2)
+    expect(result.current.error).toBeNull()
+    expect(result.current.data).toBe('a')
+    await tick(1999)
+    expect(fn).toHaveBeenCalledTimes(2)
+    await tick(1)
+    expect(fn).toHaveBeenCalledTimes(3)
+  })
+
+  test('처음부터 간격 계산이 던지면 15초 뒤에 다시 부른다', async () => {
+    const fn = jest.fn().mockResolvedValue('a')
+    const { result } = await renderHook(() => usePolling(fn, () => { throw new Error('x') }, []))
+    expect(result.current.error).toBeNull()
+    expect(result.current.loading).toBe(false)
+    await tick(14999)
+    expect(fn).toHaveBeenCalledTimes(1)
+    await tick(1)
+    expect(fn).toHaveBeenCalledTimes(2)
+  })
+
+  test.each([[0], [-5], [NaN], [Infinity], [undefined], ['3000']])('간격이 %p 이면 바로 다시 부르지 않고 직전 간격으로 이어 간다', async (bad) => {
+    const fn = jest.fn().mockResolvedValue('a')
+    const getDelayMs = jest.fn().mockReturnValueOnce(4000).mockReturnValue(bad)
+    await renderHook(() => usePolling(fn, getDelayMs, []))
+    await tick(4000)
+    expect(fn).toHaveBeenCalledTimes(2)
+    await tick(3999)
+    expect(fn).toHaveBeenCalledTimes(2)
+    await tick(1)
+    expect(fn).toHaveBeenCalledTimes(3)
+  })
+
+  test('실패 쪽 간격 계산이 던져도 에러는 조회 에러 그대로다', async () => {
+    const fn = jest.fn().mockRejectedValue(new Error('끊김'))
+    const { result } = await renderHook(() => usePolling(fn, () => { throw new Error('계산 실패') }, []))
+    expect(result.current.error.message).toBe('끊김')
+    await tick(15000)
+    expect(fn).toHaveBeenCalledTimes(2)
+  })
+
+  test('STOP_POLLING 을 돌려주면 더 부르지 않고, refresh() 로는 다시 부른다', async () => {
+    const fn = jest.fn().mockResolvedValue('a')
+    const { result } = await renderHook(() => usePolling(fn, () => STOP_POLLING, []))
+    await tick(60000)
+    expect(fn).toHaveBeenCalledTimes(1)
+    await act(async () => { await result.current.refresh() })
+    expect(fn).toHaveBeenCalledTimes(2)
+    await tick(60000)
+    expect(fn).toHaveBeenCalledTimes(2)
+  })
+
+  test('STOP_POLLING 이어도 백그라운드에서 돌아오면 한 번 확인한다', async () => {
+    const fn = jest.fn().mockResolvedValue('a')
+    await renderHook(() => usePolling(fn, () => STOP_POLLING, []))
+    await setAppState('background')
+    await setAppState('active')
+    expect(fn).toHaveBeenCalledTimes(2)
+    await tick(60000)
+    expect(fn).toHaveBeenCalledTimes(2)
+  })
+
+  test('deps 가 바뀌면 이전 데이터를 비우고 로딩으로 돌아간다', async () => {
+    let resolveSecond
+    const fn = jest.fn()
+      .mockResolvedValueOnce('deploy-1')
+      .mockImplementationOnce(() => new Promise((r) => { resolveSecond = r }))
+    const { result, rerender } = await renderHook(({ id }) => usePolling(fn, () => 3000, [id]), { initialProps: { id: 1 } })
+    expect(result.current.data).toBe('deploy-1')
+    await rerender({ id: 2 })
+    expect(result.current.data).toBeNull()
+    expect(result.current.loading).toBe(true)
+    await act(async () => { resolveSecond('deploy-2') })
+    expect(result.current.data).toBe('deploy-2')
+    expect(result.current.loading).toBe(false)
+  })
+
+  test('deps 가 바뀌면 이전 에러도 지운다', async () => {
+    const fn = jest.fn().mockRejectedValueOnce(new Error('x')).mockReturnValue(new Promise(() => {}))
+    const { result, rerender } = await renderHook(({ id }) => usePolling(fn, () => 3000, [id]), { initialProps: { id: 1 } })
+    expect(result.current.error.message).toBe('x')
+    await rerender({ id: 2 })
+    expect(result.current.error).toBeNull()
   })
 })

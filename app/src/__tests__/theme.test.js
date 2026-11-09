@@ -1,7 +1,7 @@
 import { lightColors, darkColors, spacing, radius } from '../theme'
 
 const TOKENS = ['bg', 'surface', 'surface2', 'border', 'text', 'muted', 'accent', 'accentText',
-  'ok', 'okBg', 'warn', 'warnBg', 'err', 'errBg', 'infoBg', 'termBg', 'termText']
+  'ok', 'okBg', 'warn', 'warnBg', 'err', 'errBg', 'infoBg', 'termBg', 'termText', 'termMuted', 'termCmd', 'termWarn', 'termErr']
 
 describe('theme', () => {
   test('밝은 색과 어두운 색이 같은 토큰 이름을 가진다', () => {
