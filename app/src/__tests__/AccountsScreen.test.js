@@ -23,13 +23,18 @@ jest.mock('react-native/Libraries/Components/Keyboard/KeyboardAvoidingView', () 
 jest.mock('expo-router', () => ({
   Stack: { Screen: () => null },
 }))
+jest.mock('expo-clipboard', () => ({ setStringAsync: jest.fn() }))
 jest.mock('../api', () => ({
+  BASE_URL: 'http://localhost:8081',
   accountApi: {
     getConnections: jest.fn(),
     listAws: jest.fn(),
     listGithub: jest.fn(),
     createConnection: jest.fn(),
     deleteConnection: jest.fn(),
+    createConnectionAws: jest.fn(),
+    getTemplateStatus: jest.fn(),
+    setConnectionAws: jest.fn(),
   },
 }))
 jest.mock('../confirm', () => ({ confirmAction: jest.fn() }))
@@ -46,6 +51,9 @@ beforeEach(() => {
   accountApi.listGithub.mockReset().mockResolvedValue([])
   accountApi.createConnection.mockReset()
   accountApi.deleteConnection.mockReset()
+  accountApi.createConnectionAws.mockReset()
+  accountApi.getTemplateStatus.mockReset()
+  accountApi.setConnectionAws.mockReset()
   confirmAction.mockReset()
   readPickedBlock.mockReset().mockResolvedValue(null)
   writePickedBlock.mockReset().mockResolvedValue(undefined)
@@ -115,7 +123,7 @@ describe('계정 연결 화면 - 선택', () => {
     await render(<AccountsScreen />)
     await screen.findByText('개발 계정')
     expect(screen.getAllByText('선택됨')).toHaveLength(1)
-    expect(screen.getByRole('button', { name: '선택됨' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: '개발 계정 선택됨' })).toBeDisabled()
     expect(screen.getAllByText('선택')).toHaveLength(1)
   })
 
@@ -273,7 +281,7 @@ describe('계정 연결 화면 - 블록 삭제', () => {
     await fireEvent.press(screen.getAllByText('블록 삭제')[0])
     await act(async () => { confirmAction.mock.calls[0][0].onConfirm() })
     expect(await screen.findByText('삭제할 수 없습니다')).toBeTruthy()
-    expect(screen.getAllByRole('button', { name: '블록 삭제' })[0]).toBeEnabled()
+    expect(screen.getByRole('button', { name: '운영 계정 블록 삭제' })).toBeEnabled()
   })
 
   test('삭제가 진행되는 동안 다시 확인해도 요청은 한 번이다', async () => {
@@ -285,8 +293,105 @@ describe('계정 연결 화면 - 블록 삭제', () => {
     const { onConfirm } = confirmAction.mock.calls[0][0]
     await act(async () => { onConfirm(); onConfirm() })
     expect(accountApi.deleteConnection).toHaveBeenCalledTimes(1)
-    expect(screen.getAllByRole('button', { name: '블록 삭제' })[0]).toBeDisabled()
+    expect(screen.getByRole('button', { name: '운영 계정 블록 삭제' })).toBeDisabled()
     await act(async () => { resolve(null) })
+  })
+})
+
+const aws = (a_id, over = {}) => ({
+  a_id, label: `AWS ${a_id}`, role_arn: `arn:aws:iam::22222222222${a_id}:role/DeployWizardCrossAccountRole`, aws_account_id: `22222222222${a_id}`,
+  region: null, status: 'verified', last_verified_at: null, last_error: null, created_at: '', updated_at: '', ...over,
+})
+const tstatus = (a_id, over = {}) => ({
+  a_id, current_version: 2, latest_version: 2, update_needed: false, template_file_count: 0,
+  template_download_url: '/api/accounts/aws/template', stack_list_url: 'https://console.aws.amazon.com/cloudformation/home#/stacks', ...over,
+})
+
+describe('계정 연결 화면 - AWS 상자', () => {
+  test('블록마다 AWS 상자가 카드 안에 들어간다', async () => {
+    await render(<AccountsScreen />)
+    await screen.findByText('운영 계정')
+    expect(screen.getAllByText('AWS 계정')).toHaveLength(2)
+    expect(screen.getByRole('button', { name: '운영 계정 AWS 계정 추가' })).toBeEnabled()
+    expect(screen.getByRole('button', { name: '개발 계정 AWS 계정 추가' })).toBeEnabled()
+  })
+
+  test('확인된 AWS 계정만 템플릿 상태를 읽고, 업데이트가 필요하면 상자에 경고가 보인다', async () => {
+    const withAws = [
+      { c_id: 1, label: '운영 계정', aws: aws(1), github: null },
+      { c_id: 2, label: '개발 계정', aws: aws(2, { status: 'pending', aws_account_id: null, role_arn: null }), github: null },
+      { c_id: 3, label: '실험 계정', aws: aws(3, { status: 'invalid', last_error: '거부됨' }), github: null },
+    ]
+    accountApi.getConnections.mockResolvedValue(withAws)
+    accountApi.listAws.mockResolvedValue(withAws.map((item) => item.aws))
+    accountApi.getTemplateStatus.mockResolvedValue(tstatus(1, { update_needed: true, current_version: 0 }))
+    await render(<AccountsScreen />)
+    expect(await screen.findByText('스택 업데이트 필요')).toBeTruthy()
+    expect(accountApi.getTemplateStatus).toHaveBeenCalledTimes(1)
+    expect(accountApi.getTemplateStatus).toHaveBeenCalledWith(1)
+    expect(screen.getByRole('button', { name: '운영 계정 AWS 스택 업데이트' })).toBeEnabled()
+  })
+
+  test('템플릿 상태를 못 읽어도 화면은 정상이고 오류를 띄우지 않는다', async () => {
+    const withAws = [{ c_id: 1, label: '운영 계정', aws: aws(1), github: null }]
+    accountApi.getConnections.mockResolvedValue(withAws)
+    accountApi.listAws.mockResolvedValue([withAws[0].aws])
+    accountApi.getTemplateStatus.mockRejectedValue(new Error('버전을 읽을 수 없습니다'))
+    await render(<AccountsScreen />)
+    await screen.findByText('계정 222222222221')
+    await waitFor(() => expect(accountApi.getTemplateStatus).toHaveBeenCalled())
+    expect(screen.queryByText('버전을 읽을 수 없습니다')).toBeNull()
+    expect(screen.queryByText(/템플릿 최신/)).toBeNull()
+    expect(screen.queryByText('스택 업데이트 필요')).toBeNull()
+  })
+
+  test('언마운트한 뒤 늦게 온 템플릿 상태는 버린다 (경고 없이)', async () => {
+    const spy = jest.spyOn(console, 'error').mockImplementation(() => {})
+    const withAws = [{ c_id: 1, label: '운영 계정', aws: aws(1), github: null }]
+    accountApi.getConnections.mockResolvedValue(withAws)
+    accountApi.listAws.mockResolvedValue([withAws[0].aws])
+    let resolve
+    accountApi.getTemplateStatus.mockReturnValue(new Promise((r) => { resolve = r }))
+    const { unmount } = await render(<AccountsScreen />)
+    await screen.findByText('운영 계정')
+    await unmount()
+    await act(async () => { resolve(tstatus(1)) })
+    expect(spy).not.toHaveBeenCalled()
+    spy.mockRestore()
+  })
+
+  test('연결을 시작하는 동안 모든 블록의 버튼이 잠기고, 끝나면 안내가 열린다', async () => {
+    let resolve
+    accountApi.createConnectionAws.mockReturnValue(new Promise((r) => { resolve = r }))
+    await render(<AccountsScreen />)
+    await screen.findByText('운영 계정')
+    await fireEvent.press(screen.getByRole('button', { name: '운영 계정 AWS 계정 추가' }))
+    expect(screen.getByRole('button', { name: '개발 계정 AWS 계정 추가' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: '개발 계정 블록 삭제' })).toBeDisabled()
+    await act(async () => { resolve({ a_id: 9, label: '운영 계정', external_id: 'EXT-1', our_account_id: '111122223333', template_download_url: '/api/accounts/aws/template', stack_create_url: 'https://console.aws.amazon.com/cloudformation/home#/stacks/create' }) })
+    expect(await screen.findByText('역할 만들고 붙여넣기 — 운영 계정')).toBeTruthy()
+    expect(accountApi.createConnectionAws).toHaveBeenCalledWith(1)
+  })
+
+  test('서버가 409 로 거절하면 화면 위에 서버 메시지를 보이고 버튼이 풀린다', async () => {
+    accountApi.createConnectionAws.mockRejectedValue(new Error('이 블록에는 이미 AWS 계정이 연결되어 있습니다'))
+    await render(<AccountsScreen />)
+    await screen.findByText('운영 계정')
+    await fireEvent.press(screen.getByRole('button', { name: '운영 계정 AWS 계정 추가' }))
+    expect(await screen.findByText('이 블록에는 이미 AWS 계정이 연결되어 있습니다')).toBeTruthy()
+    expect(screen.getByRole('button', { name: '운영 계정 AWS 계정 추가' })).toBeEnabled()
+  })
+
+  test('다른 블록이 쓰는 계정은 고르기 목록에 나오고, 고르면 이 블록에 이은 뒤 목록을 다시 받는다', async () => {
+    const shared = aws(5, { label: '공용 AWS' })
+    accountApi.listAws.mockResolvedValue([shared])
+    accountApi.setConnectionAws.mockResolvedValue({})
+    await render(<AccountsScreen />)
+    await screen.findByText('운영 계정')
+    await fireEvent.press(screen.getByRole('button', { name: '운영 계정 AWS 이미 연결한 계정에서 고르기' }))
+    await fireEvent.press(screen.getByText('공용 AWS'))
+    await waitFor(() => expect(accountApi.setConnectionAws).toHaveBeenCalledWith(1, 5))
+    await waitFor(() => expect(accountApi.getConnections).toHaveBeenCalledTimes(2))
   })
 })
 

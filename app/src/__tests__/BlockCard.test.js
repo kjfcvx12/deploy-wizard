@@ -28,7 +28,13 @@ describe('BlockCard', () => {
     expect(screen.queryByText('선택')).toBeNull()
     await fireEvent.press(screen.getByText('선택됨'))
     expect(onPick).not.toHaveBeenCalled()
-    expect(screen.getByRole('button', { name: '선택됨' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: '운영 계정 선택됨' })).toBeDisabled()
+  })
+
+  test('두 버튼의 접근성 이름에 블록 이름이 들어간다', async () => {
+    await render(<BlockCard block={block} picked={false} busy={false} onPick={jest.fn()} onDelete={jest.fn()} />)
+    expect(screen.getByRole('button', { name: '운영 계정 선택' })).toBeEnabled()
+    expect(screen.getByRole('button', { name: '운영 계정 블록 삭제' })).toBeEnabled()
   })
 
   test('작업 중이면 두 버튼이 모두 잠긴다', async () => {

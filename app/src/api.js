@@ -1,6 +1,6 @@
 // 서버 호출 - 웹의 shared/ui/api.js · features/*/ui/api.js 와 같은 의미 (앱은 app/ 밖을 가져오지 않는다)
 // 기본 주소는 EXPO_PUBLIC_API_BASE_URL (빌드 때 코드에 박힌다), 없으면 로컬 서버
-const BASE_URL = process.env.EXPO_PUBLIC_API_BASE_URL || 'http://localhost:8081'
+export const BASE_URL = process.env.EXPO_PUBLIC_API_BASE_URL || 'http://localhost:8081'
 const TIMEOUT_MS = 15000
 const NETWORK_ERROR = '서버에 연결할 수 없습니다'
 

@@ -6,6 +6,7 @@ import { accountApi } from '../src/api'
 import { DELETE_TEXT } from '../src/accounts/constants'
 import { readPickedBlock, writePickedBlock } from '../src/accounts/pickedBlock'
 import AddBlockForm from '../src/components/accounts/AddBlockForm'
+import AwsBox from '../src/components/accounts/AwsBox'
 import BlockCard from '../src/components/accounts/BlockCard'
 import { Button, Notice } from '../src/components/ui'
 import { confirmAction } from '../src/confirm'
@@ -23,9 +24,12 @@ export default function AccountsScreen() {
   const [busy, setBusy] = useState(false)
   const [adding, setAdding] = useState(false)
   const [pickedId, setPickedId] = useState(null)
+  // 연결된 AWS 계정마다 템플릿 상태 (a_id -> Aws_Account_Template_Status) - update_needed 면 AWS 상자가 업데이트를 권한다
+  const [templateStatus, setTemplateStatus] = useState({})
   // 화면이 살아 있는지, 가장 최근 불러오기 번호, 같은 순간의 두 번째 누름 막기, 저장된 선택을 읽었는지
   const alive = useRef(true)
   const loadSeq = useRef(0)
+  const statusSeq = useRef(0)
   const busyRef = useRef(false)
   const pickedRead = useRef(false)
   // 방금 만든 블록 - 카드가 처음 배치될 때 그 위치로 스크롤한다
@@ -35,6 +39,25 @@ export default function AccountsScreen() {
     alive.current = true
     return () => { alive.current = false }
   }, [])
+
+  // 확인된 AWS 계정마다 스택이 최신 템플릿인지 읽는다 - 못 읽은 계정은 건너뛰고(연결 자체는 [다시 확인]이 다룬다), 늦게 온 응답은 버린다
+  const loadTemplateStatus = async (blocks) => {
+    const id = ++statusSeq.current
+    const targets = blocks.filter((item) => item.aws?.status === 'verified')
+    if (targets.length === 0) {
+      setTemplateStatus((prev) => (Object.keys(prev).length ? {} : prev))
+      return
+    }
+    const next = {}
+    await Promise.all(targets.map(async (item) => {
+      try {
+        next[item.aws.a_id] = await accountApi.getTemplateStatus(item.aws.a_id)
+      } catch (e) {
+        // 버전을 못 읽으면 표시하지 않는다
+      }
+    }))
+    if (alive.current && id === statusSeq.current) setTemplateStatus(next)
+  }
 
   // 블록·AWS·GitHub 목록을 함께 다시 받는다 - 늦게 온 응답은 버리고, 실패하면 알린다. 성공 여부를 돌려준다
   const reload = async () => {
@@ -49,6 +72,7 @@ export default function AccountsScreen() {
       if (!alive.current || id !== loadSeq.current) return false
       setData({ connections, aws, github })
       setLoadError('')
+      loadTemplateStatus(connections)
       // 처음에는 저장해 둔 블록(아직 있을 때만), 이후에는 지금 고른 블록(사라졌으면 비운다)
       if (!pickedRead.current) {
         pickedRead.current = true
@@ -149,7 +173,18 @@ export default function AccountsScreen() {
               busy={busy}
               onPick={pick}
               onDelete={askDelete}
-            />
+            >
+              <AwsBox
+                block={block}
+                connections={connections}
+                awsAccounts={data.aws}
+                templateStatus={templateStatus}
+                busy={busy}
+                run={run}
+                reload={reload}
+                setNotice={setNotice}
+              />
+            </BlockCard>
           </View>
         ))}
       </>
