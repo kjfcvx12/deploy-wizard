@@ -7,10 +7,21 @@ import { lightColors } from '../theme'
 import { SafeAreaProvider } from 'react-native-safe-area-context'
 
 const mockPush = jest.fn()
-jest.mock('expo-router', () => ({
-  useRouter: () => ({ push: mockPush }),
-  Stack: { Screen: () => null },
-}))
+// 화면 포커스 흉내 - 마운트 때 효과를 한 번 실행하고, 다시 포커스를 받는 것은 mockFocus.regain() 으로 만든다
+const mockFocus = { effect: null, regain: () => mockFocus.effect() }
+// 헤더 버튼은 mockHeader.show 일 때만 그린다 (본문의 ＋ 새 배포 버튼과 겹치지 않게)
+const mockHeader = { show: false }
+jest.mock('expo-router', () => {
+  const React = require('react')
+  return {
+    useRouter: () => ({ push: mockPush }),
+    Stack: { Screen: ({ options }) => (mockHeader.show && options?.headerRight ? options.headerRight() : null) },
+    useFocusEffect: (effect) => {
+      mockFocus.effect = effect
+      React.useEffect(() => effect(), [effect])
+    },
+  }
+})
 jest.mock('../api', () => ({ deployApi: { getAll: jest.fn() } }))
 
 const deploys = [
@@ -22,6 +33,8 @@ const deploys = [
 beforeEach(() => {
   jest.useFakeTimers()
   mockPush.mockClear()
+  mockHeader.show = false
+  mockFocus.effect = null
   deployApi.getAll.mockReset()
   jest.spyOn(AppState, 'addEventListener').mockImplementation(() => ({ remove: jest.fn() }))
 })
@@ -126,6 +139,55 @@ describe('배포 목록 화면', () => {
     await unmount()
     await act(async () => { jest.advanceTimersByTime(60000) })
     expect(deployApi.getAll).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe('배포 목록 화면 - 계정 연결과 포커스 새로고침', () => {
+  test('헤더에 계정 연결 버튼이 있고 누르면 /accounts 로 간다', async () => {
+    mockHeader.show = true
+    deployApi.getAll.mockResolvedValue(deploys)
+    await render(<DeployList />)
+    await screen.findByText('acme/api')
+    await fireEvent.press(screen.getByText('계정 연결'))
+    expect(mockPush).toHaveBeenCalledWith('/accounts')
+    await fireEvent.press(screen.getByText('＋ 새 배포'))
+    expect(mockPush).toHaveBeenCalledWith('/new')
+  })
+
+  test('헤더 버튼은 눌림 높이가 44 이상이다', async () => {
+    mockHeader.show = true
+    deployApi.getAll.mockResolvedValue(deploys)
+    await render(<DeployList />)
+    await screen.findByText('acme/api')
+    const style = StyleSheet.flatten(screen.getByRole('button', { name: '계정 연결' }).props.style)
+    expect(style.minHeight).toBeGreaterThanOrEqual(44)
+    expect(style.minWidth).toBeGreaterThanOrEqual(44)
+  })
+
+  test('처음 열 때는 포커스 새로고침이 한 번 더 부르지 않는다', async () => {
+    deployApi.getAll.mockResolvedValue(deploys)
+    await render(<DeployList />)
+    await screen.findByText('acme/api')
+    expect(deployApi.getAll).toHaveBeenCalledTimes(1)
+  })
+
+  test('다른 화면에 갔다가 다시 포커스를 받으면 목록을 다시 받는다', async () => {
+    deployApi.getAll.mockResolvedValue(deploys)
+    await render(<DeployList />)
+    await screen.findByText('acme/api')
+    deployApi.getAll.mockResolvedValue([{ ...deploys[0], d_id: 12, repo_url: 'https://github.com/acme/fresh' }])
+    await act(async () => { mockFocus.regain() })
+    expect(await screen.findByText('acme/fresh')).toBeTruthy()
+    expect(deployApi.getAll).toHaveBeenCalledTimes(2)
+  })
+
+  test('포커스를 여러 번 받으면 그때마다 한 번씩 다시 받는다', async () => {
+    deployApi.getAll.mockResolvedValue(deploys)
+    await render(<DeployList />)
+    await screen.findByText('acme/api')
+    await act(async () => { mockFocus.regain() })
+    await act(async () => { mockFocus.regain() })
+    expect(deployApi.getAll).toHaveBeenCalledTimes(3)
   })
 })
 

@@ -1,0 +1,316 @@
+import { Platform, ScrollView, StyleSheet } from 'react-native'
+import { SafeAreaProvider } from 'react-native-safe-area-context'
+import { render, screen, fireEvent, act, waitFor } from '@testing-library/react-native'
+import { accountApi } from '../api'
+import { confirmAction } from '../confirm'
+import { DELETE_TEXT } from '../accounts/constants'
+import { readPickedBlock, writePickedBlock } from '../accounts/pickedBlock'
+import AccountsScreen from '../../app/accounts'
+
+// KeyboardAvoidingView 는 behavior 를 화면 요소로 내보내지 않으므로, 받은 속성을 기록하는 대체품을 쓴다
+const mockKavProps = []
+jest.mock('react-native/Libraries/Components/Keyboard/KeyboardAvoidingView', () => {
+  const React = require('react')
+  const { View } = require('react-native')
+  return {
+    __esModule: true,
+    default: (props) => {
+      mockKavProps.push(props)
+      return React.createElement(View, { testID: props.testID, style: props.style }, props.children)
+    },
+  }
+})
+jest.mock('expo-router', () => ({
+  Stack: { Screen: () => null },
+}))
+jest.mock('../api', () => ({
+  accountApi: {
+    getConnections: jest.fn(),
+    listAws: jest.fn(),
+    listGithub: jest.fn(),
+    createConnection: jest.fn(),
+    deleteConnection: jest.fn(),
+  },
+}))
+jest.mock('../confirm', () => ({ confirmAction: jest.fn() }))
+jest.mock('../accounts/pickedBlock', () => ({ readPickedBlock: jest.fn(), writePickedBlock: jest.fn() }))
+
+const block = (c_id, label) => ({ c_id, label, aws: null, github: null })
+const ONE = [block(1, '운영 계정')]
+const TWO = [block(1, '운영 계정'), block(2, '개발 계정')]
+
+beforeEach(() => {
+  mockKavProps.length = 0
+  accountApi.getConnections.mockReset().mockResolvedValue(TWO)
+  accountApi.listAws.mockReset().mockResolvedValue([])
+  accountApi.listGithub.mockReset().mockResolvedValue([])
+  accountApi.createConnection.mockReset()
+  accountApi.deleteConnection.mockReset()
+  confirmAction.mockReset()
+  readPickedBlock.mockReset().mockResolvedValue(null)
+  writePickedBlock.mockReset().mockResolvedValue(undefined)
+})
+
+describe('계정 연결 화면 - 불러오기', () => {
+  test('불러오는 동안 스피너, 끝나면 블록 카드', async () => {
+    let resolve
+    accountApi.getConnections.mockReturnValue(new Promise((r) => { resolve = r }))
+    await render(<AccountsScreen />)
+    expect(screen.getByLabelText('불러오는 중')).toBeTruthy()
+    await act(async () => { resolve(TWO) })
+    expect(await screen.findByText('운영 계정')).toBeTruthy()
+    expect(screen.getByText('개발 계정')).toBeTruthy()
+    expect(screen.queryByLabelText('불러오는 중')).toBeNull()
+  })
+
+  test('블록 목록, AWS 목록, GitHub 목록을 함께 부른다', async () => {
+    await render(<AccountsScreen />)
+    await screen.findByText('운영 계정')
+    expect(accountApi.getConnections).toHaveBeenCalledTimes(1)
+    expect(accountApi.listAws).toHaveBeenCalledTimes(1)
+    expect(accountApi.listGithub).toHaveBeenCalledTimes(1)
+  })
+
+  test('비어 있으면 안내와 채운 ＋ 블록 추가 버튼', async () => {
+    accountApi.getConnections.mockResolvedValue([])
+    await render(<AccountsScreen />)
+    expect(await screen.findByText(/아직 블록이 없습니다/)).toBeTruthy()
+    expect(screen.getAllByText('＋ 블록 추가')).toHaveLength(1)
+    expect(screen.getByRole('button', { name: '＋ 블록 추가' })).toBeEnabled()
+  })
+
+  test('불러오기에 실패하면 한국어 안내와 다시 시도 버튼, 누르면 다시 부른다', async () => {
+    accountApi.getConnections.mockRejectedValueOnce(new Error('서버에 연결할 수 없습니다'))
+    await render(<AccountsScreen />)
+    expect(await screen.findByText(/계정 연결을 불러오지 못했습니다/)).toBeTruthy()
+    expect(screen.getByText(/서버에 연결할 수 없습니다/)).toBeTruthy()
+    await fireEvent.press(screen.getByText('다시 시도'))
+    expect(await screen.findByText('운영 계정')).toBeTruthy()
+    expect(accountApi.getConnections).toHaveBeenCalledTimes(2)
+    expect(screen.queryByText('다시 시도')).toBeNull()
+  })
+
+  test('AWS 목록만 실패해도 한 번에 실패로 본다', async () => {
+    accountApi.listAws.mockRejectedValueOnce(new Error('AWS 목록 실패'))
+    await render(<AccountsScreen />)
+    expect(await screen.findByText(/AWS 목록 실패/)).toBeTruthy()
+    expect(screen.queryByText('운영 계정')).toBeNull()
+  })
+
+  test('언마운트한 뒤 늦게 온 응답은 버린다 (경고 없이)', async () => {
+    const spy = jest.spyOn(console, 'error').mockImplementation(() => {})
+    let resolve
+    accountApi.getConnections.mockReturnValue(new Promise((r) => { resolve = r }))
+    const { unmount } = await render(<AccountsScreen />)
+    await unmount()
+    await act(async () => { resolve(TWO) })
+    expect(spy).not.toHaveBeenCalled()
+    spy.mockRestore()
+  })
+})
+
+describe('계정 연결 화면 - 선택', () => {
+  test('저장해 둔 블록이 아직 있으면 선택됨으로 시작한다', async () => {
+    readPickedBlock.mockResolvedValue(2)
+    await render(<AccountsScreen />)
+    await screen.findByText('개발 계정')
+    expect(screen.getAllByText('선택됨')).toHaveLength(1)
+    expect(screen.getByRole('button', { name: '선택됨' })).toBeDisabled()
+    expect(screen.getAllByText('선택')).toHaveLength(1)
+  })
+
+  test('저장해 둔 블록이 사라졌으면 고른 것이 없다', async () => {
+    readPickedBlock.mockResolvedValue(99)
+    await render(<AccountsScreen />)
+    await screen.findByText('개발 계정')
+    expect(screen.queryByText('선택됨')).toBeNull()
+    expect(screen.getAllByText('선택')).toHaveLength(2)
+  })
+
+  test('블록이 하나뿐이면 그 블록이 선택됨이다', async () => {
+    accountApi.getConnections.mockResolvedValue(ONE)
+    await render(<AccountsScreen />)
+    await screen.findByText('운영 계정')
+    expect(screen.getByText('선택됨')).toBeTruthy()
+  })
+
+  test('선택을 누르면 그 블록을 저장하고 선택됨으로 바뀐다', async () => {
+    await render(<AccountsScreen />)
+    await screen.findByText('개발 계정')
+    await fireEvent.press(screen.getAllByText('선택')[1])
+    expect(writePickedBlock).toHaveBeenCalledWith(2)
+    expect(screen.getAllByText('선택됨')).toHaveLength(1)
+    expect(screen.getAllByText('선택')).toHaveLength(1)
+  })
+})
+
+describe('계정 연결 화면 - 블록 추가', () => {
+  // 블록 추가 폼을 연다
+  const openForm = async () => {
+    await fireEvent.press(await screen.findByText('＋ 블록 추가'))
+  }
+
+  test('빈 이름이나 공백만 있으면 추가 버튼이 잠겨 있다', async () => {
+    await render(<AccountsScreen />)
+    await screen.findByText('운영 계정')
+    await openForm()
+    expect(screen.getByRole('button', { name: '추가' })).toBeDisabled()
+    await fireEvent.changeText(screen.getByPlaceholderText('예: 운영 계정'), '   ')
+    expect(screen.getByRole('button', { name: '추가' })).toBeDisabled()
+    await fireEvent.press(screen.getByText('추가'))
+    expect(accountApi.createConnection).not.toHaveBeenCalled()
+    await fireEvent.changeText(screen.getByPlaceholderText('예: 운영 계정'), '새 블록')
+    expect(screen.getByRole('button', { name: '추가' })).toBeEnabled()
+  })
+
+  test('추가하면 createConnection(이름)을 부르고 목록을 다시 받아 폼을 닫는다', async () => {
+    accountApi.getConnections.mockResolvedValueOnce(TWO).mockResolvedValue([...TWO, block(3, '새 블록')])
+    accountApi.createConnection.mockResolvedValue(block(3, '새 블록'))
+    await render(<AccountsScreen />)
+    await screen.findByText('운영 계정')
+    await openForm()
+    await fireEvent.changeText(screen.getByPlaceholderText('예: 운영 계정'), '  새 블록 ')
+    await fireEvent.press(screen.getByText('추가'))
+    expect(await screen.findByText('새 블록')).toBeTruthy()
+    expect(accountApi.createConnection).toHaveBeenCalledWith('새 블록')
+    expect(accountApi.getConnections).toHaveBeenCalledTimes(2)
+    expect(screen.queryByPlaceholderText('예: 운영 계정')).toBeNull()
+  })
+
+  test('새 카드가 처음 배치되면 그 위치로 스크롤한다 (한 번만)', async () => {
+    accountApi.getConnections.mockResolvedValueOnce(TWO).mockResolvedValue([...TWO, block(3, '새 블록')])
+    accountApi.createConnection.mockResolvedValue(block(3, '새 블록'))
+    await render(<AccountsScreen />)
+    await screen.findByText('운영 계정')
+    await openForm()
+    await fireEvent.changeText(screen.getByPlaceholderText('예: 운영 계정'), '새 블록')
+    await fireEvent.press(screen.getByText('추가'))
+    await screen.findByText('새 블록')
+
+    const scrollTo = ScrollView.prototype.scrollTo
+    scrollTo.mockClear()
+    const layout = (y) => ({ nativeEvent: { layout: { x: 0, y, width: 300, height: 200 } } })
+    await fireEvent(screen.getByTestId('block-row-3'), 'layout', layout(420))
+    expect(scrollTo).toHaveBeenCalledTimes(1)
+    expect(scrollTo).toHaveBeenCalledWith({ y: 420, animated: true })
+    await fireEvent(screen.getByTestId('block-row-3'), 'layout', layout(430))
+    expect(scrollTo).toHaveBeenCalledTimes(1)
+  })
+
+  test('실패하면 서버 메시지를 보여 주고 폼과 입력을 그대로 두며 버튼이 풀린다', async () => {
+    accountApi.createConnection.mockRejectedValue(new Error('이미 같은 이름의 블록이 있습니다'))
+    await render(<AccountsScreen />)
+    await screen.findByText('운영 계정')
+    await openForm()
+    await fireEvent.changeText(screen.getByPlaceholderText('예: 운영 계정'), '운영 계정')
+    await fireEvent.press(screen.getByText('추가'))
+    expect(await screen.findByText('이미 같은 이름의 블록이 있습니다')).toBeTruthy()
+    expect(screen.getByPlaceholderText('예: 운영 계정').props.value).toBe('운영 계정')
+    expect(screen.getByRole('button', { name: '추가' })).toBeEnabled()
+  })
+
+  test('취소하면 폼이 닫히고 아무것도 보내지 않는다', async () => {
+    await render(<AccountsScreen />)
+    await screen.findByText('운영 계정')
+    await openForm()
+    await fireEvent.press(screen.getByText('취소'))
+    expect(screen.queryByPlaceholderText('예: 운영 계정')).toBeNull()
+    expect(accountApi.createConnection).not.toHaveBeenCalled()
+  })
+
+  test('작업 중에 추가를 두 번 눌러도 요청은 한 번이다', async () => {
+    let resolve
+    accountApi.createConnection.mockReturnValue(new Promise((r) => { resolve = r }))
+    await render(<AccountsScreen />)
+    await screen.findByText('운영 계정')
+    await openForm()
+    await fireEvent.changeText(screen.getByPlaceholderText('예: 운영 계정'), '새 블록')
+    await fireEvent.press(screen.getByText('추가'))
+    await fireEvent.press(screen.getByText('추가'))
+    await fireEvent(screen.getByPlaceholderText('예: 운영 계정'), 'submitEditing')
+    expect(accountApi.createConnection).toHaveBeenCalledTimes(1)
+    await act(async () => { resolve(block(3, '새 블록')) })
+  })
+})
+
+describe('계정 연결 화면 - 블록 삭제', () => {
+  test('삭제 확인은 웹과 같은 글을 쓰고 안전한 선택(그대로 두기)이 먼저다', async () => {
+    await render(<AccountsScreen />)
+    await screen.findByText('운영 계정')
+    await fireEvent.press(screen.getAllByText('블록 삭제')[0])
+    expect(confirmAction).toHaveBeenCalledTimes(1)
+    const args = confirmAction.mock.calls[0][0]
+    expect(args.title).toBe(DELETE_TEXT.block.title)
+    expect(args.message).toBe(DELETE_TEXT.block.body)
+    expect(args.cancelText).toBe('그대로 두기')
+    expect(args.confirmText).toBe('블록 삭제')
+  })
+
+  test('취소하면 아무 요청도 보내지 않는다', async () => {
+    await render(<AccountsScreen />)
+    await screen.findByText('운영 계정')
+    await fireEvent.press(screen.getAllByText('블록 삭제')[0])
+    expect(accountApi.deleteConnection).not.toHaveBeenCalled()
+    expect(accountApi.getConnections).toHaveBeenCalledTimes(1)
+  })
+
+  test('확인하면 그 블록만 지우고 목록을 다시 받는다', async () => {
+    accountApi.getConnections.mockResolvedValueOnce(TWO).mockResolvedValue([TWO[1]])
+    accountApi.deleteConnection.mockResolvedValue(null)
+    await render(<AccountsScreen />)
+    await screen.findByText('운영 계정')
+    await fireEvent.press(screen.getAllByText('블록 삭제')[0])
+    await act(async () => { confirmAction.mock.calls[0][0].onConfirm() })
+    await waitFor(() => expect(screen.queryByText('운영 계정')).toBeNull())
+    expect(accountApi.deleteConnection).toHaveBeenCalledWith(1)
+    expect(screen.getByText('개발 계정')).toBeTruthy()
+  })
+
+  test('삭제가 실패하면 서버 메시지를 보여 주고 버튼이 풀린다', async () => {
+    accountApi.deleteConnection.mockRejectedValue(new Error('삭제할 수 없습니다'))
+    await render(<AccountsScreen />)
+    await screen.findByText('운영 계정')
+    await fireEvent.press(screen.getAllByText('블록 삭제')[0])
+    await act(async () => { confirmAction.mock.calls[0][0].onConfirm() })
+    expect(await screen.findByText('삭제할 수 없습니다')).toBeTruthy()
+    expect(screen.getAllByRole('button', { name: '블록 삭제' })[0]).toBeEnabled()
+  })
+
+  test('삭제가 진행되는 동안 다시 확인해도 요청은 한 번이다', async () => {
+    let resolve
+    accountApi.deleteConnection.mockReturnValue(new Promise((r) => { resolve = r }))
+    await render(<AccountsScreen />)
+    await screen.findByText('운영 계정')
+    await fireEvent.press(screen.getAllByText('블록 삭제')[0])
+    const { onConfirm } = confirmAction.mock.calls[0][0]
+    await act(async () => { onConfirm(); onConfirm() })
+    expect(accountApi.deleteConnection).toHaveBeenCalledTimes(1)
+    expect(screen.getAllByRole('button', { name: '블록 삭제' })[0]).toBeDisabled()
+    await act(async () => { resolve(null) })
+  })
+})
+
+describe('계정 연결 화면 - 키보드와 안전 영역', () => {
+  afterEach(() => { jest.restoreAllMocks() })
+
+  test('안드로이드에서는 스크롤을 KeyboardAvoidingView(height) 가 감싼다 (기기에서는 확인하지 못했다)', async () => {
+    jest.replaceProperty(Platform, 'OS', 'android')
+    await render(<AccountsScreen />)
+    const wrapper = screen.getByTestId('keyboard-avoiding')
+    expect(mockKavProps[mockKavProps.length - 1].behavior).toBe('height')
+    expect(StyleSheet.flatten(wrapper.props.style).flex).toBe(1)
+    const scroll = screen.getByTestId('accounts-scroll')
+    expect(scroll.props.automaticallyAdjustKeyboardInsets).toBe(true)
+    expect(scroll.props.keyboardShouldPersistTaps).toBe('handled')
+    expect(scroll.props.keyboardDismissMode).toBe('on-drag')
+  })
+
+  test('스크롤 아래 여백에 하단 안전 영역을 더한다', async () => {
+    await render(
+      <SafeAreaProvider initialMetrics={{ frame: { x: 0, y: 0, width: 390, height: 844 }, insets: { top: 0, left: 0, right: 0, bottom: 34 } }}>
+        <AccountsScreen />
+      </SafeAreaProvider>,
+    )
+    expect(StyleSheet.flatten(screen.getByTestId('accounts-scroll').props.contentContainerStyle).paddingBottom).toBe(24 * 2 + 34)
+  })
+})
