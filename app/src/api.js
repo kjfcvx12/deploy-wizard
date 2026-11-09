@@ -63,6 +63,44 @@ export const deployApi = {
   stop: (d_id) => request(`/api/deploys/${d_id}/stop`, { method: 'POST' }),
   start: (d_id) => request(`/api/deploys/${d_id}/start`, { method: 'POST' }),
   remove: (d_id) => request(`/api/deploys/${d_id}`, { method: 'DELETE' }),
+  // 보낸 항목만 바뀐다 ({ auto_redeploy, auto_recover })
+  patchSettings: (d_id, body) => request(`/api/deploys/${d_id}/settings`, { method: 'PATCH', body }),
+}
+
+// 쿼리 문자열을 만든다 - 값이 없는(null, undefined, 빈 글자) 항목은 뺀다 (RN 의 URLSearchParams 는 믿을 수 없어 직접 만든다)
+const queryString = (params) => {
+  const parts = Object.entries(params)
+    .filter(([, value]) => value !== null && value !== undefined && value !== '')
+    .map(([key, value]) => `${key}=${encodeURIComponent(value)}`)
+  return parts.length ? `?${parts.join('&')}` : ''
+}
+
+// features/incidents/router.py 와 1:1 (읽기 전용 - 인시던트는 서버가 만들고 닫는다)
+export const incidentApi = {
+  getAll: ({ status, d_id, after } = {}) => request(`/api/incidents${queryString({ status, d_id, after })}`),
+  getOne: (i_id) => request(`/api/incidents/${i_id}`),
+  getForDeploy: (d_id, after) => request(`/api/deploys/${d_id}/incidents${queryString({ after })}`),
+}
+
+// 헬스체크 이력 (features/deploys/router.py) - hours 는 1~168
+export const healthApi = {
+  getHistory: (d_id, hours = 24) => request(`/api/deploys/${d_id}/health-history?hours=${hours}`),
+}
+
+// features/notifications/router.py 와 1:1
+export const notificationApi = {
+  getAll: ({ after, unread } = {}) => request(`/api/notifications${queryString({ after, unread: unread ? 'true' : null })}`),
+  getUnreadCount: () => request('/api/notifications/unread-count'),
+  read: (n_id) => request(`/api/notifications/${n_id}/read`, { method: 'POST' }),
+  readAll: () => request('/api/notifications/read-all', { method: 'POST' }),
+  getSettings: () => request('/api/notifications/settings'),
+  patchSettings: (body) => request('/api/notifications/settings', { method: 'PATCH', body }),
+}
+
+// features/notifications/router.py 의 기기 등록 - 푸시 토큰은 여기로만 보낸다 (화면·로그에 내지 않는다)
+export const deviceApi = {
+  register: ({ expo_token, platform }) => request('/api/devices', { method: 'POST', body: { expo_token, platform } }),
+  remove: (p_d_id) => request(`/api/devices/${p_d_id}`, { method: 'DELETE' }),
 }
 
 // features/envvars/router.py 와 1:1 (값은 쓰기 전용 - 응답에 나오지 않는다)
