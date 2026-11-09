@@ -1,10 +1,12 @@
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { AccessibilityInfo, ActivityIndicator, KeyboardAvoidingView, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
-import { Stack, useRouter } from 'expo-router'
+import { Stack, useFocusEffect, useRouter } from 'expo-router'
 import { accountApi, adviceApi, deployApi } from '../src/api'
 import AdvicePanel from '../src/components/AdvicePanel'
-import ConnectionPicker, { isUsableConnection } from '../src/components/ConnectionPicker'
+import { readPickedBlock } from '../src/accounts/pickedBlock'
+import ConnectionPicker, { isUsableConnection, pickDefaultConnection } from '../src/components/ConnectionPicker'
+import NoConnectionHint from '../src/components/NoConnectionHint'
 import { radius, spacing, useColors } from '../src/theme'
 
 // 빨간 오류 안내 - 서버가 준 detail 을 그대로 보여 준다
@@ -36,6 +38,9 @@ function ChoiceRow({ label, tag, selected, onPress }) {
   )
 }
 
+// 블록이 실제로 쓰는 AWS·GitHub 번호 - 이 번호가 바뀌면 분석 결과가 낡은 것이다
+const effectiveIds = (item) => `${item?.aws?.status === 'verified' ? item.aws.a_id : ''}|${item?.github?.status === 'active' ? item.github.g_id : ''}`
+
 // 아래 안내 문장 - 브랜치 기본값, GitHub 연결 여부에 따라 달라진다
 function helperText(githubId, repoCount, hasBlocks) {
   const base = '브랜치를 고르지 않으면 레포의 기본 브랜치를 분석합니다.'
@@ -44,7 +49,7 @@ function helperText(githubId, repoCount, hasBlocks) {
     return `${base} GitHub 연결을 골랐으니 private 레포도 됩니다${list}.`
   }
   if (hasBlocks) return `${base} 지금은 public 레포만 됩니다 — private 레포는 위에서 GitHub 연결을 고르세요.`
-  return `${base} 지금은 public 레포만 됩니다 — private 레포는 웹의 계정 연결 화면에서 GitHub 연결을 만든 뒤 쓸 수 있습니다.`
+  return `${base} 지금은 public 레포만 됩니다 — private 레포는 계정 연결 화면에서 GitHub 연결을 만든 뒤 쓸 수 있습니다.`
 }
 
 // 새 배포 화면 (S-03, S-20) - 두 단계: [분석](읽기만 함) -> 결과를 보고 [이 레포로 배포]. 입력이 바뀌면 이전 분석 결과는 지운다
@@ -59,6 +64,15 @@ export default function NewDeployScreen() {
   const [remote, setRemote] = useState(null)
   const [connections, setConnections] = useState([])
   const [connectionId, setConnectionId] = useState('')
+  // 연결 목록을 한 번 받아 마쳤는지 (받는 동안·실패했을 때는 "연결 없음" 안내를 보이지 않는다), 사용자가 직접 블록을 골랐는지
+  const [connectionsLoaded, setConnectionsLoaded] = useState(false)
+  const userChose = useRef(false)
+  // 지금 고른 블록 번호와 마지막으로 받은 쓸 수 있는 블록들 - 늦게 도착한 응답이 낡은 상태를 보지 않게 ref 로 둔다
+  const connectionIdRef = useRef('')
+  const connectionsRef = useRef([])
+  const connectionsRequest = useRef(0)
+  const mounted = useRef(true)
+  const focusedOnce = useRef(false)
   const [repositories, setRepositories] = useState([])
   const [busy, setBusy] = useState(false)
   const [loadingBranches, setLoadingBranches] = useState(false)
@@ -108,26 +122,56 @@ export default function NewDeployScreen() {
 
   // 연결 블록 하나를 적용 - 그 블록의 GitHub 설치로 레포 목록을 다시 받고, 브랜치 목록은 비운다
   const applyBlock = (picked) => {
-    setConnectionId(picked ? String(picked.c_id) : '')
+    connectionIdRef.current = picked ? String(picked.c_id) : ''
+    setConnectionId(connectionIdRef.current)
     setRemote(null)
     setBranch('')
     loadRepositories(picked?.github?.status === 'active' ? picked.github.g_id : null)
   }
 
   useEffect(() => {
-    let alive = true
-    accountApi.getConnections().then((data) => {
-      if (!alive) return
-      const usable = (data || []).filter(isUsableConnection)
-      setConnections(usable)
-      // 연결은 한 번 해 두고 계속 쓰는 것이다 - 블록이 하나뿐이면 미리 골라 둔다 (바꿀 수 있다)
-      if (usable.length === 1) { applyBlock(usable[0]); invalidate() }
-    }).catch(() => {})
-    return () => { alive = false }
+    mounted.current = true
+    return () => { mounted.current = false }
   }, [])
+
+  // 연결 목록과 계정 연결 화면에서 [선택]해 둔 블록 번호를 함께 받아 적용한다 (저장소를 못 읽으면 null - 목록은 그대로 쓴다). 늦게 온 응답은 버리고, 실패하면 지금 화면을 그대로 둔다
+  const loadConnections = () => {
+    const request = ++connectionsRequest.current
+    Promise.all([accountApi.getConnections(), readPickedBlock()]).then(([data, stored]) => {
+      if (!mounted.current || request !== connectionsRequest.current) return
+      const usable = (data || []).filter(isUsableConnection)
+      const before = connectionsRef.current
+      connectionsRef.current = usable
+      setConnections(usable)
+      setConnectionsLoaded(true)
+      const current = connectionIdRef.current
+      if (current !== '') {
+        // 고른 블록이 사라졌거나 쓸 수 없게 됐으면 선택을 비운다. 아직 쓸 수 있어도 쓰는 AWS·GitHub 가 바뀌었으면 레포 목록을 다시 받고 분석 결과를 지운다. 그대로면 건드리지 않는다
+        const now = usable.find((item) => String(item.c_id) === current)
+        if (!now) { applyBlock(null); invalidate() } else if (effectiveIds(now) !== effectiveIds(before.find((item) => String(item.c_id) === current))) {
+          loadRepositories(now.github?.status === 'active' ? now.github.g_id : null)
+          invalidate()
+        }
+        return
+      }
+      // 연결은 한 번 해 두고 계속 쓰는 것이다 - 선택해 둔 블록(여럿일 때), 아니면 하나뿐인 블록을 미리 골라 둔다. 사용자가 이미 고른 것(연결 안 함 포함)은 덮지 않는다 (바꿀 수 있다)
+      const initial = userChose.current ? null : pickDefaultConnection(usable, stored)
+      if (initial) { applyBlock(initial); invalidate() }
+    }).catch(() => {})
+  }
+
+  useEffect(() => { loadConnections() }, [])
+
+  // 다른 화면(계정 연결)에 다녀와 다시 포커스를 받으면 연결 목록을 다시 받는다. 처음 열 때는 위 효과가 이미 받는다
+  useFocusEffect(useCallback(() => {
+    if (!focusedOnce.current) { focusedOnce.current = true; return }
+    loadConnections()
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []))
 
   // 연결 블록을 바꿨을 때
   const chooseConnection = (value) => {
+    userChose.current = true
     applyBlock(connections.find((item) => String(item.c_id) === value))
     invalidate()
   }
@@ -217,7 +261,8 @@ export default function NewDeployScreen() {
           automaticallyAdjustKeyboardInsets
         >
           <ConnectionPicker connections={connections} value={connectionId} onChange={chooseConnection} />
-  
+          {connectionsLoaded && connections.length === 0 && <NoConnectionHint />}
+
           <TextInput
             style={[styles.input, { color: colors.text, backgroundColor: colors.surface, borderColor: colors.border }]}
             placeholder={repositories.length > 0 ? '레포를 고르거나 주소를 입력하세요' : 'https://github.com/소유자/레포'}

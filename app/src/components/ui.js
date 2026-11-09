@@ -8,10 +8,10 @@ export function Card({ children, style, testID }) {
   return <View testID={testID} style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.border }, style]}>{children}</View>
 }
 
-// 알림 띠 - tone: err(빨강) | info(파랑)
+// 알림 띠 - tone: err(빨강) | info(파랑) | warn(주황)
 export function Notice({ tone = 'err', children, testID }) {
   const colors = useColors()
-  const tones = { err: [colors.errBg, colors.err], info: [colors.infoBg, colors.text] }
+  const tones = { err: [colors.errBg, colors.err], info: [colors.infoBg, colors.text], warn: [colors.warnBg, colors.warn] }
   const [bg, fg] = tones[tone]
   return (
     <View testID={testID} accessibilityRole="alert" style={[styles.notice, { backgroundColor: bg }]}>

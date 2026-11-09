@@ -1,7 +1,7 @@
-import { useState } from 'react'
+import { useCallback, useRef, useState } from 'react'
 import { ActivityIndicator, FlatList, Pressable, RefreshControl, StyleSheet, Text, View } from 'react-native'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
-import { Stack, useRouter } from 'expo-router'
+import { Stack, useFocusEffect, useRouter } from 'expo-router'
 import { deployApi } from '../src/api'
 import StatusBadge from '../src/components/StatusBadge'
 import { isProgress, repoName } from '../src/constants'
@@ -28,8 +28,8 @@ function metaLine(deploy) {
     + (deploy.env_pending > 0 ? ` · 환경변수 ${deploy.env_pending}개 입력 필요` : '')
 }
 
-// ＋ 새 배포 버튼 - 헤더에서는 글자만(flat), 빈 화면에서는 채운 버튼
-function NewDeployButton({ onPress, flat = false }) {
+// 헤더·빈 화면의 버튼 - 헤더에서는 글자만(flat), 빈 화면에서는 채운 버튼. 눌림 높이는 44pt 이상
+function ActionButton({ label, onPress, flat = false }) {
   const colors = useColors()
   return (
     <Pressable
@@ -37,7 +37,7 @@ function NewDeployButton({ onPress, flat = false }) {
       onPress={onPress}
       style={({ pressed }) => [styles.primary, !flat && { backgroundColor: colors.accent }, { opacity: pressed ? 0.6 : 1 }]}
     >
-      <Text style={[styles.primaryText, { color: flat ? colors.accent : colors.accentText }]}>＋ 새 배포</Text>
+      <Text style={[styles.primaryText, { color: flat ? colors.accent : colors.accentText }]}>{label}</Text>
     </Pressable>
   )
 }
@@ -92,6 +92,14 @@ export default function DeployListScreen() {
   const { data, error, loading, refresh } = usePolling(() => deployApi.getAll(), listDelay, [])
 
   const goNew = () => router.push('/new')
+  const goAccounts = () => router.push('/accounts')
+
+  // 다른 화면에서 돌아오면 목록을 다시 받는다 (계정 연결·새 배포·상세에서 바뀐 것이 낡은 카드로 남지 않게). 처음 열 때는 usePolling 이 이미 받는다
+  const focusedOnce = useRef(false)
+  useFocusEffect(useCallback(() => {
+    if (!focusedOnce.current) { focusedOnce.current = true; return }
+    refresh()
+  }, [refresh]))
 
   // 끌어당겨 새로고침
   const onPull = async () => {
@@ -113,14 +121,22 @@ export default function DeployListScreen() {
     empty = (
       <View style={styles.empty}>
         <Text style={[styles.emptyText, { color: colors.muted }]}>아직 배포한 것이 없습니다.</Text>
-        <NewDeployButton onPress={goNew} />
+        <ActionButton label="＋ 새 배포" onPress={goNew} />
       </View>
     )
   }
 
   return (
     <>
-      <Stack.Screen options={{ title: '배포', headerRight: () => <NewDeployButton flat onPress={goNew} /> }} />
+      <Stack.Screen options={{
+        title: '배포',
+        headerRight: () => (
+          <View style={styles.headerRight}>
+            <ActionButton flat label="계정 연결" onPress={goAccounts} />
+            <ActionButton flat label="＋ 새 배포" onPress={goNew} />
+          </View>
+        ),
+      }} />
       <FlatList
         testID="deploy-list"
         data={data || []}
@@ -151,6 +167,7 @@ const styles = StyleSheet.create({
   cardBody: { flex: 1, minWidth: 0 },
   name: { fontSize: 16, fontWeight: '700' },
   meta: { fontSize: 13, marginTop: spacing.xs },
+  headerRight: { flexDirection: 'row', alignItems: 'center' },
   primary: {
     minHeight: 44,
     minWidth: 44,

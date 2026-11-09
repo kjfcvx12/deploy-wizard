@@ -4,6 +4,9 @@ import { radius, spacing, useColors } from '../theme'
 // 쓸 수 있는 블록 - AWS 가 확인됐거나 GitHub 가 살아 있는 것 (웹 AccountPicker 와 같다)
 export const isUsableConnection = (block) => block.aws?.status === 'verified' || block.github?.status === 'active'
 
+// 처음에 미리 고를 블록 - 계정 연결 화면에서 [선택]해 둔 블록(아직 쓸 수 있을 때만), 아니면 쓸 수 있는 블록이 하나뿐일 때 그 블록, 아니면 없음
+export const pickDefaultConnection = (usable, storedId) => usable.find((item) => item.c_id === storedId) || (usable.length === 1 ? usable[0] : null)
+
 // 블록 한 줄 이름 - 블록 이름과 AWS 계정, GitHub 계정
 export const connectionLabel = (block) => `${block.label} — AWS ${block.aws?.status === 'verified' ? block.aws.aws_account_id : '개발 계정'}`
   + ` · GitHub ${block.github?.status === 'active' ? block.github.account_login : '없음 (public만)'}`

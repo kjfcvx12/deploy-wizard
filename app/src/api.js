@@ -1,6 +1,6 @@
 // 서버 호출 - 웹의 shared/ui/api.js · features/*/ui/api.js 와 같은 의미 (앱은 app/ 밖을 가져오지 않는다)
 // 기본 주소는 EXPO_PUBLIC_API_BASE_URL (빌드 때 코드에 박힌다), 없으면 로컬 서버
-const BASE_URL = process.env.EXPO_PUBLIC_API_BASE_URL || 'http://localhost:8081'
+export const BASE_URL = process.env.EXPO_PUBLIC_API_BASE_URL || 'http://localhost:8081'
 const TIMEOUT_MS = 15000
 const NETWORK_ERROR = '서버에 연결할 수 없습니다'
 
@@ -81,8 +81,27 @@ export const adviceApi = {
   }),
 }
 
-// features/accounts/router.py 중 읽기 전용만 (연결 블록 목록, GitHub 저장소 목록)
+// features/accounts/router.py 와 1:1 (웹 features/accounts/ui/api.js 와 같은 주소·본문)
 export const accountApi = {
+  // 연결 블록 - AWS 계정 하나 + GitHub 설치 하나
   getConnections: () => request('/api/accounts/connections'),
+  createConnection: (label) => request('/api/accounts/connections', { method: 'POST', body: { label } }),
+  createConnectionAws: (c_id) => request(`/api/accounts/connections/${c_id}/aws`, { method: 'POST' }),
+  setConnectionAws: (c_id, aws_account_id) => request(`/api/accounts/connections/${c_id}`, { method: 'PATCH', body: { aws_account_id } }),
+  setConnectionGithub: (c_id, github_installation_id) => request(`/api/accounts/connections/${c_id}`, { method: 'PATCH', body: { github_installation_id } }),
+  deleteConnection: (c_id) => request(`/api/accounts/connections/${c_id}`, { method: 'DELETE' }),
+
+  listAws: () => request('/api/accounts/aws'),
+  createAws: (label, region) => request('/api/accounts/aws', { method: 'POST', body: { label, region: region || null } }),
+  attachRole: (a_id, role_arn) => request(`/api/accounts/aws/${a_id}/role-arn`, { method: 'PATCH', body: { role_arn } }),
+  reverifyAws: (a_id) => request(`/api/accounts/aws/${a_id}/reverify`, { method: 'POST' }),
+  getTemplateStatus: (a_id) => request(`/api/accounts/aws/${a_id}/template-status`),
+  deleteTemplateFiles: (a_id) => request(`/api/accounts/aws/${a_id}/template-files`, { method: 'DELETE' }),
+  deleteAws: (a_id) => request(`/api/accounts/aws/${a_id}`, { method: 'DELETE' }),
+
+  listGithub: () => request('/api/accounts/github'),
+  getGithubInstallUrl: (c_id) => request('/api/accounts/github/install-url' + (c_id ? `?c_id=${c_id}` : '')),
   getGithubRepositories: (g_id) => request(`/api/accounts/github/${g_id}/repositories`),
+  checkGithub: (g_id) => request(`/api/accounts/github/${g_id}/check`),
+  deleteGithub: (g_id) => request(`/api/accounts/github/${g_id}`, { method: 'DELETE' }),
 }
