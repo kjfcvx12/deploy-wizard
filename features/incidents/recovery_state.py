@@ -3,6 +3,7 @@ import logging
 
 from sqlalchemy.ext.asyncio import AsyncSession
 from fastapi import HTTPException
+from botocore.exceptions import ClientError, ParamValidationError, NoCredentialsError, PartialCredentialsError
 
 from shared.database import AsyncSessionLocal
 from shared.masking import mask_text
@@ -28,6 +29,30 @@ BOOKKEEPING_RETRY_SECONDS=1
 
 
 class Recovery_State:
+
+    # 갱신 호출이 AWS 에 닿지 않았거나 깨끗이 거절된 것인지 - 재시도 없는 4xx(제한·충돌 제외)와 보내기 전의 로컬 오류만 True, 나머지는 AWS 가 적용했을 수 있다
+    @staticmethod
+    def services_recovery_update_rejected(error:BaseException) -> bool:
+        if isinstance(error, (ParamValidationError, NoCredentialsError, PartialCredentialsError)):
+            return True
+
+        if not isinstance(error, ClientError):
+            return False
+
+        response=error.response if isinstance(error.response, dict) else {}
+        metadata=response.get("ResponseMetadata") or {}
+        code=str((response.get("Error") or {}).get("Code") or "")
+        http_status=metadata.get("HTTPStatusCode")
+
+        if metadata.get("RetryAttempts", 0) != 0:
+            return False
+        if not isinstance(http_status, int) or not 400 <= http_status < 500 or http_status == 429:
+            return False
+        if "Throttl" in code or "Conflict" in code or code in ("RequestLimitExceeded", "TooManyRequests") or code.startswith("RequestTimeout"):
+            return False
+
+        return True
+
 
     # 되돌리기 표식이 붙은 detail 인지 - 이후 자동 복구를 막는 근거
     @staticmethod

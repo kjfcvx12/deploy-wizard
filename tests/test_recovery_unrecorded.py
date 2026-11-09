@@ -83,12 +83,13 @@ async def test_rollback_update_ambiguous_failure_blocks_later_automatic_actions(
     await assert_later_recovery_is_blocked(db, d_id, 'unhealthy')
 
 
-# AWS 가 거절 응답(ClientError)을 준 경우는 아무것도 적용되지 않았으니 표식을 남기지 않는다
+# AWS 가 재시도 없이 깨끗이 거절한 경우(4xx)는 아무것도 적용되지 않았으니 표식을 남기지 않는다
 @pytest.mark.asyncio
 async def test_rollback_update_client_error_does_not_block(db, notified):
     d_id=await make_deploy(db)
     i_id=await make_incident(db, d_id, kind='bad_release')
-    rejection=ClientError({"Error": {"Code": "AccessDeniedException", "Message": "denied"}}, "UpdateExpressGatewayService")
+    rejection=ClientError({"Error": {"Code": "AccessDeniedException", "Message": "denied"},
+                           "ResponseMetadata": {"HTTPStatusCode": 403, "RetryAttempts": 0}}, "UpdateExpressGatewayService")
     fakes=Fakes(fail_update=rejection)
 
     await Recovery_Service.services_recovery_start(db, i_id, **fakes.kwargs())

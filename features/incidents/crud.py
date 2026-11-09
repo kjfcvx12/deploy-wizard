@@ -166,3 +166,15 @@ class Incident_Crud:
                                 .order_by(Recovery_Action.started_at.desc(), Recovery_Action.r_a_id.desc())
                                 .limit(1))
         return result.scalars().first()
+
+
+    # 배포의 다른 인시던트에 running 으로 남은 되돌리기 시도 중 가장 최근 것 - 끝내지 못하고 멈춘 시도
+    @staticmethod
+    async def crud_incident_action_running_rollback_other(db:AsyncSession, d_id:int, i_id:int) -> Recovery_Action | None:
+        result=await db.execute(select(Recovery_Action)
+                                .join(Incident, Incident.i_id == Recovery_Action.i_id)
+                                .where(Incident.d_id == d_id, Recovery_Action.i_id != i_id,
+                                       Recovery_Action.action == 'rollback', Recovery_Action.result == 'running')
+                                .order_by(Recovery_Action.started_at.desc(), Recovery_Action.r_a_id.desc())
+                                .limit(1))
+        return result.scalars().first()

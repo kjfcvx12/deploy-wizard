@@ -4,7 +4,6 @@ from datetime import timedelta
 
 from sqlalchemy.ext.asyncio import AsyncSession
 from fastapi import HTTPException
-from botocore.exceptions import ClientError
 
 from shared.settings import settings
 from shared.masking import mask_text
@@ -80,6 +79,13 @@ class Recovery_Service:
             current=await Deploy_Service.services_deploy_release_current(db, incident.d_id)
             if current is None or current.created_at is None or current.created_at <= latest.started_at:
                 return "지난 되돌리기의 배포 기록 반영이 실패한 상태라 자동 복구를 하지 않습니다. 배포 상태를 확인한 뒤 다시 배포해 주세요"
+
+        # 다른 인시던트의 되돌리기 시도가 끝나지 못하고 running 으로 남아 있어도 (표식을 쓰지 못한 경우) 같은 이유로 막는다
+        stuck=await Incident_Crud.crud_incident_action_running_rollback_other(db, incident.d_id, incident.i_id)
+        if stuck is not None:
+            current=await Deploy_Service.services_deploy_release_current(db, incident.d_id)
+            if current is None or current.created_at is None or current.created_at <= stuck.started_at:
+                return "지난 되돌리기가 끝나지 않은 채 남아 있어 자동 복구를 하지 않습니다. 배포 상태를 확인한 뒤 다시 배포해 주세요"
 
         since=Incident_Service.services_incident_now() - timedelta(hours=DAILY_WINDOW_HOURS)
         if await Incident_Crud.crud_incident_action_count_since(db, incident.d_id, since) >= settings.recovery_daily_limit:
@@ -198,9 +204,9 @@ class Recovery_Service:
                 update_attempted=True
                 try:
                     await asyncio.to_thread(update, session, service_arn, image_uri, port, path, environment=environment)
-                except ClientError:
-                    # AWS 가 거절 응답을 준 것 - 아무것도 적용되지 않았다
-                    update_rejected=True
+                except Exception as e:
+                    # AWS 가 깨끗이 거절했거나 보내기 전에 막힌 경우만 아무것도 적용되지 않은 것으로 본다
+                    update_rejected=Recovery_State.services_recovery_update_rejected(e)
                     raise
 
                 wait=waiter or Express_Service.services_express_wait
@@ -220,7 +226,7 @@ class Recovery_Service:
             detail=mask_text(f"{type(e).__name__}: {e}")[:DETAIL_MAX]
 
         # 되돌리기 갱신이 AWS 에 갔을 수 있는데 기록에는 반영되지 않았으면 표식을 남긴다 - 기록(deploys.image_uri)은 나쁜 이미지 그대로라 이후 자동 복구를 막아야 한다
-        # 갱신 호출이 예외로 끝나도 (시간 초과처럼) AWS 가 받았는지 알 수 없으니 표식을 남긴다. AWS 가 거절한 경우(ClientError)만 제외
+        # 갱신 호출이 예외로 끝나도 (시간 초과처럼) AWS 가 받았는지 알 수 없으니 표식을 남긴다. 깨끗이 거절된 경우(services_recovery_update_rejected)만 제외
         if action == 'rollback' and update_attempted and not update_rejected and result != 'ok':
             detail=Recovery_State.services_recovery_mark_unrecorded(detail)
 
