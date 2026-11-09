@@ -128,6 +128,66 @@ describe('계정 연결 화면 - 불러오기', () => {
   })
 })
 
+describe('계정 연결 화면 - 끌어당겨 새로고침 (C2 5)', () => {
+  // 스크롤에 달린 RefreshControl 요소
+  const refreshControl = () => screen.getByTestId('accounts-scroll').props.refreshControl
+
+  test('끌어당기면 세 목록을 다시 받고, 받는 동안만 새로고침 표시가 켜진다', async () => {
+    await render(<AccountsScreen />)
+    await screen.findByText('운영 계정')
+    expect(refreshControl().props.refreshing).toBe(false)
+    let resolve
+    accountApi.getConnections.mockReturnValue(new Promise((r) => { resolve = r }))
+    await act(async () => { refreshControl().props.onRefresh() })
+    expect(refreshControl().props.refreshing).toBe(true)
+    expect(accountApi.getConnections).toHaveBeenCalledTimes(2)
+    expect(accountApi.listAws).toHaveBeenCalledTimes(2)
+    expect(accountApi.listGithub).toHaveBeenCalledTimes(2)
+    await act(async () => { resolve(TWO) })
+    expect(refreshControl().props.refreshing).toBe(false)
+  })
+
+  test('처음 불러오는 동안에는 새로고침 표시가 켜지지 않는다', async () => {
+    accountApi.getConnections.mockReturnValue(new Promise(() => {}))
+    await render(<AccountsScreen />)
+    expect(refreshControl().props.refreshing).toBe(false)
+  })
+
+  test('끌어당기는 중에 또 당겨도 요청은 한 번만 간다', async () => {
+    await render(<AccountsScreen />)
+    await screen.findByText('운영 계정')
+    accountApi.getConnections.mockReturnValue(new Promise(() => {}))
+    await act(async () => {
+      refreshControl().props.onRefresh()
+      refreshControl().props.onRefresh()
+    })
+    expect(accountApi.getConnections).toHaveBeenCalledTimes(2)
+  })
+
+  test('새로고침이 실패하면 알림으로 알리고 있던 목록은 그대로 두며 표시는 꺼진다', async () => {
+    await render(<AccountsScreen />)
+    await screen.findByText('운영 계정')
+    accountApi.getConnections.mockRejectedValueOnce(new Error('서버에 연결할 수 없습니다'))
+    await act(async () => { await refreshControl().props.onRefresh() })
+    expect(await screen.findByText(/목록을 새로 받지 못했습니다. 서버에 연결할 수 없습니다/)).toBeTruthy()
+    expect(screen.getByText('운영 계정')).toBeTruthy()
+    expect(refreshControl().props.refreshing).toBe(false)
+  })
+
+  test('새로고침 중에 화면을 떠나도 경고가 없다', async () => {
+    const spy = jest.spyOn(console, 'error').mockImplementation(() => {})
+    const { unmount } = await render(<AccountsScreen />)
+    await screen.findByText('운영 계정')
+    let resolve
+    accountApi.getConnections.mockReturnValue(new Promise((r) => { resolve = r }))
+    await act(async () => { refreshControl().props.onRefresh() })
+    await unmount()
+    await act(async () => { resolve(TWO) })
+    expect(spy).not.toHaveBeenCalled()
+    spy.mockRestore()
+  })
+})
+
 describe('계정 연결 화면 - 선택', () => {
   test('저장해 둔 블록이 아직 있으면 선택됨으로 시작한다', async () => {
     readPickedBlock.mockResolvedValue(2)

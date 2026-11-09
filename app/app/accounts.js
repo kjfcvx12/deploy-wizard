@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { ActivityIndicator, KeyboardAvoidingView, Platform, ScrollView, StyleSheet, Text, View } from 'react-native'
+import { ActivityIndicator, KeyboardAvoidingView, Platform, RefreshControl, ScrollView, StyleSheet, Text, View } from 'react-native'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import { Stack } from 'expo-router'
 import { accountApi } from '../src/api'
@@ -26,6 +26,8 @@ export default function AccountsScreen() {
   const [busy, setBusy] = useState(false)
   const [adding, setAdding] = useState(false)
   const [pickedId, setPickedId] = useState(null)
+  const [pulling, setPulling] = useState(false)
+  const pullingRef = useRef(false)
   // 연결된 AWS 계정마다 템플릿 상태 (a_id -> Aws_Account_Template_Status) - update_needed 면 AWS 상자가 업데이트를 권한다
   const [templateStatus, setTemplateStatus] = useState({})
   // 화면이 살아 있는지, 가장 최근 불러오기 번호, 같은 순간의 두 번째 누름 막기, 저장된 선택을 읽었는지
@@ -91,6 +93,19 @@ export default function AccountsScreen() {
   }
 
   useEffect(() => { reload() }, [])
+
+  // 끌어당겨 새로고침 - 끌어당긴 동안만 표시가 켜지고, 이미 받는 중이면 두 번째 요청은 보내지 않는다 (실패는 reload 가 빨간 알림으로 남긴다)
+  const onPull = async () => {
+    if (pullingRef.current) return
+    pullingRef.current = true
+    setPulling(true)
+    try {
+      await reload()
+    } finally {
+      pullingRef.current = false
+      if (alive.current) setPulling(false)
+    }
+  }
 
   // GitHub 설치 화면(브라우저)에서 앱으로 돌아오면 목록을 한 번 다시 받는다 (딥링크가 없어 돌아온 것을 이렇게 안다)
   useOnForeground(() => { reload() })
@@ -216,6 +231,7 @@ export default function AccountsScreen() {
         <ScrollView
           testID="accounts-scroll"
           ref={scrollRef}
+          refreshControl={<RefreshControl refreshing={pulling} onRefresh={onPull} tintColor={colors.accent} colors={[colors.accent]} />}
           style={{ backgroundColor: colors.bg }}
           contentContainerStyle={[styles.content, { paddingBottom: spacing.xl * 2 + insets.bottom }]}
           keyboardShouldPersistTaps="handled"

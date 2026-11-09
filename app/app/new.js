@@ -4,7 +4,9 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import { Stack, useRouter } from 'expo-router'
 import { accountApi, adviceApi, deployApi } from '../src/api'
 import AdvicePanel from '../src/components/AdvicePanel'
-import ConnectionPicker, { isUsableConnection } from '../src/components/ConnectionPicker'
+import { readPickedBlock } from '../src/accounts/pickedBlock'
+import ConnectionPicker, { isUsableConnection, pickDefaultConnection } from '../src/components/ConnectionPicker'
+import NoConnectionHint from '../src/components/NoConnectionHint'
 import { radius, spacing, useColors } from '../src/theme'
 
 // 빨간 오류 안내 - 서버가 준 detail 을 그대로 보여 준다
@@ -44,7 +46,7 @@ function helperText(githubId, repoCount, hasBlocks) {
     return `${base} GitHub 연결을 골랐으니 private 레포도 됩니다${list}.`
   }
   if (hasBlocks) return `${base} 지금은 public 레포만 됩니다 — private 레포는 위에서 GitHub 연결을 고르세요.`
-  return `${base} 지금은 public 레포만 됩니다 — private 레포는 웹의 계정 연결 화면에서 GitHub 연결을 만든 뒤 쓸 수 있습니다.`
+  return `${base} 지금은 public 레포만 됩니다 — private 레포는 계정 연결 화면에서 GitHub 연결을 만든 뒤 쓸 수 있습니다.`
 }
 
 // 새 배포 화면 (S-03, S-20) - 두 단계: [분석](읽기만 함) -> 결과를 보고 [이 레포로 배포]. 입력이 바뀌면 이전 분석 결과는 지운다
@@ -59,6 +61,9 @@ export default function NewDeployScreen() {
   const [remote, setRemote] = useState(null)
   const [connections, setConnections] = useState([])
   const [connectionId, setConnectionId] = useState('')
+  // 연결 목록을 한 번 받아 마쳤는지 (받는 동안·실패했을 때는 "연결 없음" 안내를 보이지 않는다), 사용자가 직접 블록을 골랐는지
+  const [connectionsLoaded, setConnectionsLoaded] = useState(false)
+  const userChose = useRef(false)
   const [repositories, setRepositories] = useState([])
   const [busy, setBusy] = useState(false)
   const [loadingBranches, setLoadingBranches] = useState(false)
@@ -116,18 +121,22 @@ export default function NewDeployScreen() {
 
   useEffect(() => {
     let alive = true
-    accountApi.getConnections().then((data) => {
+    // 연결 목록과 계정 연결 화면에서 [선택]해 둔 블록 번호를 함께 받는다 (저장소를 못 읽으면 null - 목록은 그대로 쓴다)
+    Promise.all([accountApi.getConnections(), readPickedBlock()]).then(([data, stored]) => {
       if (!alive) return
       const usable = (data || []).filter(isUsableConnection)
       setConnections(usable)
-      // 연결은 한 번 해 두고 계속 쓰는 것이다 - 블록이 하나뿐이면 미리 골라 둔다 (바꿀 수 있다)
-      if (usable.length === 1) { applyBlock(usable[0]); invalidate() }
+      setConnectionsLoaded(true)
+      // 연결은 한 번 해 두고 계속 쓰는 것이다 - 선택해 둔 블록(여럿일 때), 아니면 하나뿐인 블록을 미리 골라 둔다. 사용자가 이미 고른 것은 덮지 않는다 (바꿀 수 있다)
+      const initial = userChose.current ? null : pickDefaultConnection(usable, stored)
+      if (initial) { applyBlock(initial); invalidate() }
     }).catch(() => {})
     return () => { alive = false }
   }, [])
 
   // 연결 블록을 바꿨을 때
   const chooseConnection = (value) => {
+    userChose.current = true
     applyBlock(connections.find((item) => String(item.c_id) === value))
     invalidate()
   }
@@ -217,7 +226,8 @@ export default function NewDeployScreen() {
           automaticallyAdjustKeyboardInsets
         >
           <ConnectionPicker connections={connections} value={connectionId} onChange={chooseConnection} />
-  
+          {connectionsLoaded && connections.length === 0 && <NoConnectionHint />}
+
           <TextInput
             style={[styles.input, { color: colors.text, backgroundColor: colors.surface, borderColor: colors.border }]}
             placeholder={repositories.length > 0 ? '레포를 고르거나 주소를 입력하세요' : 'https://github.com/소유자/레포'}
