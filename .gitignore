@@ -35,3 +35,9 @@ tests/.data/
 
 # 개인 메모
 1.txt
+
+# Expo 앱 (app/)
+app/node_modules/
+app/.expo/
+app/dist/
+app/.env
