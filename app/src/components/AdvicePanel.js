@@ -88,7 +88,7 @@ function Unknowns({ items }) {
 }
 
 // 배포 전 분석 결과 (S-20) - 보여 주기만 한다. 배포·초기화는 부모가 처리한다
-export default function AdvicePanel({ advice, busy, onDeploy, onReset }) {
+export default function AdvicePanel({ advice, busy, onDeploy, onReset, headingRef }) {
   const colors = useColors()
 
   if (!advice) return null
@@ -101,7 +101,7 @@ export default function AdvicePanel({ advice, busy, onDeploy, onReset }) {
 
   return (
     <View style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.border }]}>
-      <Text accessibilityRole="header" style={[styles.title, { color: colors.text }]}>분석 결과</Text>
+      <Text ref={headingRef} accessibilityRole="header" style={[styles.title, { color: colors.text }]}>분석 결과</Text>
 
       <View style={styles.row}>
         <View style={[styles.code, { backgroundColor: colors.surface2 }]}>

@@ -14,7 +14,7 @@ function Option({ label, selected, onPress }) {
   return (
     <Pressable
       accessibilityRole="radio"
-      accessibilityState={{ selected }}
+      accessibilityState={{ checked: selected }}
       onPress={onPress}
       style={({ pressed }) => [
         styles.option,

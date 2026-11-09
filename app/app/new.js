@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native'
+import { AccessibilityInfo, ActivityIndicator, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native'
 import { Stack, useRouter } from 'expo-router'
 import { accountApi, adviceApi, deployApi } from '../src/api'
 import AdvicePanel from '../src/components/AdvicePanel'
@@ -51,6 +51,7 @@ export default function NewDeployScreen() {
   const colors = useColors()
   const router = useRouter()
   const scrollRef = useRef(null)
+  const headingRef = useRef(null)
   const [repoUrl, setRepoUrl] = useState('')
   const [branch, setBranch] = useState('')
   const [remote, setRemote] = useState(null)
@@ -58,6 +59,7 @@ export default function NewDeployScreen() {
   const [connectionId, setConnectionId] = useState('')
   const [repositories, setRepositories] = useState([])
   const [busy, setBusy] = useState(false)
+  const [loadingBranches, setLoadingBranches] = useState(false)
   const [analyzing, setAnalyzing] = useState(false)
   const [error, setError] = useState('')
   const [advice, setAdvice] = useState(null)
@@ -68,16 +70,23 @@ export default function NewDeployScreen() {
   const analyzeInflight = useRef(false)
   const deployInflight = useRef(false)
   const repositoriesRequest = useRef(0)
+  // 브랜치 요청 번호 - 입력이 바뀐 뒤 늦게 도착한 브랜치 목록(과 오류)을 버린다
+  const branchesRequest = useRef(0)
+  // 새 분석 결과가 처음 보일 때만 그 위치로 스크롤하고 읽기 초점을 옮긴다 (접기·펴기로 크기가 바뀔 때는 건드리지 않는다)
+  const pendingReveal = useRef(false)
 
   const block = connections.find((item) => String(item.c_id) === connectionId)
   const awsId = block?.aws?.status === 'verified' ? String(block.aws.a_id) : ''
   const githubId = block?.github?.status === 'active' ? String(block.github.g_id) : ''
-  const locked = busy || analyzing
+  const locked = busy || analyzing || loadingBranches
 
   // 입력이 바뀌면 이전 분석 결과를 지운다 (낡은 결과로 배포하지 않게). 진행 중인 분석 결과도 버린다
   const invalidate = () => {
     analysisId.current += 1
+    branchesRequest.current += 1
     analyzeInflight.current = false
+    pendingReveal.current = false
+    setLoadingBranches(false)
     setAdvice(null)
     setAnalyzed(null)
     setAnalyzing(false)
@@ -90,7 +99,8 @@ export default function NewDeployScreen() {
     setRepositories([])
     if (!g_id) return
     accountApi.getGithubRepositories(g_id).then((list) => {
-      if (request === repositoriesRequest.current) setRepositories(list || [])
+      // 주소가 없는 항목은 건너뛴다
+      if (request === repositoriesRequest.current) setRepositories(Array.isArray(list) ? list.filter((repo) => typeof repo?.html_url === 'string' && typeof repo.full_name === 'string') : [])
     }).catch(() => {})
   }
 
@@ -109,7 +119,7 @@ export default function NewDeployScreen() {
       const usable = (data || []).filter(isUsableConnection)
       setConnections(usable)
       // 연결은 한 번 해 두고 계속 쓰는 것이다 - 블록이 하나뿐이면 미리 골라 둔다 (바꿀 수 있다)
-      if (usable.length === 1) applyBlock(usable[0])
+      if (usable.length === 1) { applyBlock(usable[0]); invalidate() }
     }).catch(() => {})
     return () => { alive = false }
   }, [])
@@ -123,18 +133,21 @@ export default function NewDeployScreen() {
   // 브랜치 목록 불러오기 - 고르고 싶을 때만
   const loadBranches = async () => {
     if (locked || !repoUrl.trim()) return
+    const id = ++branchesRequest.current
     setError('')
-    setBusy(true)
+    setLoadingBranches(true)
     try {
       const data = await deployApi.getRemote(repoUrl.trim(), githubId)
+      if (id !== branchesRequest.current) return
       setRemote(data)
       setBranch(data.default_branch || '')
       invalidate()
     } catch (e) {
+      if (id !== branchesRequest.current) return
       setRemote(null)
       setError(e.message)
     } finally {
-      setBusy(false)
+      if (id === branchesRequest.current) setLoadingBranches(false)
     }
   }
 
@@ -144,12 +157,13 @@ export default function NewDeployScreen() {
     analyzeInflight.current = true
     const id = ++analysisId.current
     const inputs = { repo_url: repoUrl.trim(), branch: branch || null, aws_account_id: awsId || null, github_installation_id: githubId || null }
+    pendingReveal.current = false
     setError('')
     setAdvice(null)
     setAnalyzing(true)
     try {
       const data = await adviceApi.analyze(inputs)
-      if (id === analysisId.current) { setAdvice(data); setAnalyzed(inputs) }
+      if (id === analysisId.current) { pendingReveal.current = true; setAdvice(data); setAnalyzed(inputs) }
     } catch (e) {
       if (id === analysisId.current) setError(e.message)
     } finally {
@@ -170,6 +184,16 @@ export default function NewDeployScreen() {
       setError(e.message)
       setBusy(false)
       deployInflight.current = false
+    }
+  }
+
+  // 새 결과 패널이 처음 배치되면 그 위치로 스크롤하고, 화면 읽기 초점을 제목으로 옮긴다 (웹 AdvicePanel 의 제목 포커스와 같은 목적)
+  const onPanelLayout = (e) => {
+    if (!pendingReveal.current) return
+    pendingReveal.current = false
+    scrollRef.current?.scrollTo?.({ y: e.nativeEvent.layout.y, animated: true })
+    if (Platform.OS !== 'web' && headingRef.current && typeof AccessibilityInfo.sendAccessibilityEvent === 'function') {
+      AccessibilityInfo.sendAccessibilityEvent(headingRef.current, 'focus')
     }
   }
 
@@ -258,8 +282,8 @@ export default function NewDeployScreen() {
         {!!error && !advice && <ErrorNotice message={error} />}
 
         {advice && (
-          <View onLayout={(e) => scrollRef.current?.scrollTo?.({ y: e.nativeEvent.layout.y, animated: true })}>
-            <AdvicePanel advice={advice} busy={locked} onDeploy={() => { deploy() }} onReset={invalidate} />
+          <View testID="advice-panel" onLayout={onPanelLayout}>
+            <AdvicePanel advice={advice} busy={locked} onDeploy={() => { deploy() }} onReset={invalidate} headingRef={headingRef} />
           </View>
         )}
         {!!error && !!advice && <ErrorNotice message={error} />}
