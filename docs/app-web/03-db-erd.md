@@ -1,6 +1,6 @@
 # ERD와 테이블 구조
 
-현재 테이블은 6개(`deploys`, `deploy_logs`, `deploy_issues`, `aws_accounts`, `github_installations`, `connections`)이고, 여기에 **사용자·인증·운영·알림·환경변수 테이블 9개**를 더한다. 이름 규칙은 `docs/conventions.md`를 따른다 (PK는 단어 머리글자: `u_id`, `r_t_id`).
+현재 테이블은 6개(`deploys`, `deploy_logs`, `deploy_issues`, `aws_accounts`, `github_installations`, `connections`)이고, 여기에 **사용자·인증·운영·알림·환경변수 테이블 9개**를 더한다 (D1 구현에서 한 줄짜리 `notification_settings`가 하나 더 생겼다). 이름 규칙은 `docs/conventions.md`를 따른다 (PK는 단어 머리글자: `u_id`, `r_t_id`).
 
 ## 1. ERD
 
@@ -115,9 +115,10 @@ erDiagram
 | 테이블 | 변경 | 이유 |
 |---|---|---|
 | `deploys` | `u_id` FK(nullable) 추가 | 소유자. 3단계 전까지 null |
-| `deploys` | `auto_recover` bool, 기본 true 추가 `[가정]` | 배포별 자동 복구 스위치 (D-09) |
+| `deploys` | `auto_recover` bool, 기본 true 추가 `[가정]` — **구현됨 (D1)** | 배포별 자동 복구 스위치 (D-09) |
 | `deploys` | `size_tier`(`small\|medium\|large`), `cpu`, `memory`(허용 값은 Express Mode 확인 후), `advice`(추천 결과 JSON, text), `advice_at` 추가 | 사용자가 고른 사양과 배포 시점의 추천을 함께 보관 (FR-21, I-09) |
-| `deploys` | `last_health_at`, `health_state`(`healthy\|unhealthy\|unknown`) 추가 | 목록에서 헬스 배지를 빠르게 보이려고. `health_checks`를 매번 세지 않는다 |
+| `deploys` | `last_health_at`, `health_state`(`healthy\|unhealthy\|unknown`) 추가 — **구현됨 (D1)** | 목록에서 헬스 배지를 빠르게 보이려고. `health_checks`를 매번 세지 않는다 |
+| `deploys` | `bad_commit_sha` varchar(40), nullable 추가 — **구현됨 (D1, 설계에 없던 열)** | 자동 되돌리기가 기억하는 나쁜 커밋. 감시(폴링·웹훅)가 같은 커밋을 다시 배포하지 않게 한다. 더 새 커밋이 오면 비운다. API 응답에는 싣지 않는다 |
 | `aws_accounts` | `u_id` FK(nullable) 추가 | 소유자 |
 | `github_installations` | `u_id` FK(nullable) 추가 | 소유자. `installation_id`는 지금처럼 전역 unique |
 | `connections` | `u_id` FK(nullable) 추가 | 소유자 |
@@ -125,7 +126,7 @@ erDiagram
 
 **상태값(`deploys.status`)은 원칙적으로 바꾸지 않는다.** 복구 중인지는 `incidents.status`가 가진다. (바꾸면 CLAUDE.md의 세 곳을 같이 고쳐야 한다.) 유일한 후보 변경은 환경변수 입력 대기용 `needs_input` 하나이고, 결정 D9가 정해지기 전까지는 추가하지 않는다.
 
-**마이그레이션.** 지금은 `create_all`이라 기존 테이블에 컬럼이 안 늘어난다. 이 변경은 컬럼 추가가 많으므로 alembic을 붙이거나, 개발 DB를 새로 만든다 (`architecture.md`가 이미 "컬럼을 바꿀 일이 잦아지면 alembic"이라고 적어 두었다). 상용 단계에서는 alembic이 필수다.
+**마이그레이션.** `create_all`은 이미 있는 표에 컬럼을 늘리지 않는다. D1 에서는 alembic 대신 `shared/database.py`의 `ensure_columns`를 썼다: 서버를 켤 때 `create_all` 뒤에 `ENSURE_COLUMNS`(지금은 `deploys`의 `auto_recover` `health_state` `last_health_at` `bad_commit_sha`)에 적힌 열이 실제 표에 없으면 `ALTER TABLE ... ADD COLUMN`으로 더한다 (모델의 열 정의와 기본값을 따르고, 여러 번 불러도 안전). 새 표(`health_checks` `incidents` `recovery_actions` `deploy_releases` `notifications` `push_devices` `notification_settings`)는 `create_all`이 만든다. 시험에서는 옛 모양의 표로 확인했지만 **실제 `data/wizard.db`에서의 첫 실행은 아직 해 보지 않았다.** 열을 지우거나 바꾸는 일, 그리고 상용 단계(여러 사용자, 서버 DB)에서는 alembic이 필수다 (`architecture.md`가 "컬럼을 바꿀 일이 잦아지면 alembic"이라고 적어 두었다).
 
 ## 3. 새 테이블
 
@@ -173,11 +174,13 @@ erDiagram
 | `d_id` | int FK → deploys, index | N | CASCADE |
 | `commit_sha` | varchar(40) | Y | |
 | `image_uri` | varchar(500) | N | ECR 이미지 |
-| `state` | varchar(10) | N | `active\|previous\|retired` — 지금 떠 있는 것 / 직전 정상 / 보관 기한 지남 |
+| `state` | varchar(10) | N | `current\|previous\|old\|failed` — 지금 떠 있는 것 / 되돌릴 대상(직전 하나) / 그보다 오래된 것 / 자동 되돌리기로 버려진 나쁜 버전. (설계의 `active\|previous\|retired`를 구현에서 바꿨다) |
 | `healthy_since` | timestamp | Y | 이 버전이 정상 확인된 첫 시각. 정상 확인된 적 없는 버전은 되돌릴 대상이 아니다 |
 | `created_at` | timestamp | N | |
 
-ECR 이미지를 지우는 작업(작업 종료, 삭제)과 함께 `retired`로 바꾼다. 보관 개수 기본 3 `[가정]`.
+`deploying`이 성공해 `running`에 닿으면(`services_deploy_release_record`) `previous`는 `old`로, `current`는 `previous`로 밀고 새 줄을 `current`로 만든다 (같은 이미지·커밋이면 새 줄을 만들지 않는다). 첫 정상 점검에서 `current`의 `healthy_since`를 채운다. 되돌리기 대상은 `previous` 중 `healthy_since`가 있고 `image_uri`가 비지 않았으며 현재 이미지와 다른 것 하나뿐이다. 자동 되돌리기가 성공하면 나쁜 줄은 `failed`, 대상 줄은 `current`가 된다.
+
+**미구현**: 설계의 "ECR 이미지를 지울 때 함께 retire" 와 "보관 개수 3". 작업 종료(`session_end.py`)가 ECR 이미지를 지워도 릴리스 줄은 그대로 남는다 - 그런 줄로 되돌리기를 시도하면 AWS 쪽에서 실패해 `needs_action`으로 끝난다.
 
 ### deploy_env_vars — 환경변수 (1단계)
 배포마다 필요한 환경변수의 **이름과 상태**를 둔다. 시크릿 **값은 이 표에 없다.**
@@ -226,7 +229,7 @@ ECR 이미지를 지우는 작업(작업 종료, 삭제)과 함께 `retired`로 
 | `resolved_at` | timestamp | Y | |
 | `created_at`, `updated_at` | timestamp | N | |
 
-한 배포에 `open`/`recovering` 인시던트는 동시에 하나만 둔다 (중복 알림 방지).
+한 배포에 끝나지 않은(`open` `recovering` `needs_action`) 인시던트는 동시에 하나만 둔다 (중복 알림 방지, 코드에서 확인 - DB 제약은 없다). `needs_action`도 끝난 것으로 치지 않아야, 사람이 보기 전에 같은 배포가 매 분 새 인시던트를 만들지 않는다.
 
 ### recovery_actions — 자동 복구 시도 (2단계)
 | 컬럼 | 타입 | Null | 설명 |
@@ -238,6 +241,17 @@ ECR 이미지를 지우는 작업(작업 종료, 삭제)과 함께 `retired`로 
 | `result` | varchar(10) | N | `running\|ok\|failed` |
 | `detail` | text | Y | 실패 이유 (마스킹) |
 | `started_at`, `finished_at` | timestamp | | |
+
+**`detail` 앞머리 표지(데이터 모델에 영향).** `action=rollback`, `result=failed`인 줄의 `detail`이 `AWS는 이전 이미지로 되돌아갔지만 배포 기록 반영에 실패했습니다`로 시작하면, AWS 는 이전 이미지로 돌아갔는데 배포 기록(`deploys.image_uri` 등)이 못 따라간 상태라는 표지다. 복구 코드는 이 표지를 보고, 그 줄의 `started_at`보다 새로운 `deploy_releases` 줄(= 사용자의 새 배포)이 생기기 전까지 그 배포의 자동 복구를 막는다 (기록이 거짓이라 잘못된 이미지로 재시작할 수 있어서). 별도 열이 없어 이 문구는 코드 상수(`BOOKKEEPING_DETAIL`)와 함께 바뀌어야 한다. 서버 재시작 때 끊긴 조치는 `failed`와 `서버가 다시 시작되어 자동 복구가 중단되었습니다`로 닫는다.
+
+### notification_settings — 알림 설정 (D1, 설계에 없던 표)
+한 줄뿐인 표 - `id`는 항상 1. 처음 읽을 때 기본값으로 만든다. 로그인(3단계)이 생기면 사용자별로 옮긴다.
+| 컬럼 | 타입 | Null | 설명 |
+|---|---|---|---|
+| `id` | int PK | N | 항상 1 |
+| `notify_email` | bool | N | 기본 true. 메일은 `.env`의 `MAIL_HOST`·`MAIL_TO`가 있어야 실제로 나간다 |
+| `notify_push` | bool | N | 기본 true. 등록된 기기가 있어야 실제로 나간다 |
+| `kinds` | text | N | 받을 알림 종류 JSON 배열 (기본 여섯 가지 전부) |
 
 ### notifications — 알림 (2단계)
 한 사건당 채널별로 한 줄씩 쌓는다 (앱 안 목록·메일·푸시).

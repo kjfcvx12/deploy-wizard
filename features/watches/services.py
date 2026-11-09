@@ -11,6 +11,7 @@ from shared.database import AsyncSessionLocal
 from features.deploys.services import Deploy_Service
 from features.repos.services import Repo_Service
 from features.accounts.services import Github_Service
+from features.notifications.services import Notification_Service
 from features.watches.scheme import Watch_Ack
 
 # 코드 변경 감지 - 폴링 + 웹훅 (기획서 03장)
@@ -52,13 +53,28 @@ class Watch_Service:
             return
 
         async with AsyncSessionLocal() as db:
-            if deploy.auto_redeploy:
+            # 자동 복구가 되돌린 나쁜 커밋은 다시 배포하지 않는다 - 표시만 (더 새 커밋이 오면 막힘이 풀린다)
+            if await Deploy_Service.services_deploy_watch_blocked(db, deploy, commit_sha):
+                await Deploy_Service.services_deploy_mark_new_commit(db, deploy.d_id, commit_sha)
+            elif deploy.auto_redeploy:
                 try:
                     await Deploy_Service.services_deploy_redeploy(db, deploy.d_id)
                 except Exception:
                     pass  # 이미 진행 중이면 다음 폴링 때 다시 시도
             else:
+                first_seen=getattr(deploy, "watch_commit_sha", None) != commit_sha
                 await Deploy_Service.services_deploy_mark_new_commit(db, deploy.d_id, commit_sha)
+                Watch_Service.services_watch_notify_new_commit(deploy.d_id, commit_sha, first_seen)
+
+
+    # 새 커밋 알림 - 처음 본 커밋일 때만, 백그라운드로 띄운다. 알림이 어떻게 되든 폴링·웹훅은 그대로 간다
+    @staticmethod
+    def services_watch_notify_new_commit(d_id:int, commit_sha:str, first_seen:bool) -> None:
+        try:
+            if first_seen:
+                Notification_Service.services_notification_deploy_fire(d_id, 'new_commit', commit_sha)
+        except Exception:
+            pass
 
 
     # 서버가 떠 있는 동안 계속 도는 폴링 루프 - main.py lifespan에서 시작
@@ -121,11 +137,15 @@ class Watch_Service:
 
         debounced=0
         for deploy in deploys:
-            if deploy.auto_redeploy:
+            if await Deploy_Service.services_deploy_watch_blocked(db, deploy, commit_sha):
+                await Deploy_Service.services_deploy_mark_new_commit(db, deploy.d_id, commit_sha)
+            elif deploy.auto_redeploy:
                 Watch_Service.services_watch_debounce_schedule(deploy.d_id)
                 debounced+=1
             else:
+                first_seen=deploy.watch_commit_sha != commit_sha
                 await Deploy_Service.services_deploy_mark_new_commit(db, deploy.d_id, commit_sha)
+                Watch_Service.services_watch_notify_new_commit(deploy.d_id, commit_sha, first_seen)
 
         return Watch_Ack(matched=len(deploys), debounced=debounced)
 

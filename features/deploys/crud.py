@@ -1,8 +1,9 @@
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 from sqlalchemy import update
+from datetime import datetime
 
-from features.deploys.models import Deploy, Deploy_Log, Deploy_Issue
+from features.deploys.models import Deploy, Deploy_Log, Deploy_Issue, Deploy_Release
 from features.deploys.scheme import Deploy_Create
 
 
@@ -145,3 +146,65 @@ class Deploy_Crud:
     async def crud_deploy_get_by_repo_url(db:AsyncSession, repo_url:str) -> list[Deploy]:
         result=await db.execute(select(Deploy).filter(Deploy.repo_url == repo_url, Deploy.status != 'deleted'))
         return result.scalars().all()
+
+
+    # 현재(current) 릴리스 조회 - 배포마다 최대 하나
+    @staticmethod
+    async def crud_deploy_release_get_current(db:AsyncSession, d_id:int) -> Deploy_Release | None:
+        result=await db.execute(select(Deploy_Release)
+                                .where(Deploy_Release.d_id == d_id, Deploy_Release.state == 'current')
+                                .order_by(Deploy_Release.d_r_id.desc()))
+        return result.scalars().first()
+
+
+    # 되돌리기 대상 조회 - 직전(previous) 중 가장 최근 것. 이미지 주소가 빈 행은 쓸 수 없으니 건너뛴다
+    @staticmethod
+    async def crud_deploy_release_get_previous(db:AsyncSession, d_id:int) -> Deploy_Release | None:
+        result=await db.execute(select(Deploy_Release)
+                                .where(Deploy_Release.d_id == d_id, Deploy_Release.state == 'previous',
+                                       Deploy_Release.image_uri.is_not(None), Deploy_Release.image_uri != '')
+                                .order_by(Deploy_Release.d_r_id.desc()))
+        return result.scalars().first()
+
+
+    # 릴리스 상태 한꺼번에 바꾸기 - 배포의 from_state 인 행을 to_state 로 (failed 같은 다른 상태는 건드리지 않는다)
+    @staticmethod
+    async def crud_deploy_release_move_state(db:AsyncSession, d_id:int, from_state:str, to_state:str) -> int:
+        result=await db.execute(update(Deploy_Release)
+                                .where(Deploy_Release.d_id == d_id, Deploy_Release.state == from_state)
+                                .values(state=to_state))
+        return result.rowcount
+
+
+    # 릴리스 한 줄 쌓기
+    @staticmethod
+    async def crud_deploy_release_create(db:AsyncSession, d_id:int, commit_sha:str|None, image_uri:str, state:str='current') -> Deploy_Release:
+        db_release=Deploy_Release(d_id=d_id, commit_sha=commit_sha, image_uri=image_uri, state=state)
+        db.add(db_release)
+        await db.flush()
+        return db_release
+
+
+    # 릴리스의 정상 확인 시각 기록 - 비어 있을 때만 채운다
+    @staticmethod
+    async def crud_deploy_release_mark_healthy(db:AsyncSession, d_r_id:int, healthy_since:datetime) -> int:
+        result=await db.execute(update(Deploy_Release)
+                                .where(Deploy_Release.d_r_id == d_r_id, Deploy_Release.healthy_since.is_(None))
+                                .values(healthy_since=healthy_since))
+        return result.rowcount
+
+
+    # 배포의 state 인 릴리스들의 정상 확인 시각을 비운다 - 이미지를 지운 뒤에는 다시 확인되기 전까지 정상 버전이 아니다
+    @staticmethod
+    async def crud_deploy_release_clear_healthy(db:AsyncSession, d_id:int, state:str) -> int:
+        result=await db.execute(update(Deploy_Release)
+                                .where(Deploy_Release.d_id == d_id, Deploy_Release.state == state)
+                                .values(healthy_since=None))
+        return result.rowcount
+
+
+    # 릴리스 한 줄의 상태 바꾸기
+    @staticmethod
+    async def crud_deploy_release_set_state(db:AsyncSession, d_r_id:int, state:str) -> int:
+        result=await db.execute(update(Deploy_Release).where(Deploy_Release.d_r_id == d_r_id).values(state=state))
+        return result.rowcount

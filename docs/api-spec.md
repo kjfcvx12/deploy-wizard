@@ -19,6 +19,8 @@ Base URL: `http://localhost:8081` · 전부 JSON · 인증 없음(로컬 전용)
 | GET | `/api/deploys/{d_id}/logs?after=` | `d_l_id > after`인 로그 (최대 500줄) | 200 `Deploy_Log_Read[]` |
 | GET | `/api/deploys/{d_id}/issues` | 문제 이력 - 다시 배포해도 지워지지 않는 지난 실패들 (최신순) | 200 `Deploy_Issue_Read[]` |
 | GET | `/api/deploys/{d_id}/health` | 공개 주소에 GET을 보내 본다 (AWS 권한 불필요) | 200 `Deploy_Health` |
+| GET | `/api/deploys/{d_id}/health-history?hours=24` | 서버가 1분마다 남긴 헬스체크 이력 - 최근 `hours`시간(1~168), 최신 1440건을 오래된 것부터 | 200 `Health_Check_Read[]` |
+| PATCH | `/api/deploys/{d_id}/settings` | 배포별 설정 변경 - 보낸 항목만 바뀐다 (아래 "Settings") | 200 `Deploy_Read` |
 | POST | `/api/deploys/{d_id}/redeploy` | 다시 배포. 서비스가 있으면 새 이미지로 갱신 | 200 `Deploy_Read` |
 | POST | `/api/deploys/{d_id}/env/continue` | 이어서 배포 - 환경변수 입력을 마친 `needs_input` 배포를 `deploying` 단계부터 다시 돌린다 (아래 "Env"). `needs_input`이 아니면 409 → `queued` | 200 `Deploy_Read` |
 | POST | `/api/deploys/advice` | 배포 전 분석 - 레포를 읽기만 하고 사양 수준·필요한 것·확신도를 돌려준다. 배포 기록·AWS 호출 없음 (아래 "Advice") | 200 `Deploy_Advice` |
@@ -28,7 +30,7 @@ Base URL: `http://localhost:8081` · 전부 JSON · 인증 없음(로컬 전용)
 
 | 상태 코드 | 언제 |
 |-----------|------|
-| 400 | 레포 주소·브랜치 형식이 틀림, 레포 조회 실패 |
+| 400 | 레포 주소·브랜치 형식이 틀림, 레포 조회 실패, 설정 변경 본문이 비어 있음 |
 | 404 | 없는 `d_id`, 이미 삭제된 배포 |
 | 409 | 진행 중인 배포에 다시 배포·삭제 요청 |
 | 500 | AWS 삭제 실패 등 |
@@ -81,12 +83,18 @@ Base URL: `http://localhost:8081` · 전부 JSON · 인증 없음(로컬 전용)
   "watch_commit_sha": null,
   "watch_checked_at": null,
   "env_pending": 0,
+  "auto_recover": true,
+  "health_state": "unknown",
+  "last_health_at": null,
+  "open_incident_id": null,
   "created_at": "2026-09-21T06:10:00",
   "updated_at": "2026-09-21T06:11:02"
 }
 ```
 
 `env_pending`: 값이 비어 있는 필수 환경변수 수 (`required`이고 `status`가 `detected`인 것). DB 열이 아니라 조회할 때마다 센다. 환경변수가 없으면 0. `needs_input` 배포를 화면에 알리는 용도다.
+
+`auto_recover`: 배포별 자동 복구 스위치 (기본 `true`). `health_state`: `healthy` `unhealthy` `unknown` — 마지막 헬스체크 요약이며 아직 한 번도 확인하지 않았으면 `unknown`. `last_health_at`: 마지막 헬스체크 시각(없으면 null). `open_incident_id`: 아직 처리 중(`open`·`recovering`)인 인시던트 번호, 없으면 null — DB 열이 아니라 조회할 때마다 채운다. 앞의 셋은 `deploys` 열이다 (옛 DB는 서버 시작 때 `ensure_columns`가 열을 더한다). 같은 때 더해지는 네 번째 열 `bad_commit_sha`(자동 되돌리기가 기억해 둔 나쁜 커밋, 감시가 같은 커밋을 다시 배포하지 않게 하는 내부용)는 응답에 싣지 않는다.
 
 ### 값 목록
 
@@ -127,6 +135,28 @@ Base URL: `http://localhost:8081` · 전부 JSON · 인증 없음(로컬 전용)
 ```json
 { "default_branch": "main", "branches": ["main", "kjfcvx12", "oxo"] }
 ```
+
+### PATCH `/api/deploys/{d_id}/settings`
+
+```json
+{ "auto_redeploy": false, "auto_recover": true }
+```
+
+- 두 항목 모두 선택. 보내지 않은(또는 `null`) 항목은 그대로 둔다. 하나도 없으면(빈 본문) 400 `변경할 설정을 하나 이상 보내 주세요`.
+- 모르는 항목은 422 (`extra=forbid`) - `status` 같은 값은 여기서 못 바꾼다.
+- 없는 `d_id`, 삭제된 배포는 404. 응답은 바뀐 `Deploy_Read`.
+
+### GET `/api/deploys/{d_id}/health-history`
+
+`hours`는 1~168 (기본 24, 범위 밖은 422). `HEALTH_INTERVAL_SECONDS`(기본 60초)마다 `running` 이면서 주소가 있는 배포의 `endpoint + health_check_path`에 GET을 보내 남긴 기록이며, `HEALTH_RETENTION_DAYS`(기본 7일)보다 오래된 것은 지워진다. 응답은 시간순(오래된 것부터), 기간 안에 1440건을 넘으면 최신 1440건. 없는 배포는 404.
+
+### `Health_Check_Read`
+
+```json
+{ "h_c_id": 9001, "d_id": 2, "ok": false, "status_code": 502, "latency_ms": 5000, "detail": "HTTP 502", "checked_at": "2026-11-09T03:12:00" }
+```
+
+`ok`: 상태코드 400 미만이면 정상 (`GET /health`와 같은 기준). `status_code`/`latency_ms`는 응답이 없으면 null. `detail`은 실패 사유 한 줄(`HTTP 503`, `시간 초과`, `연결 실패` 등, 마스킹 후 저장, 응답 헤더·본문은 넣지 않는다). `checked_at`은 UTC. 리다이렉트는 같은 호스트 안에서만 따라간다.
 
 ### `Deploy_Health`
 
@@ -347,6 +377,128 @@ Base URL: `http://localhost:8081` · 전부 JSON · 인증 없음(로컬 전용)
 서명이 안 맞거나(`GITHUB_WEBHOOK_SECRET` 미설정 포함) `push` 이벤트가 아니면 각각 401 또는 `{"matched": 0, "debounced": 0}`.
 
 폴링(`Watch_Service.services_watch_poll_loop`, `WATCH_POLL_SECONDS` 기본 3600초)은 API가 없다 - `main.py` 백그라운드 태스크로만 돈다.
+
+## Incidents (D1 - 장애 감지·원인 설명·자동 복구 기록, 조회만)
+
+서버가 만들고 닫는다. 사용자가 만들거나 지우는 API는 없다. 모든 시간은 UTC. 실제 AWS·SMTP·Expo 에는 아직 돌려 보지 않았다 (`docs/worklog/2026-11-10.md`). 설계는 `docs/app-web/04-api-spec.md` §3.
+
+| Method | Endpoint | 설명 | 성공 |
+|--------|----------|------|------|
+| GET | `/api/incidents?status=&d_id=&after=` | 인시던트 목록, 최신순 100건 | 200 `Incident_Read[]` |
+| GET | `/api/incidents/{i_id}` | 한 건과 복구 시도 이력 | 200 `Incident_Detail` |
+| GET | `/api/deploys/{d_id}/incidents?after=` | 한 배포의 인시던트들, 최신순 100건 | 200 `Incident_Read[]` |
+
+- `status`는 `open` `recovering` `resolved` `needs_action` 중 하나 (그 밖의 값은 400). `d_id`는 선택 필터. `after`는 `i_id` 커서(1 이상, 아니면 422) - 그보다 오래된(`i_id`가 작은) 것부터 최신순으로 100건.
+- `/api/deploys/{d_id}/incidents` 는 인시던트 라우터(`features/incidents/router.py`)가 받는다. 없는 배포(삭제된 배포 포함)는 404 `해당 id의 배포가 없습니다`. 없는 `i_id`는 404 `해당 id의 인시던트가 없습니다`.
+
+### 인시던트가 열리고 닫히는 때
+
+- 헬스 감시가 `running` 배포의 점검 결과를 저장한 직후 훅이 불린다. **마지막 성공 이후 연속 실패가 `HEALTH_FAILURE_THRESHOLD`(기본 3)번이 되면** `open` 인시던트를 만든다. 끝나지 않은(`open`·`recovering`·`needs_action`) 인시던트가 이미 있으면 새로 만들지 않는다 (배포마다 하나).
+- `kind`: 새 버전 배포 후 `NEW_RELEASE_WINDOW_SECONDS`(기본 900초) 안이고 되돌릴 이전 릴리스가 있으면 `bad_release`, 최근 실패가 모두 연결 거부면 `crash_loop`, 그 밖에는 `unhealthy`.
+- 원인 수집·설명·알림은 백그라운드 태스크가 한다 (모니터를 붙잡지 않는다). 서비스 상태 조회(`describe`, 읽기 전용)와 최근 헬스체크 5줄을 마스킹해 `evidence`(4000자 이하)에 저장하고, 규칙 표로 `explain`을 만든다. 규칙에 없으면 `source: "none"` 기본 안내. 처리 중 오류가 나면 `needs_action`으로 돌리고 마스킹한 오류를 `evidence` 끝에 덧붙인다.
+- 자동 복구가 꺼져 있으면(`auto_recover=false`) AWS 쓰기(update) 호출 없이 바로 `needs_action` (원인 수집용 읽기 전용 `describe` 는 그 전에 한 번 부른다). 켜져 있으면 같은 백그라운드 태스크 안에서 아래 "자동 복구"로 넘어간다.
+- **마지막 실패 이후 연속 정상이 `RECOVERY_VERIFY_OK_COUNT`(기본 3)번**이 되면 `open`·`needs_action` 인시던트를 `resolved`(+`resolved_at`)로 닫는다 (한 번 정상으로 닫지 않는다 - 자주 죽었다 살아나는 앱이 알림을 쏟아내지 않게). `recovering`은 감시가 닫지 않는다 (복구 쪽이 검증 뒤에 직접 닫는다).
+- 새 버전이 배포되어 새 릴리스가 쌓이면 그 배포의 `needs_action` 인시던트는 `resolved` 로 닫히고 `summary` 끝에 " (새 버전 배포로 종료)" 가 붙는다 (알림 없음). `open`·`recovering` 은 건드리지 않는다.
+- 헬스체크 주소가 배포의 `endpoint` 와 호스트가 다르면(예: `health_check_path` 가 `@evil.tld/`) 요청하지 않고 실패(`주소가 올바르지 않습니다`)로 기록한다.
+- 서버를 다시 켤 때 끊긴 인시던트를 정리한다: `recovering` 은 `needs_action`(진행 중이던 조치는 `failed`, 사유 "서버가 다시 시작되어 …"), 처리 중이던 `open` 은 배포가 `running` 이고 자동 복구가 켜져 있으면 처리를 다시 띄우고 아니면 `needs_action`.
+
+### 자동 복구 (서버 안 - API 아님)
+
+Hard rule 3 의 자동 조치는 두 가지뿐이다. **재시작**(서비스를 같은 이미지로 갱신)과 **이전 정상 이미지로 되돌리기**. 삭제·사양 변경·크기 조절은 하지 않는다. 호출하는 AWS 쓰기는 `update_express_gateway_service` 하나다.
+
+| 인시던트 `kind` | 순서 |
+|---|---|
+| `bad_release` | 되돌리기만. 되돌릴 대상이 없으면 AWS 호출 없이 `needs_action` |
+| 그 밖 (`unhealthy` `crash_loop`) | 재시작 -> 안 풀리면 되돌리기. 되돌릴 대상이 없으면 재시작만 해 보고 `needs_action` |
+
+- 되돌릴 대상: `deploy_releases` 의 `previous` 중 정상으로 확인된 적이 있고(`healthy_since`) 이미지가 남아 있으며 현재 이미지와 다른 것.
+- 매 조치 직전(그리고 AWS 갱신 호출 바로 앞에서 한 번 더) 코드가 다시 확인한다: 인시던트가 `open`·`recovering`, 배포가 `running`, `auto_recover` 켜짐, `service_arn` 있음, 한도 안. 하나라도 어긋나면 AWS 쓰기(update) 호출 없이 사유를 `evidence` 끝에 적고 `needs_action`.
+- 한도(설정): 인시던트당 `RECOVERY_MAX_ATTEMPTS_PER_INCIDENT`(2 - 재시작 1 + 되돌리기 1), 배포당 24시간에 `RECOVERY_DAILY_LIMIT`(6). 배포마다 잠금이 있어 같은 배포에 재시작·되돌리기가 겹쳐 돌지 않는다.
+- 조치마다 `recovery_actions` 한 줄(`running` -> `ok|failed`, 사유 마스킹): 갱신 호출 -> 완료 대기 -> `RECOVERY_WAIT_SECONDS`(120초) 기다린 뒤 15초마다 같은 주소를 점검해 `RECOVERY_VERIFY_SECONDS`(300초) 안에 `RECOVERY_VERIFY_OK_COUNT`(3)번 연속 정상이면 성공 -> 인시던트 `resolved` + `incident_recovered` 알림. 실패하면 다음 조치, 더 없으면 `needs_action` + `incident_needs_action` 알림.
+- 되돌리기가 성공하면 배포의 `image_uri`·`commit_sha` 가 이전 릴리스 값으로 바뀌고, 나쁜 릴리스는 `failed`, 이전 릴리스는 `current`, 나쁜 커밋은 `deploys.bad_commit_sha` 에 기억된다. 감시(폴링·웹훅)는 그 커밋을 다시 배포하지 않고 "새 커밋 있음" 표시만 한다. 더 새로운 커밋이 오면 막힘이 풀린다.
+- 되돌리기 중 AWS 는 이전 이미지가 됐는데 배포 기록 반영이 3번 모두 실패하면 조치를 `failed`(사유에 이 사실을 적는다) + `needs_action`. 사용자가 새로 배포하기 전까지 자동 복구는 다시 돌지 않는다. 복구 도중 사용자가 배포를 바꿨으면(상태·이미지가 달라짐) 기록을 덮어쓰지 않고 `needs_action`.
+- **미검증**: 같은 이미지로 갱신했을 때 Express Mode 가 실제로 작업을 다시 시작하는지, 이미지 갱신으로 되돌리기가 실제로 되는지는 실제 AWS 에서 확인하지 않았다 (`docs/aws-notes.md` "운영 복구"). 로그·이벤트 수집과 운영 에이전트(`docs/app-web` D12)는 아직 없다 - 원인 설명은 규칙 표(`source: "rule"|"none"`)뿐이다.
+
+### `Incident_Read` / `Incident_Detail`
+
+```json
+{
+  "i_id": 7, "d_id": 2, "kind": "unhealthy", "status": "open",
+  "summary": "앱이 오류로 응답하고 있습니다.",
+  "explain": {
+    "summary": "앱이 오류로 응답하고 있습니다.",
+    "cause": "앱이 떠 있지만 헬스체크 요청에 서버 오류(5xx)로 답하고 있습니다. …",
+    "fix_where": "AWS 콘솔 ECS 서비스의 로그 탭(CloudWatch Logs)에서 오류 메시지를 확인하고, 해당 코드가 있는 레포 파일을 고칩니다.",
+    "actions": ["로그에서 마지막 오류 줄을 확인합니다."],
+    "source": "rule"
+  },
+  "evidence": "서비스 상태: ACTIVE (-)\n최근 헬스체크:\n- 2026-11-09 03:12:00 실패 코드=503 …",
+  "detected_at": "2026-11-09T03:12:30", "resolved_at": null,
+  "created_at": "…", "updated_at": "…",
+  "actions": [
+    { "r_a_id": 11, "i_id": 7, "action": "restart", "d_r_id": null, "result": "failed", "detail": "…", "started_at": "…", "finished_at": "…" }
+  ]
+}
+```
+
+- `Incident_Read`는 `actions`만 없다. `explain`은 저장된 JSON을 푼 객체이고, 아직 만들어지기 전(또는 읽을 수 없으면)이면 null. `source`: `rule` `llm` `none`.
+- `fix_where`는 사용자 레포·설정·콘솔 위치를 가리키는 안내 문장이다. 마법사가 사용자 코드를 고치지는 않는다.
+- `explain`·`evidence`·`summary`는 저장 전에 마스킹한다 (토큰이 섞여 나가지 않는다).
+- `actions[]`는 `started_at` 순서 (자동 복구가 한 재시작·되돌리기 기록).
+
+## Notifications · Devices (D1 - 알림, 앱 안·메일·Expo 푸시)
+
+설계는 `docs/app-web/04-api-spec.md` §4·5·7. 로그인 전(1~2단계)에는 모든 줄의 `u_id` 가 null 이고 사용자 필터가 없다.
+
+| Method | Endpoint | 설명 | 성공 |
+|--------|----------|------|------|
+| GET | `/api/notifications?after=&unread=` | 앱 안 알림 목록(`channel=inapp`), 최신순 100건 | 200 `Notification_Read[]` |
+| GET | `/api/notifications/unread-count` | 읽지 않은 수 | 200 `{ "count": 2 }` |
+| POST | `/api/notifications/{n_id}/read` | 한 건 읽음 (이미 읽은 건 그대로) | 200 `Notification_Read` |
+| POST | `/api/notifications/read-all` | 모두 읽음 | 200 `{ "updated": 3 }` |
+| GET | `/api/notifications/settings` | 알림 설정 | 200 `Notification_Setting_Read` |
+| PATCH | `/api/notifications/settings` | 알림 설정 일부 수정 | 200 `Notification_Setting_Read` |
+| POST | `/api/devices` | 푸시 기기 등록 `{expo_token, platform}` (같은 토큰이면 갱신) | 201 `Device_Read` |
+| DELETE | `/api/devices/{p_d_id}` | 기기 등록 해제 | 200 `{ "message": "…" }` |
+
+- `after` 는 `n_id` 커서(1 이상, 아니면 422) - 그보다 오래된 것부터 최신순 100건. `unread=true` 면 읽지 않은 것만. 없는 `n_id`(또는 앱 안 알림이 아닌 줄)는 404 `해당 id의 알림이 없습니다`.
+- `expo_token` 은 `^(Exponent|Expo)PushToken\[.+\]$` 형식, `platform` 은 `ios` `android` (아니면 422). 없는 `p_d_id` 는 404 `해당 id의 기기가 없습니다`.
+- 설정은 한 줄뿐이고 처음 읽을 때 기본값(메일 켬, 푸시 켬, 여섯 종류 모두)으로 만든다. PATCH 본문에 모르는 항목이나 모르는 `kinds` 값이 있으면 422.
+
+### `Notification_Read`
+```json
+{ "n_id": 31, "d_id": 2, "i_id": 7, "kind": "incident_recovered", "channel": "inapp", "title": "서비스를 되돌려 복구했습니다",
+  "body": "무슨 일: …", "status": "sent", "read_at": null, "sent_at": "…", "created_at": "…" }
+```
+
+### `Device_Read` (토큰 전체는 응답에 없다 - 끝 6자리만)
+```json
+{ "p_d_id": 1, "platform": "ios", "token_tail": "yz789]", "created_at": "…", "last_seen_at": "…" }
+```
+
+### `Notification_Setting_Read` / PATCH 본문
+```json
+{ "notify_email": true, "notify_push": false, "kinds": ["incident_opened", "incident_recovered", "incident_needs_action", "deploy_succeeded", "deploy_failed", "new_commit"] }
+```
+PATCH 는 보낸 항목만 바꾼다 (`notify_email`·`notify_push` 는 true/false, `kinds` 는 위 여섯 가지 중 일부).
+
+### 알림이 만들어지는 때 (서버 안 - API 아님)
+
+| `kind` | 언제 |
+|--------|------|
+| `incident_opened` | 인시던트의 원인 설명이 저장된 직후 |
+| `incident_recovered` | 복구 시도가 있었던 인시던트가 정상으로 돌아왔을 때 |
+| `incident_needs_action` | 자동 복구로 풀지 못했거나 자동 복구가 꺼져 있어 사람이 봐야 할 때 |
+| `deploy_succeeded` | 파이프라인이 `running` 에 닿았을 때 |
+| `deploy_failed` | 파이프라인이 `failed` 로 멈췄을 때 |
+| `new_commit` | 자동 재배포가 꺼진 배포에서 새 커밋을 처음 봤을 때 (커밋마다 한 번) |
+
+- 종류가 설정에서 꺼져 있으면 아무것도 만들지 않는다. 켜져 있으면 `inapp` 줄을 항상 남기고, `notify_email` 이 켜져 있고 `MAIL_HOST`·`MAIL_TO` 가 있으면 `email` 줄, `notify_push` 가 켜져 있고 등록된 기기가 있으면 `push` 줄을 남긴다 (`queued` -> `sent|failed`, 실패 이유는 마스킹한 `error`). 메일 설정이 없으면 줄도 남기지 않는다.
+- 인시던트 알림은 (인시던트, `kind`, 채널)마다 한 줄 - 같은 알림을 다시 보내려 해도 건너뛴다. `new_commit` 은 (배포, 커밋, 채널)마다 한 줄.
+- 본문 순서: 무슨 일 -> 왜 -> 어디를 고치나(`explain.fix_where`) -> 자동으로 한 일과 결과(`recovery_actions`) -> 앱 링크(`APP_LINK_BASE` + `incidents/{i_id}` 또는 `deploys/{d_id}`). 제목·본문은 모두 `mask_text` 를 거친다.
+- 메일: STARTTLS + 로그인, 제목 `[배포 마법사] {서비스 이름} {제목}`, 제한 시간 `MAIL_TIMEOUT_SECONDS`(10초).
+- 푸시: `EXPO_PUSH_URL` 로 기기마다 `{to, title, body, data:{link}}` 한 건씩 100건 묶음 POST (제한 시간 `EXPO_PUSH_TIMEOUT_SECONDS`, 10초). 본문은 120자 이하 한 줄이고 로그 원문은 넣지 않는다. 응답 표의 `details.error == "DeviceNotRegistered"` 인 기기는 지운다.
+- 느린 SMTP·Expo 가 흐름을 붙잡지 않는다 - 헬스 감시 경로의 복구 알림과 파이프라인·폴링·웹훅의 알림은 백그라운드 태스크로 보낸다. 어떤 채널이 실패해도 인시던트 처리·파이프라인·폴링은 멈추지 않는다.
 
 ## 기타
 

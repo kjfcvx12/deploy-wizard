@@ -1,4 +1,5 @@
 import asyncio
+import logging
 import httpx
 from datetime import datetime, timezone
 
@@ -8,7 +9,7 @@ from fastapi import HTTPException, status
 from shared.masking import mask_text
 
 from features.deploys.crud import Deploy_Crud
-from features.deploys.scheme import Deploy_Create, Deploy_Health
+from features.deploys.scheme import Deploy_Create, Deploy_Health, Deploy_Settings_Update
 from features.deploys.pipeline import Deploy_Pipeline, PROGRESS_STATUSES
 
 from features.repos.services import Repo_Service
@@ -16,6 +17,13 @@ from features.repos.scheme import Repo_Remote
 from features.express.services import Express_Service
 from features.accounts.services import Aws_Account_Service, Github_Service
 from features.envvars.services import Env_Service
+from features.incidents.services import Incident_Service
+
+logger=logging.getLogger(__name__)
+
+
+# 자동 복구 중에 배포가 바뀌어 되돌린 결과를 기록하지 않을 때 (409 의 detail)
+DEPLOY_CHANGED_DETAIL="복구 중에 배포가 변경되어 기록을 반영하지 않았습니다"
 
 
 class Deploy_Service:
@@ -26,8 +34,11 @@ class Deploy_Service:
         deploys=await Deploy_Crud.crud_deploy_get_all(db)
         pending=await Env_Service.services_env_pending_many(db, [d.d_id for d in deploys])
 
+        open_ids=await Incident_Service.services_incident_open_ids(db, [d.d_id for d in deploys])
+
         for deploy in deploys:
             deploy.env_pending=pending[deploy.d_id]
+            deploy.open_incident_id=open_ids[deploy.d_id]
 
         return deploys
 
@@ -42,6 +53,7 @@ class Deploy_Service:
                                 detail='해당 id의 배포가 없습니다')
 
         deploy.env_pending=await Env_Service.services_env_pending_count(db, d_id)
+        deploy.open_incident_id=(await Incident_Service.services_incident_open_ids(db, [d_id]))[d_id]
         return deploy
 
 
@@ -306,6 +318,11 @@ class Deploy_Service:
 
                 if not dry_run:
                     await Deploy_Crud.crud_deploy_update(db, d_id, update_data)
+                    # 이미지를 지웠으니 직전 버전(previous)은 되돌릴 곳이 아니다 - current 는 같은 태그로 다시 빌드되니 두되,
+                    # 정상 확인 시각은 비운다 (다시 켠 뒤 첫 정상 점검에서 채워진다. 안 비우면 새 버전이 나온 뒤 이 죽은 이미지가 되돌리기 대상이 된다)
+                    if purge:
+                        await Deploy_Crud.crud_deploy_release_move_state(db, d_id, 'previous', 'old')
+                        await Deploy_Crud.crud_deploy_release_clear_healthy(db, d_id, 'current')
                     await db.commit()
 
             except Exception as e:
@@ -341,6 +358,10 @@ class Deploy_Service:
 
             await Deploy_Crud.crud_deploy_update(db, d_id, {"status": "deleted", "endpoint": None})
 
+            # 저장소를 지웠으면 직전 버전(previous)의 이미지도 없다 - 되돌리기 대상에서 뺀다
+            if repository_name:
+                await Deploy_Crud.crud_deploy_release_move_state(db, d_id, 'previous', 'old')
+
             await db.commit()
             return {'message':'배포 삭제', 'deleted': deleted}
 
@@ -372,3 +393,186 @@ class Deploy_Service:
 
         except Exception as e:
             return Deploy_Health(d_id=d_id, health='unhealthy', detail=str(e)[:200])
+
+
+    # 릴리스 기록 - 배포가 running 에 닿을 때 파이프라인이 부른다. 직전 previous 는 old, 지금 current 는 previous, 새 줄이 current (되돌리기 대상은 previous 하나뿐)
+    # 같은 커밋·이미지가 다시 running 이 된 것(멈춤 후 다시 켜기 등)은 새 버전이 아니라 쌓지 않는다
+    @staticmethod
+    async def services_deploy_release_record(db: AsyncSession, d_id: int):
+        try:
+            deploy=await Deploy_Crud.crud_deploy_get_by_d_id(db, d_id)
+
+            if not deploy or deploy.status == 'deleted':
+                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND,
+                                    detail='해당 id의 배포가 없습니다')
+
+            if not deploy.image_uri:
+                return None
+
+            current=await Deploy_Crud.crud_deploy_release_get_current(db, d_id)
+
+            if current and current.image_uri == deploy.image_uri and current.commit_sha == deploy.commit_sha:
+                return current
+
+            await Deploy_Crud.crud_deploy_release_move_state(db, d_id, 'previous', 'old')
+            await Deploy_Crud.crud_deploy_release_move_state(db, d_id, 'current', 'previous')
+            new_release=await Deploy_Crud.crud_deploy_release_create(db, d_id, deploy.commit_sha, deploy.image_uri, 'current')
+
+            await db.commit()
+            await db.refresh(new_release)
+
+            # 새 버전이 나왔으니 확인을 기다리던 지난 문제는 닫는다 (실패해도 릴리스 기록은 이미 끝났다)
+            try:
+                await Incident_Service.services_incident_close_needs_action(db, d_id)
+            except Exception as e:
+                logger.warning("지난 인시던트 종료 실패 d_id=%s : %s", d_id, mask_text(str(e))[:200])
+
+            return new_release
+
+        except HTTPException:
+            raise
+
+        except Exception as e:
+            await db.rollback()
+            raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                                detail=f"릴리스 기록 실패 :{mask_text(str(e))}")
+
+
+    # 현재 릴리스 조회 - 인시던트가 "새 버전 배포 직후인가"를 볼 때 쓴다. 없으면 None
+    @staticmethod
+    async def services_deploy_release_current(db: AsyncSession, d_id: int):
+        return await Deploy_Crud.crud_deploy_release_get_current(db, d_id)
+
+
+    # 되돌리기 대상 조회 - 직전 정상 버전(previous) 중 이미지 주소가 있는 가장 최근 것. 없으면 None
+    @staticmethod
+    async def services_deploy_release_previous(db: AsyncSession, d_id: int):
+        return await Deploy_Crud.crud_deploy_release_get_previous(db, d_id)
+
+
+    # 자동 되돌리기 대상 - 직전 버전(previous) 중 정상 확인된 적이 있고 이미지 주소가 있는 것만. 정상이었던 적 없는 버전은 되돌릴 곳이 아니다
+    @staticmethod
+    async def services_deploy_release_rollback_target(db: AsyncSession, d_id: int):
+        previous=await Deploy_Service.services_deploy_release_previous(db, d_id)
+
+        if previous is None or previous.healthy_since is None or not previous.image_uri:
+            return None
+
+        # 지금 떠 있는 이미지와 같은 버전으로는 되돌릴 이유가 없다
+        deploy=await Deploy_Crud.crud_deploy_get_by_d_id(db, d_id)
+        if deploy is not None:
+            await db.refresh(deploy)
+            if deploy.image_uri == previous.image_uri:
+                return None
+
+        return previous
+
+
+    # 되돌린 결과 반영 - 배포의 이미지·커밋을 이전 버전으로, 나쁜 릴리스는 failed, 이전 버전은 current. 나쁜 커밋은 bad_commit_sha 에 남겨 자동 재배포를 막는다
+    @staticmethod
+    async def services_deploy_apply_rollback(db: AsyncSession, d_id: int, release, expected_image_uri: str | None = None):
+        try:
+            if release is None or release.d_id != d_id or release.state != 'previous' or not release.image_uri:
+                raise HTTPException(status_code=status.HTTP_409_CONFLICT,
+                                    detail='되돌릴 수 있는 이전 버전이 아닙니다')
+
+            deploy=await Deploy_Crud.crud_deploy_get_by_d_id(db, d_id)
+
+            if not deploy or deploy.status == 'deleted':
+                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND,
+                                    detail='해당 id의 배포가 없습니다')
+
+            # expected_image_uri 가 있으면 복구하는 사이 배포가 바뀌지 않았을 때만 반영한다 (새 배포의 상태를 덮어쓰지 않게)
+            await db.refresh(deploy)
+            if expected_image_uri is not None and (deploy.status != 'running' or deploy.image_uri != expected_image_uri):
+                raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=DEPLOY_CHANGED_DETAIL)
+
+            current=await Deploy_Crud.crud_deploy_release_get_current(db, d_id)
+            bad_commit_sha=(current.commit_sha if current and current.commit_sha else None) or deploy.commit_sha
+
+            if current is not None:
+                await Deploy_Crud.crud_deploy_release_set_state(db, current.d_r_id, 'failed')
+            await Deploy_Crud.crud_deploy_release_set_state(db, release.d_r_id, 'current')
+
+            await Deploy_Crud.crud_deploy_update(db, d_id, {"image_uri": release.image_uri, "commit_sha": release.commit_sha,
+                                                            "bad_commit_sha": bad_commit_sha})
+            await db.commit()
+            await db.refresh(deploy)
+            return deploy
+
+        except HTTPException:
+            raise
+
+        except Exception as e:
+            await db.rollback()
+            raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                                detail=f"되돌리기 반영 실패 :{mask_text(str(e))}")
+
+
+    # 감시가 이 커밋을 자동으로 다시 배포해도 되는가 - 되돌리며 기억한 나쁜 커밋이면 막고(True), 그보다 새 커밋이 오면 막힘을 풀고 통과(False)
+    # deploy 는 방금 읽은 배포 행 (bad_commit_sha 가 없으면 DB 를 건드리지 않는다)
+    @staticmethod
+    async def services_deploy_watch_blocked(db: AsyncSession, deploy, commit_sha: str) -> bool:
+        bad_commit_sha=getattr(deploy, "bad_commit_sha", None)
+
+        if not bad_commit_sha:
+            return False
+
+        if commit_sha == bad_commit_sha:
+            return True
+
+        await Deploy_Crud.crud_deploy_update(db, deploy.d_id, {"bad_commit_sha": None})
+        await db.commit()
+        return False
+
+
+    # 배포별 설정 변경 - 보낸 항목만 바꾼다 (자동 재배포, 자동 복구)
+    @staticmethod
+    async def services_deploy_settings_update(db: AsyncSession, d_id: int, body: Deploy_Settings_Update):
+        try:
+            await Deploy_Service.services_deploy_get_d_id(db, d_id)
+
+            changes=body.model_dump(exclude_none=True)
+
+            if not changes:
+                raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST,
+                                    detail='변경할 설정을 하나 이상 보내 주세요')
+
+            await Deploy_Crud.crud_deploy_update(db, d_id, changes)
+            await db.commit()
+
+            return await Deploy_Service.services_deploy_get_d_id(db, d_id)
+
+        except HTTPException:
+            raise
+
+        except Exception as e:
+            await db.rollback()
+            raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                                detail=f"설정 변경 실패 :{mask_text(str(e))}")
+
+
+    # 헬스체크 결과 반영 - running 인 배포만. health_state·last_health_at 을 갱신하고, 정상이면 current 릴리스의 healthy_since 를 처음 한 번 채운다
+    # 이미 running 이 아니면 아무것도 쓰지 않고 False (커밋하지 않는다)
+    @staticmethod
+    async def services_deploy_health_apply(db: AsyncSession, d_id: int, ok: bool, checked_at: datetime) -> bool:
+        deploy=await Deploy_Crud.crud_deploy_get_by_d_id(db, d_id)
+
+        if not deploy:
+            return False
+
+        # 세션이 이미 들고 있는 객체는 점검하는 사이 바뀐 상태를 모른다 - DB 의 지금 값으로 새로 읽는다
+        await db.refresh(deploy)
+
+        if deploy.status != 'running':
+            return False
+
+        await Deploy_Crud.crud_deploy_update(db, d_id, {"health_state": 'healthy' if ok else 'unhealthy', "last_health_at": checked_at})
+
+        if ok:
+            current=await Deploy_Crud.crud_deploy_release_get_current(db, d_id)
+            if current and current.healthy_since is None:
+                await Deploy_Crud.crud_deploy_release_mark_healthy(db, current.d_r_id, checked_at)
+
+        await db.commit()
+        return True

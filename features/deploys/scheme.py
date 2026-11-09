@@ -1,4 +1,4 @@
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 from datetime import datetime
 from typing import Annotated
 import json
@@ -51,6 +51,12 @@ class Deploy_In_DB(Deploy_Base):
 
     # 값이 비어 있는 필수 환경변수 수 - DB 열이 아니라 서비스가 채운다
     env_pending: int = 0
+
+    # 운영 복구 (D1) - 자동 복구 스위치와 헬스 요약. open_incident_id 는 DB 열이 아니라 서비스가 채운다
+    auto_recover: bool = True
+    health_state: str = 'unknown'
+    last_health_at: datetime | None = None
+    open_incident_id: int | None = None
 
     created_at: datetime
     updated_at: datetime
@@ -115,3 +121,11 @@ class Deploy_Health(BaseModel):
     health: str
     status_code: int | None = None
     detail: str | None = None
+
+
+# 배포별 설정 변경 - 보낸 항목만 바꾼다 (모르는 항목은 거부)
+class Deploy_Settings_Update(BaseModel):
+    auto_redeploy: bool | None = None
+    auto_recover: bool | None = None
+
+    model_config = ConfigDict(extra='forbid')
