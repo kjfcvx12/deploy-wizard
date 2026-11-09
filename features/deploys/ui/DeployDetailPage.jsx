@@ -134,7 +134,7 @@ export default function DeployDetailPage() {
 
   return (
     <>
-      <p className="small"><Link to="/">← 목록</Link></p>
+      <p className="small back-link"><Link to="/">← 목록</Link></p>
 
       {deploy.status === 'needs_input' && (
         <div className="notice info" style={{ marginTop: 0, marginBottom: 16 }}>

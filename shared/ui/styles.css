@@ -72,7 +72,7 @@ code, pre { font-family: var(--mono); }
   background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius);
   padding: 20px; margin-bottom: 16px;
 }
-.card h2 { margin: 0 0 12px; font-size: 16px; }
+.card h2 { margin: 0 0 12px; font-size: 16px; overflow-wrap: anywhere; }
 .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
 .spread { justify-content: space-between; }
 
@@ -153,7 +153,7 @@ button.danger { color: var(--err); border-color: var(--err); }
 details > summary { cursor: pointer; font-weight: 600; }
 
 .issue-list { list-style: none; padding: 0; margin: 10px 0 0; }
-.issue-item { padding: 10px 4px; border-top: 1px solid var(--border); }
+.issue-item { padding: 10px 4px; border-top: 1px solid var(--border); overflow-wrap: anywhere; }
 .issue-item:first-of-type { border-top: 0; }
 
 /* 해설 카드 */
@@ -165,11 +165,11 @@ details > summary { cursor: pointer; font-weight: 600; }
 .endpoint { font-size: 17px; font-weight: 700; word-break: break-all; }
 
 dialog {
-  border: 1px solid var(--border); border-radius: var(--radius); padding: 22px; max-width: 440px;
+  border: 1px solid var(--border); border-radius: var(--radius); padding: 22px; max-width: min(440px, calc(100% - 32px));
   background: var(--surface); color: var(--text);
 }
 dialog::backdrop { background: rgba(0, 0, 0, .45); }
-dialog.wide { max-width: 720px; width: calc(100vw - 32px); }
+dialog.wide { max-width: 720px; width: calc(100% - 32px); }
 
 /* 연결 블록 - 상자 두 개(왼쪽 AWS, 오른쪽 GitHub). 상자 안에서 화살표로 계정을 넘겨 보고 [선택]한다 */
 .page-title { margin: 0; font-size: 20px; }
@@ -298,4 +298,13 @@ details.env-group > summary { font-size: 14px; }
   .account-boxes { grid-template-columns: 1fr; }
   .step { font-size: 0; }
   .step.now, .step.fail, .step.wait { font-size: 11px; }
+}
+
+/* 배포 상세 폰 폭 - 되돌아가기 링크·펼침 제목 터치 크기, 해설 카드 버튼 쌓기, 터미널 높이 */
+@media (max-width: 640px) {
+  .back-link { margin: 0 0 4px; }
+  .back-link a { display: inline-flex; align-items: center; min-height: 40px; padding-right: 12px; }
+  details > summary { padding: 10px 0; }
+  .explain > .row:last-child > button { flex: 1 1 100%; }
+  .terminal { height: min(360px, 60vh); }
 }
