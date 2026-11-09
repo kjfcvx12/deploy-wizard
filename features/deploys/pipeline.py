@@ -341,8 +341,22 @@ class Deploy_Pipeline:
         buffer.step='running'
         buffer.buffer_add(f"배포 완료 :{status.endpoint}", 'cmd')
         await Deploy_Pipeline.pipeline_update(d_id, status='running', endpoint=status.endpoint)
+        await Deploy_Pipeline.pipeline_release_record(d_id, buffer)
 
         await asyncio.to_thread(Build_Service.services_build_remove_local, [image_tag, image_uri])
+
+
+    # 릴리스 기록 - running 에 닿은 배포만. 기록이 실패해도 이미 떠 있는 배포를 실패로 만들지 않는다
+    @staticmethod
+    async def pipeline_release_record(d_id:int, buffer:Deploy_Log_Buffer) -> None:
+        # deploys/services.py 가 이 파일을 임포트하므로 순환을 피해 함수 안에서 임포트한다
+        from features.deploys.services import Deploy_Service
+
+        try:
+            async with AsyncSessionLocal() as db:
+                await Deploy_Service.services_deploy_release_record(db, d_id)
+        except Exception as e:
+            buffer.buffer_add(f"릴리스 기록을 건너뜁니다 ({type(e).__name__})", 'warn')
 
 
     # 실패 처리 - 멈추고, 원인을 한국어로 설명한다. 리소스는 지우지 않는다

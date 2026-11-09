@@ -16,6 +16,7 @@ from features.repos.scheme import Repo_Remote
 from features.express.services import Express_Service
 from features.accounts.services import Aws_Account_Service, Github_Service
 from features.envvars.services import Env_Service
+from features.incidents.services import Incident_Service
 
 
 class Deploy_Service:
@@ -26,8 +27,11 @@ class Deploy_Service:
         deploys=await Deploy_Crud.crud_deploy_get_all(db)
         pending=await Env_Service.services_env_pending_many(db, [d.d_id for d in deploys])
 
+        open_ids=await Incident_Service.services_incident_open_ids(db, [d.d_id for d in deploys])
+
         for deploy in deploys:
             deploy.env_pending=pending[deploy.d_id]
+            deploy.open_incident_id=open_ids[deploy.d_id]
 
         return deploys
 
@@ -42,6 +46,7 @@ class Deploy_Service:
                                 detail='해당 id의 배포가 없습니다')
 
         deploy.env_pending=await Env_Service.services_env_pending_count(db, d_id)
+        deploy.open_incident_id=(await Incident_Service.services_incident_open_ids(db, [d_id]))[d_id]
         return deploy
 
 
@@ -372,3 +377,45 @@ class Deploy_Service:
 
         except Exception as e:
             return Deploy_Health(d_id=d_id, health='unhealthy', detail=str(e)[:200])
+
+
+    # 릴리스 기록 - 배포가 running 에 닿을 때 파이프라인이 부른다. 직전 previous 는 old, 지금 current 는 previous, 새 줄이 current (되돌리기 대상은 previous 하나뿐)
+    # 같은 커밋·이미지가 다시 running 이 된 것(멈춤 후 다시 켜기 등)은 새 버전이 아니라 쌓지 않는다
+    @staticmethod
+    async def services_deploy_release_record(db: AsyncSession, d_id: int):
+        try:
+            deploy=await Deploy_Crud.crud_deploy_get_by_d_id(db, d_id)
+
+            if not deploy or deploy.status == 'deleted':
+                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND,
+                                    detail='해당 id의 배포가 없습니다')
+
+            if not deploy.image_uri:
+                return None
+
+            current=await Deploy_Crud.crud_deploy_release_get_current(db, d_id)
+
+            if current and current.image_uri == deploy.image_uri and current.commit_sha == deploy.commit_sha:
+                return current
+
+            await Deploy_Crud.crud_deploy_release_move_state(db, d_id, 'previous', 'old')
+            await Deploy_Crud.crud_deploy_release_move_state(db, d_id, 'current', 'previous')
+            new_release=await Deploy_Crud.crud_deploy_release_create(db, d_id, deploy.commit_sha, deploy.image_uri, 'current')
+
+            await db.commit()
+            await db.refresh(new_release)
+            return new_release
+
+        except HTTPException:
+            raise
+
+        except Exception as e:
+            await db.rollback()
+            raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                                detail=f"릴리스 기록 실패 :{mask_text(str(e))}")
+
+
+    # 되돌리기 대상 조회 - 직전 정상 버전(previous) 중 이미지 주소가 있는 가장 최근 것. 없으면 None
+    @staticmethod
+    async def services_deploy_release_previous(db: AsyncSession, d_id: int):
+        return await Deploy_Crud.crud_deploy_release_get_previous(db, d_id)

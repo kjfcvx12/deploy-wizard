@@ -81,12 +81,18 @@ Base URL: `http://localhost:8081` · 전부 JSON · 인증 없음(로컬 전용)
   "watch_commit_sha": null,
   "watch_checked_at": null,
   "env_pending": 0,
+  "auto_recover": true,
+  "health_state": "unknown",
+  "last_health_at": null,
+  "open_incident_id": null,
   "created_at": "2026-09-21T06:10:00",
   "updated_at": "2026-09-21T06:11:02"
 }
 ```
 
 `env_pending`: 값이 비어 있는 필수 환경변수 수 (`required`이고 `status`가 `detected`인 것). DB 열이 아니라 조회할 때마다 센다. 환경변수가 없으면 0. `needs_input` 배포를 화면에 알리는 용도다.
+
+`auto_recover`: 배포별 자동 복구 스위치 (기본 `true`). `health_state`: `healthy` `unhealthy` `unknown` — 마지막 헬스체크 요약이며 아직 한 번도 확인하지 않았으면 `unknown`. `last_health_at`: 마지막 헬스체크 시각(없으면 null). `open_incident_id`: 아직 처리 중(`open`·`recovering`)인 인시던트 번호, 없으면 null — DB 열이 아니라 조회할 때마다 채운다. 앞의 셋은 `deploys` 열이다 (옛 DB는 서버 시작 때 `ensure_columns`가 열을 더한다).
 
 ### 값 목록
 

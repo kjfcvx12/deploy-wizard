@@ -10,12 +10,15 @@ from fastapi.responses import FileResponse
 from pathlib import Path
 
 from shared.settings import settings
-from shared.database import Base, async_engine
+from shared.database import Base, async_engine, ensure_columns
 
 # 모델을 import 해야 create_all 이 테이블을 안다
 from features.deploys import models as deploy_models
 from features.accounts import models as account_models
 from features.envvars import models as envvar_models
+from features.health import models as health_models
+from features.incidents import models as incident_models
+from features.notifications import models as notification_models
 
 from features.advice import router as advice
 from features.deploys import router as deploys
@@ -33,6 +36,8 @@ DIST_DIR=Path(__file__).parent / "dist"
 async def lifespan(app:FastAPI):
     async with async_engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+        # 이미 있는 deploys 표에는 새 열이 안 생기므로 모자란 열만 더한다
+        await conn.run_sync(ensure_columns)
 
     # 서버가 꺼지면서 끊긴 배포를 실패로 돌려놓는다
     await Deploy_Pipeline.pipeline_recover()

@@ -51,6 +51,36 @@ class Settings(BaseSettings):
     # M6 - 짧은 시간에 연속 푸시되면 마지막 것만 배포 (기획서 03장)
     watch_debounce_seconds:int=Field(30, alias="WATCH_DEBOUNCE_SECONDS")
 
+    # D1 - 헬스 모니터 (running 배포의 endpoint + health_check_path 만 부른다)
+    health_monitor_enabled:bool=Field(True, alias="HEALTH_MONITOR_ENABLED")
+    health_interval_seconds:int=Field(60, alias="HEALTH_INTERVAL_SECONDS")
+    # 연속 실패가 이 횟수에 닿으면 인시던트를 연다
+    health_failure_threshold:int=Field(3, alias="HEALTH_FAILURE_THRESHOLD")
+    health_timeout_seconds:int=Field(10, alias="HEALTH_TIMEOUT_SECONDS")
+    health_retention_days:int=Field(7, alias="HEALTH_RETENTION_DAYS")
+
+    # D1 - 자동 복구 한도 (Hard rule 3: 재시작·직전 정상 이미지로 되돌리기 둘뿐)
+    recovery_max_attempts_per_incident:int=Field(2, alias="RECOVERY_MAX_ATTEMPTS_PER_INCIDENT")
+    recovery_daily_limit:int=Field(6, alias="RECOVERY_DAILY_LIMIT")
+    # 복구 동작 뒤 헬스를 다시 보기까지 기다리는 시간
+    recovery_wait_seconds:int=Field(120, alias="RECOVERY_WAIT_SECONDS")
+    # 이 시간 동안 정상이 이어지면 해결로 본다
+    recovery_verify_seconds:int=Field(300, alias="RECOVERY_VERIFY_SECONDS")
+    # 새 배포 직후 이 시간 안의 문제는 나쁜 릴리스를 의심한다
+    new_release_window_seconds:int=Field(900, alias="NEW_RELEASE_WINDOW_SECONDS")
+
+    # D1 - 알림 메일(SMTP). MAIL_HOST 또는 MAIL_TO 가 없으면 메일은 꺼진다
+    mail_host:str|None=Field(None, alias="MAIL_HOST")
+    mail_port:int=Field(587, alias="MAIL_PORT")
+    mail_user:str|None=Field(None, alias="MAIL_USER")
+    mail_password:str|None=Field(None, alias="MAIL_PASSWORD")
+    mail_from:str|None=Field(None, alias="MAIL_FROM")
+    mail_to:str|None=Field(None, alias="MAIL_TO")
+
+    # D1 - 앱 푸시(Expo)와 알림에 넣을 앱 링크
+    expo_push_url:str=Field("https://exp.host/--/api/v2/push/send", alias="EXPO_PUSH_URL")
+    app_link_base:str=Field("deploywizard://", alias="APP_LINK_BASE")
+
     class Config:
         env_file=".env"
         case_sensitive=True
