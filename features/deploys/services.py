@@ -1,4 +1,5 @@
 import asyncio
+import logging
 import httpx
 from datetime import datetime, timezone
 
@@ -17,6 +18,8 @@ from features.express.services import Express_Service
 from features.accounts.services import Aws_Account_Service, Github_Service
 from features.envvars.services import Env_Service
 from features.incidents.services import Incident_Service
+
+logger=logging.getLogger(__name__)
 
 
 # 자동 복구 중에 배포가 바뀌어 되돌린 결과를 기록하지 않을 때 (409 의 detail)
@@ -315,6 +318,9 @@ class Deploy_Service:
 
                 if not dry_run:
                     await Deploy_Crud.crud_deploy_update(db, d_id, update_data)
+                    # 이미지를 지웠으니 직전 버전(previous)은 되돌릴 곳이 아니다 - current 는 같은 태그로 다시 빌드되니 둔다
+                    if purge:
+                        await Deploy_Crud.crud_deploy_release_move_state(db, d_id, 'previous', 'old')
                     await db.commit()
 
             except Exception as e:
@@ -349,6 +355,10 @@ class Deploy_Service:
                     deleted.append(repository_name)
 
             await Deploy_Crud.crud_deploy_update(db, d_id, {"status": "deleted", "endpoint": None})
+
+            # 저장소를 지웠으면 직전 버전(previous)의 이미지도 없다 - 되돌리기 대상에서 뺀다
+            if repository_name:
+                await Deploy_Crud.crud_deploy_release_move_state(db, d_id, 'previous', 'old')
 
             await db.commit()
             return {'message':'배포 삭제', 'deleted': deleted}
@@ -408,6 +418,13 @@ class Deploy_Service:
 
             await db.commit()
             await db.refresh(new_release)
+
+            # 새 버전이 나왔으니 확인을 기다리던 지난 문제는 닫는다 (실패해도 릴리스 기록은 이미 끝났다)
+            try:
+                await Incident_Service.services_incident_close_needs_action(db, d_id)
+            except Exception as e:
+                logger.warning("지난 인시던트 종료 실패 d_id=%s : %s", d_id, mask_text(str(e))[:200])
+
             return new_release
 
         except HTTPException:

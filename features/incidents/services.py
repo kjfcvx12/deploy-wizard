@@ -9,6 +9,7 @@ from fastapi import HTTPException, status
 from shared.settings import settings
 from shared.database import AsyncSessionLocal
 from shared.masking import mask_text
+from shared.keyed_lock import keyed_lock
 
 from features.incidents.crud import Incident_Crud
 from features.incidents.models import Incident
@@ -23,19 +24,22 @@ logger=logging.getLogger(__name__)
 
 # 백그라운드 처리 태스크 - 참조를 쥐고 있어야 중간에 사라지지 않고, 서버를 끌 때·테스트에서 기다리거나 취소할 수 있다
 INCIDENT_TASKS:set[asyncio.Task]=set()
-# 배포별 잠금 - 같은 배포에 인시던트가 둘 열리지 않게 (이벤트 루프마다 따로 둔다)
-INCIDENT_LOCKS:dict[tuple[int, int], asyncio.Lock]={}
+# 배포별 잠금 - 같은 배포에 인시던트가 둘 열리지 않게 (이벤트 루프마다 따로 두고, 다 쓰면 지운다)
+INCIDENT_LOCKS:dict[tuple[int, int], list]={}
 
 EVIDENCE_MAX=4000
 EVIDENCE_HEALTH_LINES=5
 SUMMARY_MAX=255
+DESCRIBE_TIMEOUT_SECONDS=25
 
 SUMMARY_PENDING="문제를 확인하고 있습니다"
+SUMMARY_NEW_RELEASE_SUFFIX=" (새 버전 배포로 종료)"
 SUMMARY_ERROR="자동 처리 중 오류가 나 확인이 필요합니다"
 
 CONNECTION_PATTERN=re.compile(r"연결 실패|connection (?:refused|reset)|ConnectError|ECONN(?:REFUSED|RESET)", re.I)
 
 # 원인 설명 규칙 표 - 서비스 조회 결과(evidence) 규칙을 먼저, 그다음 가장 최근 실패 사유(detail)부터 본다
+# 대상 "evidence_release" 는 새 버전 배포 직후(kind=bad_release)일 때만 쓴다 - 아니면 오래된 배포 실패 기록이 지금의 구체적 사유(거부·시간 초과·5xx·404)를 가리지 않게 건너뛴다
 # (대상, 패턴, 요약, 원인, 고칠 곳, 조치) - 고칠 곳은 사용자의 레포·설정·콘솔 위치를 가리키는 안내일 뿐 마법사가 코드를 고치지 않는다
 EXPLAIN_RULES=[
     ("evidence", re.compile(r"^서비스 상태: (?:INACTIVE|DRAINING)", re.M),
@@ -44,7 +48,7 @@ EXPLAIN_RULES=[
      "AWS 콘솔 ECS > 클러스터 > 서비스 > 이벤트 탭에서 서비스가 내려간 이유를 확인합니다.",
      ["직접 멈추거나 지운 적이 없다면 이벤트 탭의 메시지를 확인합니다.", "문제가 풀렸다면 [다시 켜기] 또는 [다시 배포]를 누릅니다."]),
 
-    ("evidence", re.compile(r"^배포 상태: (?:ROLLBACK_\w+|STOPPED|FAILED)", re.M),
+    ("evidence_release", re.compile(r"^배포 상태: (?:ROLLBACK_\w+|STOPPED|FAILED)", re.M),
      "최근 배포가 실패했거나 되돌려졌습니다.",
      "ECS가 새 작업을 띄우다 실패해 배포를 중단하거나 이전 상태로 되돌렸습니다. 앱이 시작하지 못하는 경우가 가장 흔합니다.",
      "AWS 콘솔 ECS > 서비스 > 배포·이벤트 탭의 사유와, 레포의 시작 명령·환경변수 설정을 확인합니다.",
@@ -138,9 +142,11 @@ class Incident_Service:
             if session is not None:
                 try:
                     describe=describer or Express_Service.services_express_describe
-                    express=await asyncio.to_thread(describe, session, deploy.service_arn)
+                    express=await asyncio.wait_for(asyncio.to_thread(describe, session, deploy.service_arn), DESCRIBE_TIMEOUT_SECONDS)
                     lines.append(f"서비스 상태: {express.status_code} ({express.status_reason or '-'})")
                     lines.append(f"배포 상태: {express.deployment_status or '-'} / 단계 {express.lifecycle_stage or '-'} / 사유 {express.deployment_reason or '-'}")
+                except asyncio.TimeoutError:
+                    lines.append("서비스 상태를 확인하지 못했습니다 (시간 초과)")
                 except Exception as e:
                     lines.append(f"서비스 상태: 확인하지 못함 ({type(e).__name__}: {str(e)[:200]})")
 
@@ -162,6 +168,9 @@ class Incident_Service:
 
         for target, pattern, summary, cause, fix_where, actions in EXPLAIN_RULES:
             if target == "evidence" and pattern.search(evidence):
+                found=(summary, cause, fix_where, actions)
+                break
+            if target == "evidence_release" and kind == 'bad_release' and pattern.search(evidence):
                 found=(summary, cause, fix_where, actions)
                 break
 
@@ -228,7 +237,7 @@ class Incident_Service:
 
 
     # 헬스체크 결과를 받아 인시던트를 열고 닫는다 - 모니터의 세션 안에서 DB 만 쓰고 바로 돌아온다 (AWS 조회·설명은 백그라운드 태스크가 한다)
-    # 연속 실패가 기준(기본 3)에 닿고 끝나지 않은 인시던트가 없으면 열고, 정상으로 돌아오면 open|needs_action 을 닫는다
+    # 연속 실패가 기준(기본 3)에 닿고 끝나지 않은 인시던트가 없으면 열고, 연속 정상이 기준(기본 3)에 닿으면 open|needs_action 을 닫는다
     # spawner 는 시험용 - i_id 를 받아 처리를 시작하는 함수 (기본은 백그라운드 태스크). notify_spawner 는 해제 알림용 (i_id, kind)
     @staticmethod
     async def services_incident_on_result(db:AsyncSession, d_id:int, ok:bool, now:datetime|None=None, spawner=None, notify_spawner=None) -> Incident | None:
@@ -248,16 +257,21 @@ class Incident_Service:
                 return None
 
             if ok:
+                # 한 번 정상이라고 닫지 않는다 - 연속 정상이 기준(RECOVERY_VERIFY_OK_COUNT)에 닿아야 닫는다 (자주 죽었다 살아나는 앱이 알림을 쏟아내지 않게)
+                if await Incident_Crud.crud_incident_get_unresolved_by_d_id(db, d_id) is None:
+                    return None
+
+                if await Health_Service.services_health_consecutive_successes(db, d_id) < settings.recovery_verify_ok_count:
+                    return None
+
                 return await Incident_Service.services_incident_resolve(db, d_id, now, notify_spawner)
 
             failures=await Health_Service.services_health_consecutive_failures(db, d_id)
             if failures < settings.health_failure_threshold:
                 return None
 
-            lock=INCIDENT_LOCKS.setdefault((id(asyncio.get_running_loop()), d_id), asyncio.Lock())
-
             # 확인과 생성을 한 덩어리로 - 동시에 들어와도 인시던트는 하나만 열린다
-            async with lock:
+            async with keyed_lock(INCIDENT_LOCKS, (id(asyncio.get_running_loop()), d_id)):
                 if await Incident_Crud.crud_incident_get_unresolved_by_d_id(db, d_id):
                     return None
 
@@ -424,6 +438,28 @@ class Incident_Service:
                 logger.warning("복구 알림을 띄우지 못했습니다 i_id=%s : %s", i_id, mask_text(str(e))[:200])
 
         return incident
+
+
+    # 새 버전이 배포되면 사용자의 확인을 기다리던(needs_action) 인시던트를 닫는다 - 이전 버전의 문제라 새 버전에 대한 것이 아니다. open|recovering 은 처리 중이니 건드리지 않는다
+    # 닫은 수를 돌려준다. 알림은 보내지 않는다 (사용자가 방금 새로 배포했다)
+    @staticmethod
+    async def services_incident_close_needs_action(db:AsyncSession, d_id:int) -> int:
+        try:
+            now=Incident_Service.services_incident_now()
+            closed=0
+
+            for incident in await Incident_Crud.crud_incident_list(db, 'needs_action', d_id, None, 100):
+                summary=(incident.summary or "")[:SUMMARY_MAX - len(SUMMARY_NEW_RELEASE_SUFFIX)] + SUMMARY_NEW_RELEASE_SUFFIX
+                closed+=await Incident_Crud.crud_incident_transition(db, incident.i_id, ('needs_action',), 'resolved',
+                                                                     {"resolved_at": now, "summary": summary})
+
+            await db.commit()
+            return closed
+
+        except Exception as e:
+            await db.rollback()
+            raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                                detail=f"인시던트 종료 실패 :{mask_text(str(e))}")
 
 
     # 인시던트 목록 - 최신 100건, after(i_id)보다 오래된 것부터

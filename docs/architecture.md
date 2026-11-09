@@ -25,7 +25,7 @@
 │   ├── accounts/               ← scheme.py  crud.py  services.py  router.py  cloudformation/  ui/  (M6, 진행 중)
 │   ├── watches/                ← services.py 만 (DB 없음, 상태는 Deploy에)  (M6, 진행 중 - 폴링만 완료)
 │   ├── health/                 ← models.py  scheme.py  crud.py  services.py  (D1 - 1분마다 헬스체크 이력, 감시 루프)
-│   ├── incidents/              ← models.py  scheme.py  crud.py  services.py  recovery.py  router.py  (D1 - 인시던트, 규칙 표 설명, 자동 복구)
+│   ├── incidents/              ← models.py  scheme.py  crud.py  services.py  recovery.py  recovery_state.py  router.py  (D1 - 인시던트, 규칙 표 설명, 자동 복구; recovery_state 는 기록 반영 재시도·서버 재개)
 │   └── notifications/          ← models.py  scheme.py  crud.py  services.py  compose.py  dispatch.py  inbox.py  router.py  (D1 - 앱 안·메일·푸시 알림, 기기, 설정)
 │
 ├── shared/                     ← 모든 기능이 쓰는 것

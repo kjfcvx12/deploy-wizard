@@ -150,7 +150,7 @@ service.activeConfigurations[].ingressPaths[]  { accessType: PUBLIC|PRIVATE, end
 자동 복구(`features/incidents/recovery.py`)가 쓰는 AWS 호출은 위 "API" 표의 `update_express_gateway_service` 하나뿐이다 (`services_express_update`, 대기는 `services_express_wait`). 다른 호출은 쓰지 않는다 — 삭제·사양 변경·크기 조절·로그/이벤트 수집 없음.
 
 - **재시작** = 지금 `image_uri` 그대로 `update` 호출. Express Mode가 이미지가 같을 때 작업(Task)을 실제로 다시 띄우는지는 **미검증**이다. 안 띄운다면 재시작은 효과가 없고, 검증(정상 3연속)에 실패해 곧바로 되돌리기로 넘어간다.
-- **되돌리기** = 직전 정상 릴리스(`deploy_releases.state='previous'`, `healthy_since`가 있고 `image_uri`가 있는 것)의 이미지로 `update` 호출. 그 이미지가 ECR에 **아직 있어야** 한다. `scripts/session_end.py`는 ECR 이미지를 지우므로 그 뒤에는 되돌릴 수 없고, `update`가 실패하면 시도는 `failed`, 인시던트는 `needs_action`이 된다.
+- **되돌리기** = 직전 정상 릴리스(`deploy_releases.state='previous'`, `healthy_since`가 있고 `image_uri`가 있는 것)의 이미지로 `update` 호출. 그 이미지가 ECR에 **아직 있어야** 한다. `scripts/session_end.py`(`services_deploy_session_end`)와 배포 삭제는 저장소를 지우므로, 그때 그 배포의 `previous` 릴리스를 `old`로 바꿔 되돌리기 대상에서 뺀다 (`current` 행은 다시 켤 때 같은 태그로 다시 빌드되니 둔다). 없는 이미지로 `update`를 부르면 Express `update`는 이미지 문자열을 **그대로 받아들이고** 실패는 작업 시작 시점(서킷 브레이커·`services_express_wait` 시간 초과)에야 드러날 가능성이 크다 — **미검증**. 그 경우 시도는 `failed`, 인시던트는 `needs_action`이 된다.
 - 인자는 파이프라인 재배포와 같다: `port`, `health_check_path`, 환경변수(`environment`)를 매번 같이 보낸다 (`primaryContainer`를 통째로 바꾸기 때문).
 - 자동 재시작·되돌리기는 **지금 저장된 환경변수 값**을 보낸다. 저장만 하고 아직 배포하지 않은 환경변수 수정이 재시작과 함께 반영될 수 있다 (감수한 위험).
 - 되돌리기는 릴리스마다 저장하지 않는 **지금의 포트·`health_check_path`**를 그대로 쓴다. 그 사이 포트를 바꿨다면 이전 이미지가 맞지 않아 검증이 실패하고 `needs_action`이 된다.

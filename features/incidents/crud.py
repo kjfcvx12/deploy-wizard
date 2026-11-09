@@ -136,11 +136,14 @@ class Incident_Crud:
         return result.rowcount
 
 
-    # 인시던트의 멈춘(running) 복구 시도를 실패로 정리 - 서버가 꺼져 끊긴 것
+    # 인시던트의 멈춘(running) 복구 시도를 실패로 정리 - 서버가 꺼져 끊긴 것. action 을 주면 그 종류만
     @staticmethod
-    async def crud_incident_action_fail_running(db:AsyncSession, i_id:int, detail:str, finished_at:datetime) -> int:
-        result=await db.execute(update(Recovery_Action)
-                                .where(Recovery_Action.i_id == i_id, Recovery_Action.result == 'running')
+    async def crud_incident_action_fail_running(db:AsyncSession, i_id:int, detail:str, finished_at:datetime, action:str|None=None) -> int:
+        query=update(Recovery_Action).where(Recovery_Action.i_id == i_id, Recovery_Action.result == 'running')
+        if action is not None:
+            query=query.where(Recovery_Action.action == action)
+
+        result=await db.execute(query
                                 .values(result='failed', detail=detail, finished_at=finished_at)
                                 .execution_options(synchronize_session=False))
         await db.flush()

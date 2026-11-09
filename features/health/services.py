@@ -55,6 +55,17 @@ class Health_Service:
         return endpoint.rstrip("/") + (health_check_path or "/")
 
 
+    # 안전한 점검 주소 - 위 주소의 호스트가 endpoint 의 호스트와 다르면 (health_check_path 가 "@evil.tld/" 처럼 호스트를 바꾸는 경우) None
+    @staticmethod
+    def services_health_safe_url(endpoint:str, health_check_path:str|None) -> str | None:
+        url=Health_Service.services_health_url(endpoint, health_check_path)
+
+        try:
+            return url if urlsplit(url).netloc == urlsplit(endpoint).netloc else None
+        except ValueError:
+            return None
+
+
     # 기본 점검기 - 주소에 GET. 상태코드 400 미만이면 정상 (services_deploy_health 와 같은 기준)
     # 리다이렉트는 같은 호스트 안에서만 따라간다 - 다른 호스트로 가거나 횟수 제한을 넘으면 정상으로 치지 않는다
     @staticmethod
@@ -113,6 +124,12 @@ class Health_Service:
                 return False, None, None, f"점검 오류 ({type(e).__name__})"
 
 
+    # 올바르지 않은 주소의 점검 결과 - 아무것도 부르지 않는다
+    @staticmethod
+    async def services_health_invalid_url() -> tuple[bool, int | None, int | None, str | None]:
+        return False, None, None, "주소가 올바르지 않습니다"
+
+
     # running 이면서 주소가 있는 배포를 한 번씩 점검 - 결과 저장, health_state 갱신, 인시던트 훅 호출. 점검한 d_id 목록을 돌려준다
     @staticmethod
     async def services_health_check_once(db:AsyncSession, now:datetime|None=None, checker=None) -> list[int]:
@@ -120,13 +137,15 @@ class Health_Service:
         checker=checker or Health_Service.services_health_default_checker
 
         deploys=await Deploy_Service.services_deploy_get_pollable(db)
-        targets=[(d.d_id, Health_Service.services_health_url(d.endpoint, d.health_check_path)) for d in deploys if d.endpoint]
+        targets=[(d.d_id, Health_Service.services_health_safe_url(d.endpoint, d.health_check_path)) for d in deploys if d.endpoint]
 
         if not targets:
             return []
 
         semaphore=asyncio.Semaphore(HEALTH_CONCURRENCY)
-        results=await asyncio.gather(*[Health_Service.services_health_check_one(url, checker, semaphore) for _, url in targets])
+        # 주소가 올바르지 않으면 부르지 않고 실패로 기록한다
+        results=await asyncio.gather(*[Health_Service.services_health_check_one(url, checker, semaphore) if url is not None
+                                       else Health_Service.services_health_invalid_url() for _, url in targets])
 
         checked=[]
         for (d_id, _), (ok, status_code, latency_ms, detail) in zip(targets, results):
@@ -158,6 +177,12 @@ class Health_Service:
     @staticmethod
     async def services_health_consecutive_failures(db:AsyncSession, d_id:int) -> int:
         return await Health_Crud.crud_health_count_failures_after_last_ok(db, d_id)
+
+
+    # 마지막 실패 이후 연속 성공 횟수 (인시던트를 닫을지 판단할 때 쓴다)
+    @staticmethod
+    async def services_health_consecutive_successes(db:AsyncSession, d_id:int) -> int:
+        return await Health_Crud.crud_health_count_successes_after_last_failure(db, d_id)
 
 
     # 헬스체크 이력 - 최근 hours 시간, 최신 1440건을 시간순(오래된 것부터)으로

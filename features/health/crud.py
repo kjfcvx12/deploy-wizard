@@ -49,6 +49,25 @@ class Health_Crud:
         return result.scalar() or 0
 
 
+    # 마지막 실패 이후 연속 성공 수 - 순서 기준은 연속 실패 수와 같다 (checked_at, h_c_id). 실패가 한 번도 없으면 성공을 전부 센다
+    @staticmethod
+    async def crud_health_count_successes_after_last_failure(db:AsyncSession, d_id:int) -> int:
+        last_fail=await db.execute(select(Health_Check.h_c_id)
+                                   .where(Health_Check.d_id == d_id, Health_Check.ok.is_(False))
+                                   .order_by(Health_Check.checked_at.desc(), Health_Check.h_c_id.desc())
+                                   .limit(1))
+        last_fail_id=last_fail.scalar()
+
+        query=select(func.count(Health_Check.h_c_id)).where(Health_Check.d_id == d_id, Health_Check.ok.is_(True))
+        if last_fail_id is not None:
+            fail_at=select(Health_Check.checked_at).where(Health_Check.h_c_id == last_fail_id).scalar_subquery()
+            query=query.where(or_(Health_Check.checked_at > fail_at,
+                                  and_(Health_Check.checked_at == fail_at, Health_Check.h_c_id > last_fail_id)))
+
+        result=await db.execute(query)
+        return result.scalar() or 0
+
+
     # 기간 안의 결과 - 최신 size 건을 최신순으로 (서비스가 시간순으로 뒤집는다)
     @staticmethod
     async def crud_health_get_since(db:AsyncSession, d_id:int, since:datetime, size:int=1440) -> list[Health_Check]:

@@ -187,9 +187,9 @@ async def test_flow_restart_fails_then_rollback_resolves_and_watch_skips_bad_com
     assert len(await all_incidents()) == 1
 
 
-# 시나리오 B - 자동 복구가 꺼져 있으면 AWS 갱신 없이 needs_action 으로 알린다
+# 시나리오 B - 자동 복구가 꺼져 있으면 AWS 쓰기(update) 호출 없이 needs_action 으로 알린다 (읽기 전용 describe 는 원인 수집 때문에 한 번 불린다)
 @pytest.mark.asyncio
-async def test_flow_auto_recover_off_goes_to_needs_action_without_aws_calls(db, flow):
+async def test_flow_auto_recover_off_goes_to_needs_action_without_aws_update_calls(db, flow):
     d_id=await setup_deploy(db, auto_recover=False)
 
     await run_failures(db, 3)
@@ -202,6 +202,7 @@ async def test_flow_auto_recover_off_goes_to_needs_action_without_aws_calls(db, 
     assert flow.fakes.updates == []
     assert flow.fakes.waits == []
     assert flow.fakes.sleeps == []
+    assert flow.fakes.checked == []
     assert await actions_of(incidents[0].i_id) == []
 
     rows=await notification_rows()

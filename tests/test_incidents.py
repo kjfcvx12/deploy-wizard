@@ -70,6 +70,14 @@ async def record(db, d_id, ok, detail=None, status_code=None, spawner=None, step
     return await Incident_Service.services_incident_on_result(db, d_id, ok, now=NOW + timedelta(minutes=step[0]), spawner=spawner)
 
 
+# 정상 n 번을 연달아 남긴다 - 마지막 호출의 결과를 돌려준다 (인시던트는 연속 정상이 기준에 닿아야 닫힌다)
+async def record_ok(db, d_id, times=None, **kwargs):
+    result=None
+    for _ in range(times or settings.recovery_verify_ok_count):
+        result=await record(db, d_id, True, **kwargs)
+    return result
+
+
 async def incident_count(db, d_id) -> int:
     return (await db.execute(select(func.count(Incident.i_id)).where(Incident.d_id == d_id))).scalar()
 
@@ -292,11 +300,24 @@ def test_incident_explain_connection_refused_points_at_port():
 
 
 def test_incident_explain_service_not_running_from_describe():
-    for evidence in ("서비스 상태: INACTIVE (x)\n최근 헬스체크:", "서비스 상태: DRAINING (-)\n최근 헬스체크:", "서비스 상태: ACTIVE (-)\n배포 상태: ROLLBACK_SUCCESSFUL / 단계 - / 사유 x"):
+    for evidence in ("서비스 상태: INACTIVE (x)\n최근 헬스체크:", "서비스 상태: DRAINING (-)\n최근 헬스체크:"):
         explain=Incident_Service.services_incident_explain('unhealthy', evidence, ["HTTP 404"])
 
         assert explain.source == 'rule'
-        assert explain.summary in ("서비스가 실행 중이 아닙니다.", "최근 배포가 실패했거나 되돌려졌습니다.")
+        assert explain.summary == "서비스가 실행 중이 아닙니다."
+
+
+# 배포 실패·롤백 기록은 새 버전 직후(bad_release)에만 근거로 쓴다 - 아니면 구체적인 실패 사유 규칙이 이긴다
+def test_incident_explain_release_failure_rule_applies_only_to_bad_release():
+    evidence="서비스 상태: ACTIVE (-)\n배포 상태: ROLLBACK_SUCCESSFUL / 단계 - / 사유 x"
+
+    bad=Incident_Service.services_incident_explain('bad_release', evidence, ["HTTP 404"])
+    other=Incident_Service.services_incident_explain('unhealthy', evidence, ["HTTP 404"])
+    refused=Incident_Service.services_incident_explain('crash_loop', evidence, ["연결 실패"])
+
+    assert bad.summary == "최근 배포가 실패했거나 되돌려졌습니다."
+    assert other.summary == "헬스체크 경로에서 페이지를 찾지 못합니다."
+    assert refused.summary == "앱이 요청을 받지 못하고 있습니다."
 
 
 def test_incident_explain_unknown_gets_generic_guidance_with_source_none():
@@ -501,7 +522,7 @@ async def test_incident_process_notification_failure_does_not_stop_recovery(db, 
 async def test_incident_process_skips_an_already_resolved_incident(db, notified, recovered):
     d_id=await make_deploy(db)
     incident=await open_incident_via_hook(db, d_id)
-    await record(db, d_id, True)
+    await record_ok(db, d_id)
 
     await Incident_Service.services_incident_process(incident.i_id)
 
@@ -513,7 +534,7 @@ async def test_incident_healthy_again_resolves_open_and_needs_action(db, notifie
     d_id=await make_deploy(db, auto_recover=False)
     incident=await open_incident_via_hook(db, d_id)
 
-    resolved=await record(db, d_id, True)
+    resolved=await record_ok(db, d_id)
 
     await db.refresh(incident)
     assert resolved.i_id == incident.i_id
@@ -525,7 +546,7 @@ async def test_incident_healthy_again_resolves_open_and_needs_action(db, notifie
     await Incident_Service.services_incident_needs_action(db, second.i_id)
     notified.clear()
 
-    await record(db, other, True)
+    await record_ok(db, other)
 
     await db.refresh(second)
     assert second.status == 'resolved'
@@ -541,7 +562,7 @@ async def test_incident_resolve_notifies_recovered_only_when_recovery_was_tried(
     await db.commit()
     notified.clear()
 
-    await record(db, d_id, True)
+    await record_ok(db, d_id)
     # 모니터 경로의 해제 알림은 백그라운드 태스크로 나간다
     await Incident_Service.services_incident_tasks_wait()
 
@@ -555,7 +576,7 @@ async def test_incident_monitor_does_not_close_a_recovering_incident(db, notifie
     incident.status='recovering'
     await db.commit()
 
-    assert await record(db, d_id, True) is None
+    assert await record_ok(db, d_id, 5) is None
 
     await db.refresh(incident)
     assert incident.status == 'recovering'
@@ -566,9 +587,69 @@ async def test_incident_monitor_does_not_close_a_recovering_incident(db, notifie
 async def test_incident_new_incident_after_the_old_one_resolved(db):
     d_id=await make_deploy(db)
     first=await open_incident_via_hook(db, d_id)
-    await record(db, d_id, True)
+    await record_ok(db, d_id)
 
     second=await open_incident_via_hook(db, d_id)
 
     assert second.i_id != first.i_id
     assert await incident_count(db, d_id) == 2
+
+
+# 자주 죽었다 살아나는 앱 - F,F,F 로 열린 인시던트는 정상 한두 번으로 닫히지 않아 새 인시던트도 알림도 늘지 않는다
+@pytest.mark.asyncio
+async def test_incident_flapping_app_keeps_the_same_incident(db, notified):
+    d_id=await make_deploy(db, auto_recover=False)
+    incident=await open_incident_via_hook(db, d_id)
+
+    assert await record(db, d_id, True) is None
+    assert await record(db, d_id, True) is None
+    assert await record(db, d_id, False, "HTTP 503") is None
+
+    await db.refresh(incident)
+    assert incident.status == 'open' and incident.resolved_at is None
+    assert await incident_count(db, d_id) == 1
+    assert notified == []
+
+    # 다시 F,F 로 3번 연속 실패가 되어도 끝나지 않은 인시던트가 있으니 새로 열리지 않는다
+    assert await record(db, d_id, False, "HTTP 503") is None
+    assert await record(db, d_id, False, "HTTP 503") is None
+    assert await incident_count(db, d_id) == 1
+
+    await Incident_Service.services_incident_tasks_wait()
+    assert notified == []
+
+
+# 연속 정상이 기준(3)에 닿으면 닫힌다 - 그 직전(2번)까지는 아직 열려 있다
+@pytest.mark.asyncio
+async def test_incident_resolves_after_consecutive_ok_checks(db, notified):
+    d_id=await make_deploy(db, auto_recover=False)
+    incident=await open_incident_via_hook(db, d_id)
+
+    assert settings.recovery_verify_ok_count == 3
+    assert await record(db, d_id, True) is None
+    assert await record(db, d_id, True) is None
+    await db.refresh(incident)
+    assert incident.status == 'open'
+
+    resolved=await record(db, d_id, True)
+
+    assert resolved is not None and resolved.i_id == incident.i_id
+    await db.refresh(incident)
+    assert incident.status == 'resolved' and incident.resolved_at is not None
+
+
+# 정상 횟수는 마지막 실패 뒤부터 센다 - 사이에 실패가 끼면 처음부터 다시
+@pytest.mark.asyncio
+async def test_incident_ok_streak_restarts_after_a_failure(db, notified):
+    d_id=await make_deploy(db, auto_recover=False)
+    incident=await open_incident_via_hook(db, d_id)
+
+    for ok in (True, True, False, True, True):
+        assert await record(db, d_id, ok, None if ok else "HTTP 503") is None
+
+    await db.refresh(incident)
+    assert incident.status == 'open'
+
+    assert (await record(db, d_id, True)) is not None
+    await db.refresh(incident)
+    assert incident.status == 'resolved'

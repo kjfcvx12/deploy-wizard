@@ -1,6 +1,8 @@
 import asyncio
 import threading
 
+from fastapi import HTTPException
+
 from shared.settings import settings
 from shared.database import AsyncSessionLocal
 from shared.masking import mask_text
@@ -368,7 +370,8 @@ class Deploy_Pipeline:
             async with AsyncSessionLocal() as db:
                 await Deploy_Service.services_deploy_release_record(db, d_id)
         except Exception as e:
-            buffer.buffer_add(f"릴리스 기록을 건너뜁니다 ({type(e).__name__})", 'warn')
+            reason=e.detail if isinstance(e, HTTPException) else str(e)
+            buffer.buffer_add(f"릴리스 기록을 건너뜁니다 ({type(e).__name__}: {mask_text(str(reason))[:200]})", 'warn')
 
 
     # 실패 처리 - 멈추고, 원인을 한국어로 설명한다. 리소스는 지우지 않는다
