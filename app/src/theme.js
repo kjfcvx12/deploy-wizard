@@ -1,0 +1,52 @@
+import { useColorScheme } from 'react-native'
+
+// 색 토큰 - shared/ui/styles.css 의 CSS 변수와 같은 값 (화면에는 색을 하드코딩하지 않는다)
+export const lightColors = {
+  bg: '#f6f7f9',
+  surface: '#ffffff',
+  surface2: '#eef1f5',
+  border: '#dde2ea',
+  text: '#16202e',
+  muted: '#64708a',
+  accent: '#2563eb',
+  accentText: '#ffffff',
+  ok: '#15803d',
+  okBg: '#e7f6ec',
+  warn: '#b45309',
+  warnBg: '#fdf3e1',
+  err: '#b91c1c',
+  errBg: '#fdecec',
+  infoBg: '#e8effd',
+  termBg: '#0f1722',
+  termText: '#d5dde9',
+}
+
+export const darkColors = {
+  bg: '#0d131c',
+  surface: '#151d29',
+  surface2: '#1c2635',
+  border: '#2a3648',
+  text: '#e6ebf3',
+  muted: '#93a0b8',
+  accent: '#5b8dff',
+  accentText: '#0d131c',
+  ok: '#4ade80',
+  okBg: '#12301f',
+  warn: '#fbbf24',
+  warnBg: '#33270d',
+  err: '#f87171',
+  errBg: '#381616',
+  infoBg: '#17243d',
+  termBg: '#080c13',
+  termText: '#d5dde9',
+}
+
+// 간격(pt)과 모서리 반지름 (웹 --radius 10px)
+export const spacing = { xs: 4, sm: 8, md: 12, lg: 16, xl: 24 }
+export const radius = { sm: 6, md: 10, lg: 16, pill: 999 }
+
+// 시스템 색상 모드에 맞는 색 묶음을 돌려준다
+export function useColors() {
+  const scheme = useColorScheme()
+  return scheme === 'dark' ? darkColors : lightColors
+}
