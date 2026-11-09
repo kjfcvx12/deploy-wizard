@@ -52,7 +52,10 @@ class Watch_Service:
             return
 
         async with AsyncSessionLocal() as db:
-            if deploy.auto_redeploy:
+            # 자동 복구가 되돌린 나쁜 커밋은 다시 배포하지 않는다 - 표시만 (더 새 커밋이 오면 막힘이 풀린다)
+            if await Deploy_Service.services_deploy_watch_blocked(db, deploy, commit_sha):
+                await Deploy_Service.services_deploy_mark_new_commit(db, deploy.d_id, commit_sha)
+            elif deploy.auto_redeploy:
                 try:
                     await Deploy_Service.services_deploy_redeploy(db, deploy.d_id)
                 except Exception:
@@ -121,7 +124,9 @@ class Watch_Service:
 
         debounced=0
         for deploy in deploys:
-            if deploy.auto_redeploy:
+            if await Deploy_Service.services_deploy_watch_blocked(db, deploy, commit_sha):
+                await Deploy_Service.services_deploy_mark_new_commit(db, deploy.d_id, commit_sha)
+            elif deploy.auto_redeploy:
                 Watch_Service.services_watch_debounce_schedule(deploy.d_id)
                 debounced+=1
             else:

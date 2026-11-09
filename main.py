@@ -1,5 +1,6 @@
 import asyncio
 import contextlib
+import logging
 
 from fastapi import FastAPI
 from fastapi.concurrency import asynccontextmanager
@@ -10,7 +11,8 @@ from fastapi.responses import FileResponse
 from pathlib import Path
 
 from shared.settings import settings
-from shared.database import Base, async_engine, ensure_columns
+from shared.masking import mask_text
+from shared.database import Base, async_engine, AsyncSessionLocal, ensure_columns
 
 # 모델을 import 해야 create_all 이 테이블을 안다
 from features.deploys import models as deploy_models
@@ -28,11 +30,14 @@ from features.accounts import router as accounts
 from features.watches import router as watches
 from features.incidents import router as incidents
 from features.incidents.services import Incident_Service
+from features.incidents.recovery import Recovery_Service
 from features.watches.services import Watch_Service
 from features.health.services import Health_Service
 
 
 DIST_DIR=Path(__file__).parent / "dist"
+
+logger=logging.getLogger(__name__)
 
 
 @asynccontextmanager
@@ -44,6 +49,13 @@ async def lifespan(app:FastAPI):
 
     # 서버가 꺼지면서 끊긴 배포를 실패로 돌려놓는다
     await Deploy_Pipeline.pipeline_recover()
+
+    # 서버가 꺼지면서 끊긴 자동 복구·인시던트 처리를 정리한다 (D1) - 실패해도 서버 시작은 막지 않는다
+    try:
+        async with AsyncSessionLocal() as db:
+            await Recovery_Service.services_recovery_resume(db)
+    except Exception as e:
+        logger.warning("인시던트 정리 실패 : %s", mask_text(str(e))[:200])
 
     # 코드 변경 감지 폴링 - 계속 도는 백그라운드 태스크 (M6)
     poll_task=asyncio.create_task(Watch_Service.services_watch_poll_loop())

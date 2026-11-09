@@ -192,3 +192,10 @@ class Deploy_Crud:
                                 .where(Deploy_Release.d_r_id == d_r_id, Deploy_Release.healthy_since.is_(None))
                                 .values(healthy_since=healthy_since))
         return result.rowcount
+
+
+    # 릴리스 한 줄의 상태 바꾸기
+    @staticmethod
+    async def crud_deploy_release_set_state(db:AsyncSession, d_r_id:int, state:str) -> int:
+        result=await db.execute(update(Deploy_Release).where(Deploy_Release.d_r_id == d_r_id).values(state=state))
+        return result.rowcount

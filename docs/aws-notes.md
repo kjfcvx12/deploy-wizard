@@ -145,6 +145,16 @@ service.activeConfigurations[].ingressPaths[]  { accessType: PUBLIC|PRIVATE, end
 - [ ] 루트 자격증명은 `sts:AssumeRole`을 못 한다 — 우리 쪽(위임하는 쪽)은 IAM 사용자여야 한다
 - [ ] `sts:AssumeRole`의 기본 세션 수명(1시간)이 배포 하나(클론~배포 완료)를 끝내기에 충분한가 — 대형 레포/느린 빌드일 때
 
+### 운영 복구 (2026-11-10, 실제 AWS 미검증)
+
+자동 복구(`features/incidents/recovery.py`)가 쓰는 AWS 호출은 위 "API" 표의 `update_express_gateway_service` 하나뿐이다 (`services_express_update`, 대기는 `services_express_wait`). 다른 호출은 쓰지 않는다 — 삭제·사양 변경·크기 조절·로그/이벤트 수집 없음.
+
+- **재시작** = 지금 `image_uri` 그대로 `update` 호출. Express Mode가 이미지가 같을 때 작업(Task)을 실제로 다시 띄우는지는 **미검증**이다. 안 띄운다면 재시작은 효과가 없고, 검증(정상 3연속)에 실패해 곧바로 되돌리기로 넘어간다.
+- **되돌리기** = 직전 정상 릴리스(`deploy_releases.state='previous'`, `healthy_since`가 있고 `image_uri`가 있는 것)의 이미지로 `update` 호출. 그 이미지가 ECR에 **아직 있어야** 한다. `scripts/session_end.py`는 ECR 이미지를 지우므로 그 뒤에는 되돌릴 수 없고, `update`가 실패하면 시도는 `failed`, 인시던트는 `needs_action`이 된다.
+- 인자는 파이프라인 재배포와 같다: `port`, `health_check_path`, 환경변수(`environment`)를 매번 같이 보낸다 (`primaryContainer`를 통째로 바꾸기 때문).
+- [ ] 같은 이미지 `update`가 새 배포(작업 교체)를 일으키는가
+- [ ] 이미지만 바꾼 `update`가 `ROLLBACK_*` 배포 상태를 거치지 않고 끝나는가 (`services_express_wait`가 실패로 읽는 상태)
+
 ## 비용
 
 ALB는 떠 있는 동안 계속 과금된다 (같은 VPC에서 25개 서비스까지 1개를 공유). 작업을 끝낼 때 "오늘 만든 리소스 다 지웠나"를 확인한다. AWS Budgets 예산 알림을 가장 먼저 걸어 둔다.

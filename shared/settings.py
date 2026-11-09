@@ -66,6 +66,8 @@ class Settings(BaseSettings):
     recovery_wait_seconds:int=Field(120, alias="RECOVERY_WAIT_SECONDS")
     # 이 시간 동안 정상이 이어지면 해결로 본다
     recovery_verify_seconds:int=Field(300, alias="RECOVERY_VERIFY_SECONDS")
+    # 검증 창 안에서 이만큼 연속으로 정상이면 해결로 본다
+    recovery_verify_ok_count:int=Field(3, alias="RECOVERY_VERIFY_OK_COUNT")
     # 새 배포 직후 이 시간 안의 문제는 나쁜 릴리스를 의심한다
     new_release_window_seconds:int=Field(900, alias="NEW_RELEASE_WINDOW_SECONDS")
 

@@ -427,6 +427,70 @@ class Deploy_Service:
         return await Deploy_Crud.crud_deploy_release_get_previous(db, d_id)
 
 
+    # 자동 되돌리기 대상 - 직전 버전(previous) 중 정상 확인된 적이 있고 이미지 주소가 있는 것만. 정상이었던 적 없는 버전은 되돌릴 곳이 아니다
+    @staticmethod
+    async def services_deploy_release_rollback_target(db: AsyncSession, d_id: int):
+        previous=await Deploy_Service.services_deploy_release_previous(db, d_id)
+
+        if previous is None or previous.healthy_since is None or not previous.image_uri:
+            return None
+
+        return previous
+
+
+    # 되돌린 결과 반영 - 배포의 이미지·커밋을 이전 버전으로, 나쁜 릴리스는 failed, 이전 버전은 current. 나쁜 커밋은 bad_commit_sha 에 남겨 자동 재배포를 막는다
+    @staticmethod
+    async def services_deploy_apply_rollback(db: AsyncSession, d_id: int, release):
+        try:
+            if release is None or release.d_id != d_id or release.state != 'previous' or not release.image_uri:
+                raise HTTPException(status_code=status.HTTP_409_CONFLICT,
+                                    detail='되돌릴 수 있는 이전 버전이 아닙니다')
+
+            deploy=await Deploy_Crud.crud_deploy_get_by_d_id(db, d_id)
+
+            if not deploy or deploy.status == 'deleted':
+                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND,
+                                    detail='해당 id의 배포가 없습니다')
+
+            current=await Deploy_Crud.crud_deploy_release_get_current(db, d_id)
+            bad_commit_sha=(current.commit_sha if current and current.commit_sha else None) or deploy.commit_sha
+
+            if current is not None:
+                await Deploy_Crud.crud_deploy_release_set_state(db, current.d_r_id, 'failed')
+            await Deploy_Crud.crud_deploy_release_set_state(db, release.d_r_id, 'current')
+
+            await Deploy_Crud.crud_deploy_update(db, d_id, {"image_uri": release.image_uri, "commit_sha": release.commit_sha,
+                                                            "bad_commit_sha": bad_commit_sha})
+            await db.commit()
+            await db.refresh(deploy)
+            return deploy
+
+        except HTTPException:
+            raise
+
+        except Exception as e:
+            await db.rollback()
+            raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                                detail=f"되돌리기 반영 실패 :{mask_text(str(e))}")
+
+
+    # 감시가 이 커밋을 자동으로 다시 배포해도 되는가 - 되돌리며 기억한 나쁜 커밋이면 막고(True), 그보다 새 커밋이 오면 막힘을 풀고 통과(False)
+    # deploy 는 방금 읽은 배포 행 (bad_commit_sha 가 없으면 DB 를 건드리지 않는다)
+    @staticmethod
+    async def services_deploy_watch_blocked(db: AsyncSession, deploy, commit_sha: str) -> bool:
+        bad_commit_sha=getattr(deploy, "bad_commit_sha", None)
+
+        if not bad_commit_sha:
+            return False
+
+        if commit_sha == bad_commit_sha:
+            return True
+
+        await Deploy_Crud.crud_deploy_update(db, deploy.d_id, {"bad_commit_sha": None})
+        await db.commit()
+        return False
+
+
     # 배포별 설정 변경 - 보낸 항목만 바꾼다 (자동 재배포, 자동 복구)
     @staticmethod
     async def services_deploy_settings_update(db: AsyncSession, d_id: int, body: Deploy_Settings_Update):

@@ -49,6 +49,12 @@ class Health_Service:
         return mask_text(text)[:HEALTH_DETAIL_MAX]
 
 
+    # 점검할 주소 - 배포의 endpoint + health_check_path 뿐이다 (모니터와 자동 복구 검증이 같은 규칙을 쓴다)
+    @staticmethod
+    def services_health_url(endpoint:str, health_check_path:str|None) -> str:
+        return endpoint.rstrip("/") + (health_check_path or "/")
+
+
     # 기본 점검기 - 주소에 GET. 상태코드 400 미만이면 정상 (services_deploy_health 와 같은 기준)
     # 리다이렉트는 같은 호스트 안에서만 따라간다 - 다른 호스트로 가거나 횟수 제한을 넘으면 정상으로 치지 않는다
     @staticmethod
@@ -114,7 +120,7 @@ class Health_Service:
         checker=checker or Health_Service.services_health_default_checker
 
         deploys=await Deploy_Service.services_deploy_get_pollable(db)
-        targets=[(d.d_id, d.endpoint.rstrip("/") + (d.health_check_path or "/")) for d in deploys if d.endpoint]
+        targets=[(d.d_id, Health_Service.services_health_url(d.endpoint, d.health_check_path)) for d in deploys if d.endpoint]
 
         if not targets:
             return []

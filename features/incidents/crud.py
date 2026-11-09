@@ -103,3 +103,52 @@ class Incident_Crud:
     async def crud_incident_action_count(db:AsyncSession, i_id:int) -> int:
         result=await db.execute(select(func.count(Recovery_Action.r_a_id)).where(Recovery_Action.i_id == i_id))
         return result.scalar() or 0
+
+
+    # 배포가 since 이후에 한 자동 복구 시도 수 - 하루 한도를 셀 때 쓴다 (모든 인시던트의 시도를 합친다)
+    @staticmethod
+    async def crud_incident_action_count_since(db:AsyncSession, d_id:int, since:datetime) -> int:
+        result=await db.execute(select(func.count(Recovery_Action.r_a_id))
+                                .join(Incident, Incident.i_id == Recovery_Action.i_id)
+                                .where(Incident.d_id == d_id, Recovery_Action.started_at >= since))
+        return result.scalar() or 0
+
+
+    # 복구 시도 한 줄 시작 - result 는 running
+    @staticmethod
+    async def crud_incident_action_create(db:AsyncSession, i_id:int, action:str, d_r_id:int|None=None, started_at:datetime|None=None) -> Recovery_Action:
+        db_action=Recovery_Action(i_id=i_id, action=action, d_r_id=d_r_id, result='running')
+        if started_at is not None:
+            db_action.started_at=started_at
+        db.add(db_action)
+        await db.flush()
+        return db_action
+
+
+    # 복구 시도 끝내기 - 아직 running 인 줄만 바꾼다
+    @staticmethod
+    async def crud_incident_action_finish(db:AsyncSession, r_a_id:int, result_value:str, detail:str|None, finished_at:datetime) -> int:
+        result=await db.execute(update(Recovery_Action)
+                                .where(Recovery_Action.r_a_id == r_a_id, Recovery_Action.result == 'running')
+                                .values(result=result_value, detail=detail, finished_at=finished_at)
+                                .execution_options(synchronize_session=False))
+        await db.flush()
+        return result.rowcount
+
+
+    # 인시던트의 멈춘(running) 복구 시도를 실패로 정리 - 서버가 꺼져 끊긴 것
+    @staticmethod
+    async def crud_incident_action_fail_running(db:AsyncSession, i_id:int, detail:str, finished_at:datetime) -> int:
+        result=await db.execute(update(Recovery_Action)
+                                .where(Recovery_Action.i_id == i_id, Recovery_Action.result == 'running')
+                                .values(result='failed', detail=detail, finished_at=finished_at)
+                                .execution_options(synchronize_session=False))
+        await db.flush()
+        return result.rowcount
+
+
+    # 상태별 인시던트 - i_id 오름차순 (서버를 다시 켤 때 끊긴 것을 찾는다)
+    @staticmethod
+    async def crud_incident_get_by_statuses(db:AsyncSession, statuses:tuple[str, ...]) -> list[Incident]:
+        result=await db.execute(select(Incident).where(Incident.status.in_(statuses)).order_by(Incident.i_id.asc()))
+        return result.scalars().all()
