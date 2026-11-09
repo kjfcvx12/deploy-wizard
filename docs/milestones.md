@@ -15,7 +15,7 @@
 | M6 | 사용자의 GitHub·AWS 권한 받기 | 🟨 **연결까지 실제 검증**(2026-10-07: AWS 역할 위임, GitHub 앱, private 클론) · 실제 배포와 다른 계정은 미검증 | 내 계정이 아닌 곳에, private 레포로 배포 |
 | M7 | RDS 자동 생성 | ⬜ | DB 쓰는 앱이 무설정으로 뜬다 |
 | M8 | 프론트+백 동시 배포 | ⬜ (`other_apps` 감지만) | 풀스택 레포가 통째로 뜬다 |
-| M9 | 운영 비서 | ⬜ | 죽였을 때 알림이 오고 복구된다 |
+| M9 | 운영 비서 | 🟨 백엔드 코드 있음(D1, 2026-11-10) · 실제 AWS·SMTP·Expo **미검증** · 앱 화면 없음 | 죽였을 때 알림이 오고 복구된다 |
 | M10 | 학습 모드 | ⬜ | |
 | M11 | 쇼케이스 갤러리 | ⬜ | |
 
@@ -24,6 +24,10 @@
 ## 앱·웹 확장 1단계 백엔드 (2026-11-09)
 
 환경변수 감지·입력(`features/envvars/`, `needs_input` 상태)과 배포 전 분석(`features/advice/`) 백엔드가 들어왔다. 계획: [`superpowers/plans/2026-11-09-backend-env-and-advice.md`](./superpowers/plans/2026-11-09-backend-env-and-advice.md). `pytest`(mock)로만 확인했고 **실제 AWS 배포는 아직이다** — `primaryContainer.environment` 주입과 `needs_input` 멈춤·이어서 배포는 아래 "다음에 할 일" 4번의 실제 배포 때 같이 확인한다. 시크릿 값 저장(D8)과 사양 숫자·비용(D10)은 검증 전이라 비어 있고, 화면은 다음 단계다.
+
+## 앱·웹 확장 D1 백엔드 (2026-11-10)
+
+운영 복구·알림 백엔드가 들어왔다 (`features/health/`, `incidents/`, `notifications/`). 헬스 감시(1분) -> 연속 실패 3번이면 인시던트 -> 규칙 표 원인 설명 -> 알림(앱 안·메일·Expo 푸시) -> 자동 복구(재시작, 이전 정상 이미지로 되돌리기) -> 해제. `pytest`(전부 가짜)로만 확인했고 **실제 AWS 재시작·되돌리기 효과, 실제 SMTP·Expo 발송, 기존 `data/wizard.db`의 `ensure_columns` 첫 실행은 아직이다**. 로그·이벤트 수집과 운영 에이전트(D12)는 만들지 않았다. 앱 화면(D2)은 다음 단계. 구조는 [`architecture.md`](./architecture.md) "운영 감시와 자동 복구", 기록은 [`worklog/2026-11-10.md`](./worklog/2026-11-10.md).
 
 ## 다음에 할 일
 

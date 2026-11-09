@@ -14,6 +14,9 @@
 | `advice` | 배포 전 분석 - 사양 수준·필요한 것·확신도 (읽기 전용, 숫자는 검증 전이라 비움) | scheme · services · router · ui | 백엔드 + 화면 (실제 AWS 검증 전) |
 | `accounts` | 사용자 AWS 계정 연결(CloudFormation+AssumeRole) · GitHub App 연결 - 연결·파이프라인 배선(private 클론 포함) 완료 | models · scheme · crud · services · router · cloudformation/ · ui | M6 (진행 중) |
 | `watches` | 코드 변경 감지 - 폴링(백그라운드) + 웹훅(서명 검증 + 디바운스) 둘 다 코드 완료 | services | M6 (코드 완료, 실제 검증 남음) |
+| `health` | 떠 있는 배포를 1분마다 점검해 이력을 남기는 감시 루프, 이력 정리(7일) | models · scheme · crud · services | D1 (코드 완료, 실제 AWS 미검증) |
+| `incidents` | 연속 실패로 인시던트 열고 닫기, 규칙 표 원인 설명, 자동 복구(재시작·이전 정상 이미지로 되돌리기), 한도, 서버 재시작 때 정리, 조회 API | models · scheme · crud · services · recovery · router | D1 (코드 완료, 실제 AWS 미검증) |
+| `notifications` | 앱 안·메일·Expo 푸시 알림, 기기 등록, 알림 설정, 알림 조회 API | models · scheme · crud · services · compose · dispatch · inbox · router | D1 (코드 완료, 실제 SMTP·Expo 미검증) |
 
 ## 기능 사이의 흐름
 
@@ -28,6 +31,16 @@
 ```
 
 `pipeline.py`만 다른 기능을 안다. 나머지 기능은 서로를 모르므로, 하나를 갈아끼워도(예: 빌드를 CodeBuild로) 나머지는 그대로다.
+
+운영 쪽(D1)은 파이프라인 밖에서 따로 흐른다 (서버 안 백그라운드 태스크):
+
+```
+[health 감시 루프] → [incidents 훅] → (태스크) 원인 수집·설명 → [notifications] → [incidents/recovery] → [express 갱신]
+                                                                        ▲                   │
+                          [deploys.pipeline / watches] ── 배포 완료·실패·새 커밋 알림 ─────┘ (자동 조치 결과도 알림)
+```
+
+새 코드를 둘 곳: 점검 방식·주기·이력 → `health`, 인시던트 열기·닫기·원인 규칙 → `incidents/services.py`, 자동 조치와 한도 → `incidents/recovery.py`, 알림 글·발송 채널·설정 → `notifications`(`compose` 글, `dispatch` SMTP·Expo, `inbox` 조회용). 자동 조치를 늘리려면 CLAUDE.md Hard rule 3 을 먼저 고쳐야 한다 (지금은 재시작과 되돌리기 둘뿐).
 
 ## 기능별 메모
 
@@ -88,6 +101,15 @@
 ## 모바일 앱 (`app/`, C1)
 
 `app/`는 `features/`·`shared/`와 따로 있는 Expo 앱(독립 패키지, 순수 JS)이다. 서버는 바꾸지 않고 기존 API만 부른다. C1 범위는 배포 목록, 새 배포(분석 → 배포), 배포 상세(진행·로그·해설·이력·다시 배포·멈춤·다시 켜기·삭제), 환경변수 입력 카드, C2 에서 더한 계정 연결 화면(`/accounts`: 블록, AWS·GitHub 연결·확인·해제)까지다. 알림, 로그인, 스토어 빌드, 딥링크 복귀는 아직 없다. 웹과 같은 문구·상태 값을 쓰도록 웹 `ui/` 파일을 보고 옮겼으므로 양쪽을 같이 고친다 (목록은 `app/README.md`와 `docs/ui-spec.md`의 "앱"). 실제 기기에서는 확인하지 못했다.
+
+### health / incidents / notifications (D1, 코드 완료 - 실제 AWS·SMTP·Expo 로는 아직 검증 전)
+- 흐름·한도·재시작 때 정리는 [`architecture.md`](./architecture.md) "운영 감시와 자동 복구", 엔드포인트와 응답은 [`api-spec.md`](./api-spec.md) "Incidents", "Notifications · Devices".
+- **원인 설명은 규칙 표뿐이다.** 서비스 상태 조회(`describe`)와 최근 헬스체크 5줄을 마스킹한 증거로 규칙에 맞추고, 없으면 기본 안내(`source: "none"`). 컨테이너 로그·ECS 이벤트 수집은 AWS 호출을 검증하지 않아 만들지 않았다. 운영 에이전트(D12)도 같은 이유로 없다.
+- **재시작 = 같은 이미지로 서비스 갱신.** 실제로 작업이 다시 뜨는지 검증 전이다. 되돌릴 이전 이미지가 없으면(`bad_release` 제외) 재시작만 해 보고 사람에게 넘긴다.
+- **`auto_recover` 기본값은 켜짐.** 배포별로 `PATCH /api/deploys/{d_id}/settings`로 끈다.
+- **메일 설정이 없으면(`MAIL_HOST`·`MAIL_TO`) 메일은 건너뛴다** (줄도 남기지 않음). 푸시 `sent`는 Expo 가 받았다는 뜻일 뿐 기기 도착이 아니다 (영수증 확인 안 함).
+- 알림은 `u_id` 없이 한 사람 기준이다. 로그인이 생기면 사용자별로 나눈다.
+- 알려진 한계(미뤄 둠): 배포 상태 규칙의 우선순위, `describe` 대기 시간 제한, 잠금 표 정리, 되돌린 뒤 이어서 배포 기록의 빈틈, 같은 커밋 재배포 시 복구 막힘 유지, 설정 첫 읽기 경쟁, 큰 파일 분리(`recovery.py` 369줄 등). 목록은 `docs/worklog/2026-11-10.md`.
 
 ## 앞으로 생길 기능
 

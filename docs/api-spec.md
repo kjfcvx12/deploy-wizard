@@ -94,7 +94,7 @@ Base URL: `http://localhost:8081` · 전부 JSON · 인증 없음(로컬 전용)
 
 `env_pending`: 값이 비어 있는 필수 환경변수 수 (`required`이고 `status`가 `detected`인 것). DB 열이 아니라 조회할 때마다 센다. 환경변수가 없으면 0. `needs_input` 배포를 화면에 알리는 용도다.
 
-`auto_recover`: 배포별 자동 복구 스위치 (기본 `true`). `health_state`: `healthy` `unhealthy` `unknown` — 마지막 헬스체크 요약이며 아직 한 번도 확인하지 않았으면 `unknown`. `last_health_at`: 마지막 헬스체크 시각(없으면 null). `open_incident_id`: 아직 처리 중(`open`·`recovering`)인 인시던트 번호, 없으면 null — DB 열이 아니라 조회할 때마다 채운다. 앞의 셋은 `deploys` 열이다 (옛 DB는 서버 시작 때 `ensure_columns`가 열을 더한다).
+`auto_recover`: 배포별 자동 복구 스위치 (기본 `true`). `health_state`: `healthy` `unhealthy` `unknown` — 마지막 헬스체크 요약이며 아직 한 번도 확인하지 않았으면 `unknown`. `last_health_at`: 마지막 헬스체크 시각(없으면 null). `open_incident_id`: 아직 처리 중(`open`·`recovering`)인 인시던트 번호, 없으면 null — DB 열이 아니라 조회할 때마다 채운다. 앞의 셋은 `deploys` 열이다 (옛 DB는 서버 시작 때 `ensure_columns`가 열을 더한다). 같은 때 더해지는 네 번째 열 `bad_commit_sha`(자동 되돌리기가 기억해 둔 나쁜 커밋, 감시가 같은 커밋을 다시 배포하지 않게 하는 내부용)는 응답에 싣지 않는다.
 
 ### 값 목록
 
@@ -378,9 +378,9 @@ Base URL: `http://localhost:8081` · 전부 JSON · 인증 없음(로컬 전용)
 
 폴링(`Watch_Service.services_watch_poll_loop`, `WATCH_POLL_SECONDS` 기본 3600초)은 API가 없다 - `main.py` 백그라운드 태스크로만 돈다.
 
-## Incidents (D1 - 장애 감지·원인 설명, 조회만)
+## Incidents (D1 - 장애 감지·원인 설명·자동 복구 기록, 조회만)
 
-서버가 만들고 닫는다. 사용자가 만들거나 지우는 API는 없다. 설계는 `docs/app-web/04-api-spec.md` §3.
+서버가 만들고 닫는다. 사용자가 만들거나 지우는 API는 없다. 모든 시간은 UTC. 실제 AWS·SMTP·Expo 에는 아직 돌려 보지 않았다 (`docs/worklog/2026-11-10.md`). 설계는 `docs/app-web/04-api-spec.md` §3.
 
 | Method | Endpoint | 설명 | 성공 |
 |--------|----------|------|------|
@@ -396,8 +396,26 @@ Base URL: `http://localhost:8081` · 전부 JSON · 인증 없음(로컬 전용)
 - 헬스 감시가 `running` 배포의 점검 결과를 저장한 직후 훅이 불린다. **마지막 성공 이후 연속 실패가 `HEALTH_FAILURE_THRESHOLD`(기본 3)번이 되면** `open` 인시던트를 만든다. 끝나지 않은(`open`·`recovering`·`needs_action`) 인시던트가 이미 있으면 새로 만들지 않는다 (배포마다 하나).
 - `kind`: 새 버전 배포 후 `NEW_RELEASE_WINDOW_SECONDS`(기본 900초) 안이고 되돌릴 이전 릴리스가 있으면 `bad_release`, 최근 실패가 모두 연결 거부면 `crash_loop`, 그 밖에는 `unhealthy`.
 - 원인 수집·설명·알림은 백그라운드 태스크가 한다 (모니터를 붙잡지 않는다). 서비스 상태 조회(`describe`, 읽기 전용)와 최근 헬스체크 5줄을 마스킹해 `evidence`(4000자 이하)에 저장하고, 규칙 표로 `explain`을 만든다. 규칙에 없으면 `source: "none"` 기본 안내. 처리 중 오류가 나면 `needs_action`으로 돌리고 마스킹한 오류를 `evidence` 끝에 덧붙인다.
-- 자동 복구가 꺼져 있으면(`auto_recover=false`) 바로 `needs_action`. 켜져 있으면 복구 단계로 넘어간다 (복구 실행은 다음 작업).
-- 정상으로 돌아오면 `open`·`needs_action` 인시던트를 `resolved`(+`resolved_at`)로 닫는다. `recovering`은 감시가 닫지 않는다.
+- 자동 복구가 꺼져 있으면(`auto_recover=false`) AWS 를 부르지 않고 바로 `needs_action`. 켜져 있으면 같은 백그라운드 태스크 안에서 아래 "자동 복구"로 넘어간다.
+- 정상으로 돌아오면 `open`·`needs_action` 인시던트를 `resolved`(+`resolved_at`)로 닫는다. `recovering`은 감시가 닫지 않는다 (복구 쪽이 검증 뒤에 직접 닫는다).
+- 서버를 다시 켤 때 끊긴 인시던트를 정리한다: `recovering` 은 `needs_action`(진행 중이던 조치는 `failed`, 사유 "서버가 다시 시작되어 …"), 처리 중이던 `open` 은 배포가 `running` 이고 자동 복구가 켜져 있으면 처리를 다시 띄우고 아니면 `needs_action`.
+
+### 자동 복구 (서버 안 - API 아님)
+
+Hard rule 3 의 자동 조치는 두 가지뿐이다. **재시작**(서비스를 같은 이미지로 갱신)과 **이전 정상 이미지로 되돌리기**. 삭제·사양 변경·크기 조절은 하지 않는다. 호출하는 AWS 쓰기는 `update_express_gateway_service` 하나다.
+
+| 인시던트 `kind` | 순서 |
+|---|---|
+| `bad_release` | 되돌리기만. 되돌릴 대상이 없으면 AWS 호출 없이 `needs_action` |
+| 그 밖 (`unhealthy` `crash_loop`) | 재시작 -> 안 풀리면 되돌리기. 되돌릴 대상이 없으면 재시작만 해 보고 `needs_action` |
+
+- 되돌릴 대상: `deploy_releases` 의 `previous` 중 정상으로 확인된 적이 있고(`healthy_since`) 이미지가 남아 있으며 현재 이미지와 다른 것.
+- 매 조치 직전(그리고 AWS 갱신 호출 바로 앞에서 한 번 더) 코드가 다시 확인한다: 인시던트가 `open`·`recovering`, 배포가 `running`, `auto_recover` 켜짐, `service_arn` 있음, 한도 안. 하나라도 어긋나면 AWS 를 부르지 않고 사유를 `evidence` 끝에 적고 `needs_action`.
+- 한도(설정): 인시던트당 `RECOVERY_MAX_ATTEMPTS_PER_INCIDENT`(2 - 재시작 1 + 되돌리기 1), 배포당 24시간에 `RECOVERY_DAILY_LIMIT`(6). 배포마다 잠금이 있어 같은 배포에 재시작·되돌리기가 겹쳐 돌지 않는다.
+- 조치마다 `recovery_actions` 한 줄(`running` -> `ok|failed`, 사유 마스킹): 갱신 호출 -> 완료 대기 -> `RECOVERY_WAIT_SECONDS`(120초) 기다린 뒤 15초마다 같은 주소를 점검해 `RECOVERY_VERIFY_SECONDS`(300초) 안에 `RECOVERY_VERIFY_OK_COUNT`(3)번 연속 정상이면 성공 -> 인시던트 `resolved` + `incident_recovered` 알림. 실패하면 다음 조치, 더 없으면 `needs_action` + `incident_needs_action` 알림.
+- 되돌리기가 성공하면 배포의 `image_uri`·`commit_sha` 가 이전 릴리스 값으로 바뀌고, 나쁜 릴리스는 `failed`, 이전 릴리스는 `current`, 나쁜 커밋은 `deploys.bad_commit_sha` 에 기억된다. 감시(폴링·웹훅)는 그 커밋을 다시 배포하지 않고 "새 커밋 있음" 표시만 한다. 더 새로운 커밋이 오면 막힘이 풀린다.
+- 되돌리기 중 AWS 는 이전 이미지가 됐는데 배포 기록 반영이 3번 모두 실패하면 조치를 `failed`(사유에 이 사실을 적는다) + `needs_action`. 사용자가 새로 배포하기 전까지 자동 복구는 다시 돌지 않는다. 복구 도중 사용자가 배포를 바꿨으면(상태·이미지가 달라짐) 기록을 덮어쓰지 않고 `needs_action`.
+- **미검증**: 같은 이미지로 갱신했을 때 Express Mode 가 실제로 작업을 다시 시작하는지, 이미지 갱신으로 되돌리기가 실제로 되는지는 실제 AWS 에서 확인하지 않았다 (`docs/aws-notes.md` "운영 복구"). 로그·이벤트 수집과 운영 에이전트(`docs/app-web` D12)는 아직 없다 - 원인 설명은 규칙 표(`source: "rule"|"none"`)뿐이다.
 
 ### `Incident_Read` / `Incident_Detail`
 
@@ -453,7 +471,7 @@ Base URL: `http://localhost:8081` · 전부 JSON · 인증 없음(로컬 전용)
 
 ### `Device_Read` (토큰 전체는 응답에 없다 - 끝 6자리만)
 ```json
-{ "p_d_id": 1, "platform": "ios", "token_tail": "xyz789]", "created_at": "…", "last_seen_at": "…" }
+{ "p_d_id": 1, "platform": "ios", "token_tail": "yz789]", "created_at": "…", "last_seen_at": "…" }
 ```
 
 ### `Notification_Setting_Read` / PATCH 본문
