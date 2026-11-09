@@ -1,5 +1,5 @@
 import { StyleSheet, Text, View } from 'react-native'
-import { radius, spacing, useColors } from '../theme'
+import { monoFont, radius, spacing, useColors } from '../theme'
 import { Button } from './ui'
 
 // 해설을 어디서 만들었는지 (웹 ExplainCard 와 같다)
@@ -28,7 +28,7 @@ export default function ExplainCard({ explain, errorStep, errorMsg, hasResources
       {explain?.actions?.length > 0 && (
         <View style={styles.actions}>
           {explain.actions.map((action, index) => (
-            <View key={action} style={styles.actionRow}>
+            <View key={`${index}-${action}`} style={styles.actionRow}>
               <Text style={[styles.body, styles.num, { color: colors.text }]}>{index + 1}.</Text>
               <Text style={[styles.body, styles.actionText, { color: colors.text }]}>{action}</Text>
             </View>
@@ -58,7 +58,7 @@ const styles = StyleSheet.create({
   actionRow: { flexDirection: 'row', gap: spacing.sm },
   num: { width: 20 },
   actionText: { flex: 1, minWidth: 0 },
-  raw: { fontFamily: 'monospace', fontSize: 12.5, lineHeight: 18, marginTop: spacing.xs },
+  raw: { fontFamily: monoFont, fontSize: 12.5, lineHeight: 18, marginTop: spacing.xs },
   buttons: { gap: spacing.sm, marginTop: spacing.md },
   note: { fontSize: 13, lineHeight: 18 },
 })

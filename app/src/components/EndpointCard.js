@@ -19,9 +19,10 @@ export default function EndpointCard({ endpoint, health, onError }) {
   // 언마운트 때 복사됨 표시 타이머를 거둔다
   useEffect(() => () => clearTimeout(timer.current), [])
 
-  // 브라우저로 연다
+  // 브라우저로 연다 - http(s) 주소만 연다
   const open = async () => {
     try {
+      if (!/^https?:\/\//i.test(endpoint)) throw new Error('unsupported scheme')
       await Linking.openURL(endpoint)
     } catch (e) {
       onError('주소를 열 수 없습니다')
@@ -31,7 +32,8 @@ export default function EndpointCard({ endpoint, health, onError }) {
   // 클립보드에 복사하고 잠깐 '복사됨'으로 바꾼다
   const copy = async () => {
     try {
-      await Clipboard.setStringAsync(endpoint)
+      // false 로 끝나면 복사되지 않은 것이다
+      if ((await Clipboard.setStringAsync(endpoint)) === false) throw new Error('copy failed')
       setCopied(true)
       clearTimeout(timer.current)
       timer.current = setTimeout(() => setCopied(false), COPIED_MS)

@@ -1,12 +1,29 @@
-import { Alert, AppState, Linking } from 'react-native'
+import { Alert, AppState, Linking, Platform, StyleSheet } from 'react-native'
+import { SafeAreaProvider } from 'react-native-safe-area-context'
 import * as Clipboard from 'expo-clipboard'
 import { render, screen, fireEvent, act } from '@testing-library/react-native'
 import { deployApi, envApi } from '../api'
 import DeployDetail from '../../app/deploys/[d_id]'
+import { monoFont } from '../theme'
 
 const mockReplace = jest.fn()
+// KeyboardAvoidingView 는 behavior 를 화면 요소로 내보내지 않으므로, 받은 속성을 기록하는 대체품을 쓴다
+const mockKavProps = []
+jest.mock('react-native/Libraries/Components/Keyboard/KeyboardAvoidingView', () => {
+  const React = require('react')
+  const { View } = require('react-native')
+  return {
+    __esModule: true,
+    default: (props) => {
+      mockKavProps.push(props)
+      return React.createElement(View, { testID: props.testID, style: props.style }, props.children)
+    },
+  }
+})
+const mockDismissTo = jest.fn()
+let mockCanGoBack = true
 jest.mock('expo-router', () => ({
-  useRouter: () => ({ replace: mockReplace, push: jest.fn() }),
+  useRouter: () => ({ replace: mockReplace, dismissTo: mockDismissTo, canGoBack: () => mockCanGoBack, push: jest.fn() }),
   useLocalSearchParams: () => ({ d_id: '7' }),
   Stack: { Screen: () => null },
 }))
@@ -41,6 +58,8 @@ let current
 beforeEach(() => {
   jest.useFakeTimers()
   mockReplace.mockClear()
+  mockDismissTo.mockClear()
+  mockCanGoBack = true
   current = base
   for (const fn of Object.values(deployApi)) fn.mockReset()
   deployApi.getOne.mockImplementation(async () => current)
@@ -77,11 +96,25 @@ const alertButton = (name) => Alert.alert.mock.calls[0][2].find((b) => b.text ==
 describe('배포 상세 화면 - 키보드', () => {
   test('환경변수 입력칸이 있는 바깥 스크롤은 키보드 인셋 보정과 끌어서 닫기를 켠다', async () => {
     await open({ ...base, status: 'needs_input', endpoint: null })
-    // 첫 번째 그려진 호스트 요소가 화면 전체를 감싸는 스크롤이다
-    const outer = screen.root
+    // 가장 바깥 스크롤 (안쪽 로그·Dockerfile 스크롤은 그 아래에 있다)
+    const outer = screen.getByTestId('detail-scroll')
     expect(outer.props.automaticallyAdjustKeyboardInsets).toBe(true)
     expect(outer.props.keyboardDismissMode).toBe('on-drag')
     expect(outer.props.keyboardShouldPersistTaps).toBe('handled')
+  })
+
+  test('안드로이드에서는 스크롤을 KeyboardAvoidingView(height) 가 감싼다 (기기에서는 확인하지 못했다)', async () => {
+    jest.replaceProperty(Platform, 'OS', 'android')
+    await open({ ...base, status: 'needs_input', endpoint: null })
+    const wrapper = screen.getByTestId('keyboard-avoiding')
+    expect(mockKavProps[mockKavProps.length - 1].behavior).toBe('height')
+    expect(StyleSheet.flatten(wrapper.props.style).flex).toBe(1)
+  })
+
+  test('iOS 에서는 behavior 를 주지 않는다 (기존 인셋 보정만 쓴다)', async () => {
+    await open({ ...base, status: 'needs_input', endpoint: null })
+    expect(screen.getByTestId('keyboard-avoiding')).toBeTruthy()
+    expect(mockKavProps[mockKavProps.length - 1].behavior).toBeUndefined()
   })
 })
 
@@ -219,6 +252,22 @@ describe('배포 상세 화면 - 주소 카드', () => {
     expect(await screen.findByText('주소를 복사하지 못했습니다')).toBeTruthy()
   })
 
+  test('복사가 false 로 끝나면 복사 실패로 알린다 (복사됨으로 바꾸지 않는다)', async () => {
+    Clipboard.setStringAsync.mockResolvedValue(false)
+    await open()
+    await fireEvent.press(screen.getByText('복사'))
+    expect(await screen.findByText('주소를 복사하지 못했습니다')).toBeTruthy()
+    expect(screen.queryByText('복사됨')).toBeNull()
+  })
+
+  test('http(s) 가 아닌 주소는 열지 않고 알린다', async () => {
+    jest.spyOn(Linking, 'openURL').mockClear().mockResolvedValue(true)
+    await open({ ...base, endpoint: 'javascript:alert(1)' })
+    await fireEvent.press(screen.getByText('javascript:alert(1)'))
+    expect(Linking.openURL).not.toHaveBeenCalled()
+    expect(await screen.findByText('주소를 열 수 없습니다')).toBeTruthy()
+  })
+
   test('헬스체크는 running 이 된 뒤 한 번만 부른다 (폴링이 여러 번 돌아도)', async () => {
     deployApi.getLogs.mockResolvedValueOnce(makeLogs(2)).mockResolvedValueOnce(makeLogs(1, 3)).mockResolvedValue([])
     await open()
@@ -263,7 +312,19 @@ describe('배포 상세 화면 - 동작과 확인 창', () => {
 
     await act(async () => { alertButton('삭제').onPress() })
     expect(deployApi.remove).toHaveBeenCalledWith('7')
+    expect(mockDismissTo).toHaveBeenCalledWith('/')
+    expect(mockReplace).not.toHaveBeenCalled()
+  })
+
+  test('삭제 뒤 돌아갈 화면이 없으면(주소로 바로 들어옴) 목록으로 바꾼다', async () => {
+    mockCanGoBack = false
+    jest.spyOn(Alert, 'alert').mockImplementation(() => {})
+    deployApi.remove.mockResolvedValue(null)
+    await open()
+    await fireEvent.press(screen.getByText('삭제'))
+    await act(async () => { alertButton('삭제').onPress() })
     expect(mockReplace).toHaveBeenCalledWith('/')
+    expect(mockDismissTo).not.toHaveBeenCalled()
   })
 
   test('삭제를 취소하면 아무것도 지우지 않는다', async () => {
@@ -273,6 +334,7 @@ describe('배포 상세 화면 - 동작과 확인 창', () => {
     await act(async () => { alertButton('그대로 두기').onPress?.() })
     expect(deployApi.remove).not.toHaveBeenCalled()
     expect(mockReplace).not.toHaveBeenCalled()
+    expect(mockDismissTo).not.toHaveBeenCalled()
   })
 
   test('failed: 만들어진 리소스 정리는 삭제 확인을 거친다', async () => {
@@ -393,6 +455,21 @@ describe('배포 상세 화면 - 폴링과 로그', () => {
     expect(screen.getByLabelText('실행 로그 0줄')).toBeTruthy()
   })
 
+  test('needs_input 이면 로그가 없어도 폴링이 멈추고, round 가 바뀌면(이어서 배포) 다시 시작된다', async () => {
+    envApi.getAll.mockResolvedValue([])
+    envApi.continueDeploy.mockResolvedValue({})
+    await open({ ...base, status: 'needs_input', endpoint: null })
+    await tick(60000)
+    expect(deployApi.getOne).toHaveBeenCalledTimes(1)
+
+    current = { ...base, status: 'queued', endpoint: null }
+    await fireEvent.press(await screen.findByText('이어서 배포'))
+    expect(envApi.continueDeploy).toHaveBeenCalledWith(7)
+    expect(deployApi.getOne).toHaveBeenCalledTimes(2)
+    await tick(1500)
+    expect(deployApi.getOne).toHaveBeenCalledTimes(3)
+  })
+
   test('언마운트하면 타이머가 남지 않는다', async () => {
     current = { ...base, status: 'building', endpoint: null }
     const { unmount } = await render(<DeployDetail />)
@@ -404,5 +481,28 @@ describe('배포 상세 화면 - 폴링과 로그', () => {
     await unmount()
     await tick(60000)
     expect(deployApi.getOne.mock.calls.length).toBe(calls)
+  })
+})
+
+describe('배포 상세 화면 - 안전 영역과 글꼴', () => {
+  test('스크롤 아래 여백에 하단 안전 영역을 더한다', async () => {
+    const insets = { top: 0, left: 0, right: 0, bottom: 34 }
+    current = base
+    await render(
+      <SafeAreaProvider initialMetrics={{ frame: { x: 0, y: 0, width: 390, height: 844 }, insets }}>
+        <DeployDetail />
+      </SafeAreaProvider>,
+    )
+    await screen.findByText('acme/api')
+    const outer = screen.getByTestId('detail-scroll')
+    expect(StyleSheet.flatten(outer.props.contentContainerStyle).paddingBottom).toBe(24 * 2 + 34)
+  })
+
+  test('로그와 Dockerfile 은 monoFont 로 그린다', async () => {
+    deployApi.getLogs.mockResolvedValue(makeLogs(1))
+    await open({ ...base, dockerfile: 'FROM node:20' })
+    await fireEvent.press(screen.getByText(/Dockerfile/))
+    expect(StyleSheet.flatten(screen.getByText(/줄 1/).props.style).fontFamily).toBe(monoFont)
+    expect(StyleSheet.flatten(screen.getByText(/FROM node:20/).props.style).fontFamily).toBe(monoFont)
   })
 })

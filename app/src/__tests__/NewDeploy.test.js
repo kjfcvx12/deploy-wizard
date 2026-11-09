@@ -1,9 +1,23 @@
-import { AccessibilityInfo, ScrollView } from 'react-native'
+import { AccessibilityInfo, Platform, ScrollView, StyleSheet } from 'react-native'
+import { SafeAreaProvider } from 'react-native-safe-area-context'
 import { render, screen, fireEvent, act, waitFor } from '@testing-library/react-native'
 import { accountApi, adviceApi, deployApi } from '../api'
 import NewDeploy from '../../app/new'
 
 const mockReplace = jest.fn()
+// KeyboardAvoidingView 는 behavior 를 화면 요소로 내보내지 않으므로, 받은 속성을 기록하는 대체품을 쓴다
+const mockKavProps = []
+jest.mock('react-native/Libraries/Components/Keyboard/KeyboardAvoidingView', () => {
+  const React = require('react')
+  const { View } = require('react-native')
+  return {
+    __esModule: true,
+    default: (props) => {
+      mockKavProps.push(props)
+      return React.createElement(View, { testID: props.testID, style: props.style }, props.children)
+    },
+  }
+})
 jest.mock('expo-router', () => ({
   useRouter: () => ({ replace: mockReplace, push: jest.fn() }),
   Stack: { Screen: () => null },
@@ -41,6 +55,33 @@ beforeEach(() => {
 
 // 주소 입력칸에 글자를 넣는다
 const typeUrl = async (text) => { await fireEvent.changeText(screen.getByPlaceholderText(URL_PLACEHOLDER), text) }
+
+describe('새 배포 화면 - 키보드와 안전 영역', () => {
+  afterEach(() => { jest.restoreAllMocks() })
+
+  test('안드로이드에서는 스크롤을 KeyboardAvoidingView(height) 가 감싼다 (기기에서는 확인하지 못했다)', async () => {
+    jest.replaceProperty(Platform, 'OS', 'android')
+    await render(<NewDeploy />)
+    const wrapper = screen.getByTestId('keyboard-avoiding')
+    expect(mockKavProps[mockKavProps.length - 1].behavior).toBe('height')
+    expect(StyleSheet.flatten(wrapper.props.style).flex).toBe(1)
+    expect(screen.getByTestId('new-scroll').props.automaticallyAdjustKeyboardInsets).toBe(true)
+  })
+
+  test('iOS 에서는 behavior 를 주지 않는다', async () => {
+    await render(<NewDeploy />)
+    expect(mockKavProps[mockKavProps.length - 1].behavior).toBeUndefined()
+  })
+
+  test('스크롤 아래 여백에 하단 안전 영역을 더한다', async () => {
+    await render(
+      <SafeAreaProvider initialMetrics={{ frame: { x: 0, y: 0, width: 390, height: 844 }, insets: { top: 0, left: 0, right: 0, bottom: 34 } }}>
+        <NewDeploy />
+      </SafeAreaProvider>,
+    )
+    expect(StyleSheet.flatten(screen.getByTestId('new-scroll').props.contentContainerStyle).paddingBottom).toBe(24 * 2 + 34)
+  })
+})
 
 describe('새 배포 화면', () => {
   test('주소가 비어 있으면 분석을 눌러도 아무것도 부르지 않는다', async () => {

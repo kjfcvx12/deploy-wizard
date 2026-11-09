@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { ActivityIndicator, RefreshControl, ScrollView, StyleSheet, Text, View } from 'react-native'
+import { ActivityIndicator, KeyboardAvoidingView, Platform, RefreshControl, ScrollView, StyleSheet, Text, View } from 'react-native'
+import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import { Stack, useLocalSearchParams, useRouter } from 'expo-router'
 import { deployApi } from '../../src/api'
 import EndpointCard from '../../src/components/EndpointCard'
@@ -13,7 +14,7 @@ import { Button, Card, Collapsible, Notice } from '../../src/components/ui'
 import { isProgress, repoName, showsEnvCard } from '../../src/constants'
 import { confirmAction } from '../../src/confirm'
 import { STOP_POLLING, usePolling } from '../../src/hooks/usePolling'
-import { radius, spacing, useColors } from '../../src/theme'
+import { monoFont, radius, spacing, useColors } from '../../src/theme'
 
 // 갱신 간격 (웹 DeployDetailPage 와 같다) - 진행 중이거나 로그가 들어오는 동안 1.5초, 조회가 실패하면 5초
 const FAST_MS = 1500
@@ -35,6 +36,7 @@ export default function DeployDetailScreen() {
 function DeployDetail({ d_id }) {
   const colors = useColors()
   const router = useRouter()
+  const insets = useSafeAreaInsets()
   const afterRef = useRef(0)
   const busyRef = useRef(false)
 
@@ -120,13 +122,19 @@ function DeployDetail({ d_id }) {
     onConfirm: () => { perform(() => deployApi.stop(d_id), bumpRound) },
   })
 
+  // 목록으로 돌아간다 - 아래에 목록이 있으면 그 목록으로 되돌아가 낡은 목록이 남지 않게 하고, 없으면(주소로 바로 들어온 경우) 목록으로 바꾼다
+  const backToList = () => {
+    if (router.canGoBack()) router.dismissTo('/')
+    else router.replace('/')
+  }
+
   // 삭제 - AWS 리소스까지 지우므로 확인 뒤에만 부른다
   const askRemove = () => confirmAction({
     title: '이 배포를 삭제할까요?',
     message: 'AWS에 만든 ECS 서비스와 ECR 이미지가 함께 지워져 이 배포의 요금이 모두 멈춥니다. 되돌릴 수 없습니다.',
     cancelText: '그대로 두기',
     confirmText: '삭제',
-    onConfirm: () => { perform(() => deployApi.remove(d_id), () => router.replace('/')) },
+    onConfirm: () => { perform(() => deployApi.remove(d_id), backToList) },
   })
 
   // 끌어당겨 새로고침
@@ -236,16 +244,19 @@ function DeployDetail({ d_id }) {
   return (
     <>
       <Stack.Screen options={{ title: `배포 #${d_id}` }} />
-      <ScrollView
-        refreshControl={<RefreshControl refreshing={pulling} onRefresh={onPull} tintColor={colors.accent} colors={[colors.accent]} />}
-        keyboardShouldPersistTaps="handled"
-        keyboardDismissMode="on-drag"
-        automaticallyAdjustKeyboardInsets
-        contentContainerStyle={styles.content}
-        style={{ backgroundColor: colors.bg }}
-      >
-        {body}
-      </ScrollView>
+      <KeyboardAvoidingView testID="keyboard-avoiding" behavior={Platform.OS === 'android' ? 'height' : undefined} style={styles.flex}>
+        <ScrollView
+          testID="detail-scroll"
+          refreshControl={<RefreshControl refreshing={pulling} onRefresh={onPull} tintColor={colors.accent} colors={[colors.accent]} />}
+          keyboardShouldPersistTaps="handled"
+          keyboardDismissMode="on-drag"
+          automaticallyAdjustKeyboardInsets
+          contentContainerStyle={[styles.content, { paddingBottom: spacing.xl * 2 + insets.bottom }]}
+          style={{ backgroundColor: colors.bg }}
+        >
+          {body}
+        </ScrollView>
+      </KeyboardAvoidingView>
     </>
   )
 }
@@ -261,6 +272,7 @@ function Tag({ text }) {
 }
 
 const styles = StyleSheet.create({
+  flex: { flex: 1 },
   content: { padding: spacing.lg, paddingBottom: spacing.xl * 2 },
   stack: { gap: spacing.md },
   self: { alignSelf: 'flex-start' },
@@ -276,5 +288,5 @@ const styles = StyleSheet.create({
   small: { fontSize: 13, lineHeight: 19 },
   code: { borderRadius: radius.sm, marginTop: spacing.sm },
   codeContent: { padding: spacing.md },
-  codeText: { fontFamily: 'monospace', fontSize: 12.5, lineHeight: 18 },
+  codeText: { fontFamily: monoFont, fontSize: 12.5, lineHeight: 18 },
 })

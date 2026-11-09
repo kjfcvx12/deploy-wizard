@@ -4,6 +4,7 @@ import { deployApi } from '../api'
 import DeployList from '../../app/index'
 import StatusBadge from '../components/StatusBadge'
 import { lightColors } from '../theme'
+import { SafeAreaProvider } from 'react-native-safe-area-context'
 
 const mockPush = jest.fn()
 jest.mock('expo-router', () => ({
@@ -72,6 +73,24 @@ describe('배포 목록 화면', () => {
     expect(await screen.findByText('acme/api')).toBeTruthy()
     expect(deployApi.getAll).toHaveBeenCalledTimes(2)
     expect(screen.queryByText('다시 시도')).toBeNull()
+  })
+
+  test('연결 실패 메시지가 앞머리와 같으면 한 번만 보여 준다', async () => {
+    deployApi.getAll.mockRejectedValue(new Error('서버에 연결할 수 없습니다'))
+    await render(<DeployList />)
+    expect(await screen.findByText('서버에 연결할 수 없습니다')).toBeTruthy()
+    expect(screen.queryByText(/서버에 연결할 수 없습니다 :/)).toBeNull()
+  })
+
+  test('목록 아래 여백에 하단 안전 영역을 더한다', async () => {
+    deployApi.getAll.mockResolvedValue(deploys)
+    await render(
+      <SafeAreaProvider initialMetrics={{ frame: { x: 0, y: 0, width: 390, height: 844 }, insets: { top: 0, left: 0, right: 0, bottom: 34 } }}>
+        <DeployList />
+      </SafeAreaProvider>,
+    )
+    await screen.findByText('acme/api')
+    expect(StyleSheet.flatten(screen.getByTestId('deploy-list').props.contentContainerStyle).paddingBottom).toBe(24 * 2 + 34)
   })
 
   test('진행 중인 배포가 있으면 3초, 없으면 15초 간격', async () => {

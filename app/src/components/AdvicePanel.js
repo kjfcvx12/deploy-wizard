@@ -1,10 +1,9 @@
 import { useState } from 'react'
-import { Platform, Pressable, StyleSheet, Text, View } from 'react-native'
+import { Pressable, StyleSheet, Text, View } from 'react-native'
 import { confidenceLabel, needLabel, tierLabel } from '../constants'
-import { radius, spacing, useColors } from '../theme'
+import { monoFont, radius, spacing, useColors } from '../theme'
 
 const COST_UNKNOWN = '아직 계산할 수 없습니다 (실제 배포로 요금 구성을 확인한 뒤 표시됩니다). 트래픽에 따라 늘어납니다.'
-const MONO = Platform.select({ ios: 'Menlo', default: 'monospace' })
 
 // 배지 색 조합 - ok 초록, warn 주황, 그 외 흐림
 function badgeTone(kind, colors) {
@@ -110,7 +109,7 @@ export default function AdvicePanel({ advice, busy, onDeploy, onReset, headingRe
         <Badge kind={official ? 'ok' : 'warn'}>{official ? '공식 지원' : '실험 지원'}</Badge>
         {!!advice.app_dir && advice.app_dir !== '.' && (
           <Text style={[styles.small, { color: colors.text }]}>
-            앱 폴더: <Text style={{ fontFamily: MONO }}>{advice.app_dir}</Text>
+            앱 폴더: <Text style={{ fontFamily: monoFont }}>{advice.app_dir}</Text>
           </Text>
         )}
       </View>
@@ -171,7 +170,7 @@ const styles = StyleSheet.create({
   title: { fontSize: 18, fontWeight: '700' },
   row: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: spacing.sm },
   code: { paddingHorizontal: spacing.sm, paddingVertical: spacing.xs, borderRadius: radius.sm },
-  codeText: { fontFamily: MONO, fontSize: 13 },
+  codeText: { fontFamily: monoFont, fontSize: 13 },
   badge: { paddingHorizontal: 10, paddingVertical: spacing.xs / 2, borderRadius: radius.pill },
   badgeText: { fontSize: 12, fontWeight: '700' },
   tier: { fontSize: 15, fontWeight: '700' },

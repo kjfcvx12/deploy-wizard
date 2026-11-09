@@ -139,8 +139,9 @@ S-20 와이어프레임의 "수준 선택 3칸"(사용자가 가벼움/보통/�
 웹과 다르게 한 것:
 - **로그**: 가로 스크롤 대신 줄바꿈, `FlatList`가 아니라 `ScrollView`(최대 500줄). 맨 아래에 있을 때만 따라 내려간다.
 - **확인 창**: 앱은 `Alert.alert`(취소가 먼저), 웹 번들은 브라우저 `confirm`이라 버튼 글자를 못 바꿔 본문에 `[확인] 멈춤 / [취소] 그대로 두기`처럼 적는다.
-- **키보드**: 스크롤 되는 폼 + `keyboardShouldPersistTaps`, iOS는 `automaticallyAdjustKeyboardInsets`, 안드로이드는 Expo 기본 동작. 기기에서는 확인하지 못했다.
-- **고정폭 글꼴**: `monoFont`(iOS Menlo, 그 외 monospace). 지금은 환경변수 카드만 쓰고 나머지는 `'monospace'`라 iOS에서 기본 글꼴이 될 수 있다.
+- **키보드**: 스크롤 되는 폼 + `keyboardShouldPersistTaps`, iOS는 `automaticallyAdjustKeyboardInsets`, 안드로이드는 스크롤을 `KeyboardAvoidingView`(`behavior="height"`)로 감싼다. 안드로이드 처리는 구현만 했고 **기기에서는 확인하지 못했다**. 두 플랫폼 모두 기기 확인 전이다.
+- **아래 여백**: 목록·새 배포·상세의 스크롤 끝에 하단 안전 영역(`insets.bottom`)을 더한다.
+- **고정폭 글꼴**: `monoFont`(iOS Menlo, 그 외 monospace)를 모든 곳(환경변수 카드, 로그, 해설 원문, Dockerfile, 앱 폴더)에서 쓴다.
 - **환경변수 종류 선택**: 웹의 `<select>` 대신 칩 다섯 개. 그룹 접기는 눌러서 여는 머리줄.
 - **뒤로 가기**: 웹의 `← 목록` 링크 대신 상단 헤더의 뒤로 가기. 제목은 `배포 #번호`.
 - **터치 크기**: 앱 쪽 버튼·입력·선택 줄은 44pt 이상으로 만들고 웹 번들로 쟀다. 헤더 뒤로 가기는 웹 번들에서 30×30으로 나왔다(내비게이션 기본 헤더, 기기에서 미확인).

@@ -1,7 +1,7 @@
 import { StyleSheet } from 'react-native'
 import { render, screen, fireEvent } from '@testing-library/react-native'
 import AdvicePanel from '../components/AdvicePanel'
-import { lightColors } from '../theme'
+import { lightColors, monoFont } from '../theme'
 
 // 웹 AdvicePanel 과 같은 모양의 분석 결과 (보통 수준, 비용 null, 지원 안 되는 데이터베이스)
 const advice = {
@@ -74,6 +74,11 @@ describe('분석 결과 패널', () => {
     expect(StyleSheet.flatten(row.props.style).color).toBe(lightColors.muted)
     const ok = screen.getByText('환경변수 4개 입력이 필요합니다')
     expect(StyleSheet.flatten(ok.props.style).color).toBe(lightColors.text)
+  })
+
+  test('앱 폴더 이름은 monoFont 로 그린다', async () => {
+    await setup()
+    expect(StyleSheet.flatten(screen.getByText('backend').props.style).fontFamily).toBe(monoFont)
   })
 
   test('앱 폴더가 . 이면 나오지 않는다', async () => {

@@ -28,6 +28,8 @@ export async function request(path, options = {}) {
     try {
       data = await response.json()
     } catch (e) {
+      // 성공(2xx)인데 본문이 잘렸거나 JSON 이 아니면, 또는 읽는 중 시간이 다 되면 성공으로 넘기지 않는다 (204 는 위에서 null)
+      if (response.ok || controller.signal.aborted) throw new Error(NETWORK_ERROR)
       data = null
     }
 

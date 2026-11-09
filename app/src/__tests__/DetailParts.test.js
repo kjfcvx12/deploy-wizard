@@ -5,7 +5,7 @@ import ExplainCard from '../components/ExplainCard'
 import IssueHistory from '../components/IssueHistory'
 import LogTerminal, { MAX_LOG_LINES, appendLogs } from '../components/LogTerminal'
 import StepProgress from '../components/StepProgress'
-import { darkColors, lightColors } from '../theme'
+import { darkColors, lightColors, monoFont } from '../theme'
 
 afterEach(() => {
   jest.restoreAllMocks()
@@ -164,6 +164,18 @@ describe('ExplainCard', () => {
     await fireEvent.press(screen.getByText('만들어진 리소스 정리'))
     expect(onRedeploy).toHaveBeenCalledTimes(1)
     expect(onCleanup).toHaveBeenCalledTimes(1)
+  })
+
+  test('원문 오류는 monoFont 로 그린다', async () => {
+    await render(<ExplainCard explain={explain} errorStep="building" errorMsg="npm ERR! 원문" hasResources busy={false} onRedeploy={jest.fn()} onCleanup={jest.fn()} />)
+    expect(StyleSheet.flatten(screen.getByText('npm ERR! 원문').props.style).fontFamily).toBe(monoFont)
+  })
+
+  test('같은 선택지 문구가 둘이어도 키 경고 없이 둘 다 나온다', async () => {
+    const spy = jest.spyOn(console, 'error')
+    await render(<ExplainCard explain={{ ...explain, actions: ['다시 시도한다', '다시 시도한다'] }} errorStep="building" errorMsg={null} hasResources busy={false} onRedeploy={jest.fn()} onCleanup={jest.fn()} />)
+    expect(screen.getAllByText('다시 시도한다')).toHaveLength(2)
+    expect(spy).not.toHaveBeenCalled()
   })
 
   test('busy 이면 버튼이 눌리지 않고, source 가 none 이면 배지가 없다', async () => {

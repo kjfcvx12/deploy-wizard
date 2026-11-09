@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
-import { AccessibilityInfo, ActivityIndicator, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native'
+import { AccessibilityInfo, ActivityIndicator, KeyboardAvoidingView, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native'
+import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import { Stack, useRouter } from 'expo-router'
 import { accountApi, adviceApi, deployApi } from '../src/api'
 import AdvicePanel from '../src/components/AdvicePanel'
@@ -50,6 +51,7 @@ function helperText(githubId, repoCount, hasBlocks) {
 export default function NewDeployScreen() {
   const colors = useColors()
   const router = useRouter()
+  const insets = useSafeAreaInsets()
   const scrollRef = useRef(null)
   const headingRef = useRef(null)
   const [repoUrl, setRepoUrl] = useState('')
@@ -204,95 +206,99 @@ export default function NewDeployScreen() {
   return (
     <>
       <Stack.Screen options={{ title: '새 배포' }} />
-      <ScrollView
-        ref={scrollRef}
-        style={{ backgroundColor: colors.bg }}
-        contentContainerStyle={styles.content}
-        keyboardShouldPersistTaps="handled"
-        keyboardDismissMode="on-drag"
-        automaticallyAdjustKeyboardInsets
-      >
-        <ConnectionPicker connections={connections} value={connectionId} onChange={chooseConnection} />
-
-        <TextInput
-          style={[styles.input, { color: colors.text, backgroundColor: colors.surface, borderColor: colors.border }]}
-          placeholder={repositories.length > 0 ? '레포를 고르거나 주소를 입력하세요' : 'https://github.com/소유자/레포'}
-          placeholderTextColor={colors.muted}
-          value={repoUrl}
-          onChangeText={(text) => { setRepoUrl(text); setRemote(null); setBranch(''); invalidate() }}
-          onSubmitEditing={() => { analyze() }}
-          autoCapitalize="none"
-          autoCorrect={false}
-          keyboardType="url"
-          returnKeyType="go"
-          accessibilityLabel="GitHub 레포 주소"
-        />
-
-        {shownRepositories.length > 0 && (
-          <ScrollView nestedScrollEnabled keyboardShouldPersistTaps="handled" style={styles.list} contentContainerStyle={styles.listContent}>
-            {shownRepositories.map((repo) => (
-              <ChoiceRow
-                key={repo.full_name}
-                label={repo.full_name}
-                tag={repo.private ? 'private' : 'public'}
-                onPress={() => { setRepoUrl(repo.html_url); setRemote(null); setBranch(''); invalidate() }}
-              />
-            ))}
-          </ScrollView>
-        )}
-
-        {remote && (
-          <ScrollView nestedScrollEnabled keyboardShouldPersistTaps="handled" style={styles.list} contentContainerStyle={styles.listContent}>
-            {remote.branches.map((name) => (
-              <ChoiceRow
-                key={name}
-                label={name === remote.default_branch ? `${name} (기본)` : name}
-                selected={name === branch}
-                onPress={() => { setBranch(name); invalidate() }}
-              />
-            ))}
-          </ScrollView>
-        )}
-
-        <View style={styles.actions}>
-          {!remote && (
+      <KeyboardAvoidingView testID="keyboard-avoiding" behavior={Platform.OS === 'android' ? 'height' : undefined} style={styles.flex}>
+        <ScrollView
+          testID="new-scroll"
+          ref={scrollRef}
+          style={{ backgroundColor: colors.bg }}
+          contentContainerStyle={[styles.content, { paddingBottom: spacing.xl * 2 + insets.bottom }]}
+          keyboardShouldPersistTaps="handled"
+          keyboardDismissMode="on-drag"
+          automaticallyAdjustKeyboardInsets
+        >
+          <ConnectionPicker connections={connections} value={connectionId} onChange={chooseConnection} />
+  
+          <TextInput
+            style={[styles.input, { color: colors.text, backgroundColor: colors.surface, borderColor: colors.border }]}
+            placeholder={repositories.length > 0 ? '레포를 고르거나 주소를 입력하세요' : 'https://github.com/소유자/레포'}
+            placeholderTextColor={colors.muted}
+            value={repoUrl}
+            onChangeText={(text) => { setRepoUrl(text); setRemote(null); setBranch(''); invalidate() }}
+            onSubmitEditing={() => { analyze() }}
+            autoCapitalize="none"
+            autoCorrect={false}
+            keyboardType="url"
+            returnKeyType="go"
+            accessibilityLabel="GitHub 레포 주소"
+          />
+  
+          {shownRepositories.length > 0 && (
+            <ScrollView nestedScrollEnabled keyboardShouldPersistTaps="handled" style={styles.list} contentContainerStyle={styles.listContent}>
+              {shownRepositories.map((repo) => (
+                <ChoiceRow
+                  key={repo.full_name}
+                  label={repo.full_name}
+                  tag={repo.private ? 'private' : 'public'}
+                  onPress={() => { setRepoUrl(repo.html_url); setRemote(null); setBranch(''); invalidate() }}
+                />
+              ))}
+            </ScrollView>
+          )}
+  
+          {remote && (
+            <ScrollView nestedScrollEnabled keyboardShouldPersistTaps="handled" style={styles.list} contentContainerStyle={styles.listContent}>
+              {remote.branches.map((name) => (
+                <ChoiceRow
+                  key={name}
+                  label={name === remote.default_branch ? `${name} (기본)` : name}
+                  selected={name === branch}
+                  onPress={() => { setBranch(name); invalidate() }}
+                />
+              ))}
+            </ScrollView>
+          )}
+  
+          <View style={styles.actions}>
+            {!remote && (
+              <Pressable
+                accessibilityRole="button"
+                accessibilityState={{ disabled: locked || !repoUrl.trim() }}
+                disabled={locked || !repoUrl.trim()}
+                onPress={() => { loadBranches() }}
+                style={({ pressed }) => [styles.button, styles.outline, { borderColor: colors.border, opacity: locked || !repoUrl.trim() ? 0.5 : pressed ? 0.7 : 1 }]}
+              >
+                <Text style={[styles.buttonText, { color: colors.text }]}>브랜치 고르기</Text>
+              </Pressable>
+            )}
             <Pressable
               accessibilityRole="button"
               accessibilityState={{ disabled: locked || !repoUrl.trim() }}
               disabled={locked || !repoUrl.trim()}
-              onPress={() => { loadBranches() }}
-              style={({ pressed }) => [styles.button, styles.outline, { borderColor: colors.border, opacity: locked || !repoUrl.trim() ? 0.5 : pressed ? 0.7 : 1 }]}
+              onPress={() => { analyze() }}
+              style={({ pressed }) => [styles.button, { backgroundColor: colors.accent, opacity: locked || !repoUrl.trim() ? 0.5 : pressed ? 0.7 : 1 }]}
             >
-              <Text style={[styles.buttonText, { color: colors.text }]}>브랜치 고르기</Text>
+              {analyzing && <ActivityIndicator size="small" color={colors.accentText} />}
+              <Text style={[styles.buttonText, { color: colors.accentText }]}>{analyzing ? '분석 중...' : '분석'}</Text>
             </Pressable>
-          )}
-          <Pressable
-            accessibilityRole="button"
-            accessibilityState={{ disabled: locked || !repoUrl.trim() }}
-            disabled={locked || !repoUrl.trim()}
-            onPress={() => { analyze() }}
-            style={({ pressed }) => [styles.button, { backgroundColor: colors.accent, opacity: locked || !repoUrl.trim() ? 0.5 : pressed ? 0.7 : 1 }]}
-          >
-            {analyzing && <ActivityIndicator size="small" color={colors.accentText} />}
-            <Text style={[styles.buttonText, { color: colors.accentText }]}>{analyzing ? '분석 중...' : '분석'}</Text>
-          </Pressable>
-        </View>
-
-        <Text style={[styles.helper, { color: colors.muted }]}>{helperText(githubId, repositories.length, connections.length > 0)}</Text>
-        {!!error && !advice && <ErrorNotice message={error} />}
-
-        {advice && (
-          <View testID="advice-panel" onLayout={onPanelLayout}>
-            <AdvicePanel advice={advice} busy={locked} onDeploy={() => { deploy() }} onReset={invalidate} headingRef={headingRef} />
           </View>
-        )}
-        {!!error && !!advice && <ErrorNotice message={error} />}
-      </ScrollView>
+  
+          <Text style={[styles.helper, { color: colors.muted }]}>{helperText(githubId, repositories.length, connections.length > 0)}</Text>
+          {!!error && !advice && <ErrorNotice message={error} />}
+  
+          {advice && (
+            <View testID="advice-panel" onLayout={onPanelLayout}>
+              <AdvicePanel advice={advice} busy={locked} onDeploy={() => { deploy() }} onReset={invalidate} headingRef={headingRef} />
+            </View>
+          )}
+          {!!error && !!advice && <ErrorNotice message={error} />}
+        </ScrollView>
+      </KeyboardAvoidingView>
     </>
   )
 }
 
 const styles = StyleSheet.create({
+  flex: { flex: 1 },
   content: { padding: spacing.lg, paddingBottom: spacing.xl * 2, gap: spacing.md },
   input: { minHeight: 48, paddingHorizontal: spacing.md, borderWidth: 1, borderRadius: radius.md, fontSize: 15 },
   list: { maxHeight: 220 },

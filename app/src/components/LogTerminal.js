@@ -1,6 +1,6 @@
 import { useRef } from 'react'
 import { ScrollView, StyleSheet, Text, View, useWindowDimensions } from 'react-native'
-import { radius, spacing, useColors } from '../theme'
+import { monoFont, radius, spacing, useColors } from '../theme'
 
 export const MAX_LOG_LINES = 500
 
@@ -63,6 +63,6 @@ export default function LogTerminal({ logs }) {
 const styles = StyleSheet.create({
   box: { borderRadius: radius.md, overflow: 'hidden' },
   content: { padding: spacing.md },
-  line: { fontFamily: 'monospace', fontSize: 12.5, lineHeight: 19 },
+  line: { fontFamily: monoFont, fontSize: 12.5, lineHeight: 19 },
   bold: { fontWeight: '700' },
 })

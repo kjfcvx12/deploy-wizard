@@ -38,6 +38,26 @@ describe('request', () => {
     await expect(request('/x')).rejects.toThrow('첫째, 둘째')
   })
 
+  test('2xx 인데 본문을 읽지 못하면(잘림·JSON 아님) 성공이 아니라 연결 실패', async () => {
+    global.fetch.mockResolvedValue({ ok: true, status: 200, json: async () => { throw new SyntaxError('Unexpected end of JSON input') } })
+    await expect(request('/api/deploys')).rejects.toThrow(new Error('서버에 연결할 수 없습니다'))
+  })
+
+  test('본문을 읽는 중에 시간이 다 되면 연결 실패', async () => {
+    jest.useFakeTimers()
+    global.fetch.mockImplementation((url, init) => Promise.resolve({
+      ok: true,
+      status: 200,
+      json: () => new Promise((resolve, reject) => {
+        init.signal.addEventListener('abort', () => reject(new Error('aborted')))
+      }),
+    }))
+    const pending = request('/x')
+    const assertion = expect(pending).rejects.toThrow(new Error('서버에 연결할 수 없습니다'))
+    await jest.advanceTimersByTimeAsync(15000)
+    await assertion
+  })
+
   test('JSON이 아닌 오류는 요청 실패 (500)', async () => {
     global.fetch.mockResolvedValue({ ok: false, status: 500, json: async () => { throw new SyntaxError('bad') } })
     await expect(request('/x')).rejects.toThrow('요청 실패 (500)')

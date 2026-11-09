@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { ActivityIndicator, FlatList, Pressable, RefreshControl, StyleSheet, Text, View } from 'react-native'
+import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import { Stack, useRouter } from 'expo-router'
 import { deployApi } from '../src/api'
 import StatusBadge from '../src/components/StatusBadge'
@@ -41,12 +42,15 @@ function NewDeployButton({ onPress, flat = false }) {
   )
 }
 
-// 서버에 닿지 못했을 때의 안내와 다시 시도 버튼
+// 서버에 닿지 못했을 때의 앞머리 문장 (api.js 의 연결 실패 메시지와 같다)
+const NETWORK_MESSAGE = '서버에 연결할 수 없습니다'
+
+// 서버에 닿지 못했을 때의 안내와 다시 시도 버튼 - 메시지가 앞머리와 같으면 한 번만 보여 준다
 function ErrorNotice({ message, onRetry }) {
   const colors = useColors()
   return (
     <View style={[styles.notice, { backgroundColor: colors.errBg }]}>
-      <Text style={[styles.noticeText, { color: colors.err }]}>서버에 연결할 수 없습니다 :{message}</Text>
+      <Text style={[styles.noticeText, { color: colors.err }]}>{message === NETWORK_MESSAGE ? message : `${NETWORK_MESSAGE} :${message}`}</Text>
       <Pressable
         accessibilityRole="button"
         onPress={onRetry}
@@ -83,6 +87,7 @@ function DeployCard({ deploy, onPress }) {
 export default function DeployListScreen() {
   const colors = useColors()
   const router = useRouter()
+  const insets = useSafeAreaInsets()
   const [pulling, setPulling] = useState(false)
   const { data, error, loading, refresh } = usePolling(() => deployApi.getAll(), listDelay, [])
 
@@ -117,13 +122,14 @@ export default function DeployListScreen() {
     <>
       <Stack.Screen options={{ title: '배포', headerRight: () => <NewDeployButton flat onPress={goNew} /> }} />
       <FlatList
+        testID="deploy-list"
         data={data || []}
         keyExtractor={(deploy) => String(deploy.d_id)}
         renderItem={({ item }) => <DeployCard deploy={item} onPress={() => router.push(`/deploys/${item.d_id}`)} />}
         ListHeaderComponent={data && error ? <ErrorNotice message={error.message} onRetry={refresh} /> : null}
         ListEmptyComponent={empty}
         refreshControl={<RefreshControl refreshing={pulling} onRefresh={onPull} tintColor={colors.accent} colors={[colors.accent]} />}
-        contentContainerStyle={styles.content}
+        contentContainerStyle={[styles.content, { paddingBottom: spacing.xl * 2 + insets.bottom }]}
         style={{ backgroundColor: colors.bg }}
       />
     </>
