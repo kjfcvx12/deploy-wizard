@@ -1,6 +1,7 @@
 import { Linking, Platform, StyleSheet } from 'react-native'
 import * as Clipboard from 'expo-clipboard'
 import { StrictMode } from 'react'
+import { SafeAreaProvider } from 'react-native-safe-area-context'
 import { render, screen, fireEvent, act, within } from '@testing-library/react-native'
 import AwsGuide from '../components/accounts/AwsGuide'
 import AwsUpdateGuide from '../components/accounts/AwsUpdateGuide'
@@ -274,6 +275,41 @@ describe('AWS 연결 안내 - RoleArn 등록', () => {
   })
 })
 
+describe('안내 창 - 상태 표시줄 여백 (최종 검토 1)', () => {
+  const METRICS = { frame: { x: 0, y: 0, width: 390, height: 844 }, insets: { top: 24, left: 0, right: 0, bottom: 0 } }
+  const topPadding = () => StyleSheet.flatten(mockKavProps[mockKavProps.length - 1].style).paddingTop
+
+  test.each(['android', 'ios'])('%s 에서 제목 줄 위 여백은 안전 영역 위쪽 값이다', async (os) => {
+    jest.replaceProperty(Platform, 'OS', os)
+    await render(
+      <SafeAreaProvider initialMetrics={METRICS}>
+        <AwsGuide setup={SETUP} busy={false} error="" onSubmit={jest.fn()} onClose={jest.fn()} />
+      </SafeAreaProvider>,
+    )
+    expect(topPadding()).toBe(24)
+  })
+
+  test('스택 업데이트 안내도 같은 틀이라 같은 여백이다', async () => {
+    jest.replaceProperty(Platform, 'OS', 'android')
+    await render(
+      <SafeAreaProvider initialMetrics={METRICS}>
+        <AwsUpdateGuide info={INFO} busy={false} error="" onCheck={jest.fn()} onClose={jest.fn()} />
+      </SafeAreaProvider>,
+    )
+    expect(topPadding()).toBe(24)
+  })
+
+  test('웹에서는 여백을 더하지 않는다', async () => {
+    jest.replaceProperty(Platform, 'OS', 'web')
+    await render(
+      <SafeAreaProvider initialMetrics={METRICS}>
+        <AwsGuide setup={SETUP} busy={false} error="" onSubmit={jest.fn()} onClose={jest.fn()} />
+      </SafeAreaProvider>,
+    )
+    expect(topPadding()).toBe(0)
+  })
+})
+
 describe('AWS 연결 안내 - 이어서 하기', () => {
   test('ExternalId 없이 RoleArn 만 받는다', async () => {
     await guide({ setup: { a_id: 7, label: '운영 계정' }, resume: true })
@@ -364,6 +400,21 @@ describe('ExistingPicker', () => {
     await fireEvent.press(screen.getByRole('button', { name: '운영 계정에 이을 AWS 계정 닫기' }))
     await fireEvent(screen.getByTestId('picker-modal'), 'requestClose')
     expect(onClose).toHaveBeenCalledTimes(2)
+  })
+
+  test('작업 중(busy)이면 항목을 눌러도 알리지 않는다 (최종 검토 4)', async () => {
+    const onPick = jest.fn()
+    await render(<ExistingPicker title="고르기" items={items} busy onPick={onPick} onClose={jest.fn()} />)
+    const item = screen.getByRole('button', { name: '고르기: 개발 계정, 연결됨 · 계정 111111111111' })
+    expect(item).toBeDisabled()
+    await fireEvent.press(screen.getByText('개발 계정'))
+    expect(onPick).not.toHaveBeenCalled()
+    expect(screen.getByRole('button', { name: '고르기 닫기' })).toBeEnabled()
+  })
+
+  test('작업 중이 아니면 항목을 누를 수 있다', async () => {
+    await render(<ExistingPicker title="고르기" items={items} busy={false} onPick={jest.fn()} onClose={jest.fn()} />)
+    expect(screen.getByRole('button', { name: '고르기: 개발 계정, 연결됨 · 계정 111111111111' })).toBeEnabled()
   })
 
   test('항목이 많으면 안에서 스크롤한다', async () => {

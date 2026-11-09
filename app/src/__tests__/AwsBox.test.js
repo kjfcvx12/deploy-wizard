@@ -546,8 +546,28 @@ describe('AWS 상자 - 이미 연결한 계정에서 고르기', () => {
     expect(screen.getAllByText('운영 AWS')).toHaveLength(1)
     await fireEvent.press(screen.getByText('실험 AWS'))
     await waitFor(() => expect(accountApi.setConnectionAws).toHaveBeenCalledWith(1, 6))
+    expect(accountApi.setConnectionAws).toHaveBeenCalledTimes(1)
     expect(reload).toHaveBeenCalledTimes(1)
     expect(screen.queryByText('운영 계정에 이을 AWS 계정')).toBeNull()
+  })
+
+  test('다른 작업 중에는 항목이 잠기고 눌러도 보내지 않으며 창도 닫히지 않는다 (최종 검토 4)', async () => {
+    let resolve
+    accountApi.reverifyAws.mockReturnValue(new Promise((r) => { resolve = r }))
+    accountApi.getTemplateStatus.mockResolvedValue(status())
+    accountApi.setConnectionAws.mockResolvedValue({})
+    await show(blockOf(aws()), { awsAccounts: others })
+    await fireEvent.press(btn('운영 계정 AWS 이미 연결한 계정에서 고르기'))
+    expect(btn('운영 계정에 이을 AWS 계정: 실험 AWS, 연결됨 · 계정 333333333333')).toBeEnabled()
+    await fireEvent.press(btn('운영 계정 AWS 연결 확인'))
+    expect(btn('운영 계정에 이을 AWS 계정: 실험 AWS, 연결됨 · 계정 333333333333')).toBeDisabled()
+    await fireEvent.press(screen.getByText('실험 AWS'))
+    expect(accountApi.setConnectionAws).not.toHaveBeenCalled()
+    expect(screen.getByText('운영 계정에 이을 AWS 계정')).toBeTruthy()
+    await act(async () => { resolve({ status: 'invalid', a_id: 1 }) })
+    expect(btn('운영 계정에 이을 AWS 계정: 실험 AWS, 연결됨 · 계정 333333333333')).toBeEnabled()
+    await fireEvent.press(screen.getByText('실험 AWS'))
+    await waitFor(() => expect(accountApi.setConnectionAws).toHaveBeenCalledTimes(1))
   })
 
   test('닫기는 아무것도 보내지 않는다', async () => {

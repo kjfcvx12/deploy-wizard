@@ -3,7 +3,8 @@ import { radius, spacing, useColors, wrapAnywhere } from '../../theme'
 import { Button } from '../ui'
 
 // 이미 연결한 계정 고르기 - 작은 목록 창. items 는 { key, title, subtitle }, 누르면 onPick(item), 뒤로 가기·닫기·바깥은 onClose
-export default function ExistingPicker({ title, items, onPick, onClose }) {
+// busy 이면 항목을 잠근다 (다른 작업 중에 눌러도 조용히 버려지지 않게)
+export default function ExistingPicker({ title, items, busy = false, onPick, onClose }) {
   const colors = useColors()
   return (
     <Modal visible transparent animationType="fade" onRequestClose={onClose} testID="picker-modal">
@@ -17,8 +18,10 @@ export default function ExistingPicker({ title, items, onPick, onClose }) {
                 key={item.key}
                 accessibilityRole="button"
                 accessibilityLabel={`${title}: ${item.title}, ${item.subtitle}`}
+                accessibilityState={{ disabled: busy }}
+                disabled={busy}
                 onPress={() => onPick(item)}
-                style={({ pressed }) => [styles.item, { borderColor: colors.border, opacity: pressed ? 0.7 : 1 }]}
+                style={({ pressed }) => [styles.item, { borderColor: colors.border, opacity: busy ? 0.5 : pressed ? 0.7 : 1 }]}
               >
                 <Text style={[styles.itemTitle, wrapAnywhere, { color: colors.text }]}>{item.title}</Text>
                 <Text style={[styles.itemSub, wrapAnywhere, { color: colors.muted }]}>{item.subtitle}</Text>

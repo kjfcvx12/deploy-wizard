@@ -12,18 +12,23 @@ const OPEN_ERROR = '주소를 열 수 없습니다'
 
 // GitHub 설치 화면을 연 뒤 보이는 안내 - 앱 전용 문구 (웹은 같은 창이 GitHub 로 갔다가 돌아와 이 안내가 없다)
 const INSTALL_NOTICE = 'GitHub 설치 화면에서 설치를 마치고 이 앱으로 돌아오세요.'
+// 돌아왔는데도 블록에 설치가 없을 때 보이는 안내 - 앱 전용 (웹은 같은 창이 돌아와 콜백이 곧바로 처리된다). 서버의 콜백 주소를 폰이 열 수 없으면 설치가 저장되지 않는다
+const NOT_YET_NOTICE = '아직 설치가 확인되지 않았습니다. GitHub 설치를 마쳤는지 확인하고 다시 시도하세요. 서버의 GitHub 앱 콜백 주소를 이 폰에서 열 수 없으면 PC에서 연결해야 합니다.'
 // 이미 GitHub 가 이어진 블록에서 새 계정을 설치했을 때 덧붙이는 앱 전용 안내 (새 설치는 블록에 자동으로 이어지지 않는다)
 const PICK_HINT = ' 새 계정을 이 블록에 쓰려면 [이미 연결한 계정에서 고르기]로 고르세요.'
 
 // 연결 블록 안의 GitHub 상자 (웹 AccountsPage 의 GitHub AccountBox) - 설치 열기·돌아온 뒤 확인·연결 확인·해제·기존 설치 고르기
 // run/reload/setNotice/busy 는 화면(AccountsScreen)이 주고, installations 는 고르기 목록(전체 GitHub 설치)이다
-export default function GithubBox({ block, installations, busy, run, reload, setNotice }) {
+// returnTick 은 앱이 백그라운드에서 돌아와 목록을 다시 받아 마칠 때마다 화면이 하나씩 올리는 번호다
+export default function GithubBox({ block, installations, busy, run, reload, setNotice, returnTick = 0 }) {
   const colors = useColors()
   const github = block.github
   const gid = github?.g_id
   const [picking, setPicking] = useState(false)
   // 설치 화면을 열고 돌아오기를 기다리는 중인가 (연결 전 블록에서 [계정 추가]를 눌렀을 때만)
   const awaiting = useRef(false)
+  // 안내를 이미 보인 복귀 번호
+  const handledTick = useRef(returnTick)
   const alive = useRef(true)
   useEffect(() => {
     alive.current = true
@@ -41,15 +46,18 @@ export default function GithubBox({ block, installations, busy, run, reload, set
     })
   }
 
-  // 계정 추가 - 설치 주소를 받아 https 일 때만 브라우저로 연다. 연결 전 블록이면 돌아와 설치가 생기기를 기다린다
+  // 계정 추가 - 설치 주소를 받아 https 일 때만 브라우저로 연다. 연결 전 블록이면 돌아와 설치가 생기기를 기다린다 (연 뒤가 아니라 열기 전에 기다림을 켠다 - openURL 이 끝나기 전에 돌아와도 알아보게)
   const add = () => {
     run(async () => {
       const linked = !!github
       const { url } = await accountApi.getGithubInstallUrl(linked ? null : block.c_id)
       if (!alive.current) return
-      if (!(await openLink(url))) throw new Error(OPEN_ERROR)
-      if (!alive.current) return
       if (!linked) awaiting.current = true
+      if (!(await openLink(url))) {
+        awaiting.current = false
+        throw new Error(OPEN_ERROR)
+      }
+      if (!alive.current) return
       setNotice(INSTALL_NOTICE + (linked ? PICK_HINT : ''))
     })
   }
@@ -62,6 +70,14 @@ export default function GithubBox({ block, installations, busy, run, reload, set
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [gid, busy])
 
+  // 앱 전용: 기다리다 돌아와 목록을 받았는데도 설치가 없으면 안내를 한 번 보인다 - 기다림은 그대로 두어 다음 복귀에서 마칠 수 있다. 작업 중이면 끝난 뒤에
+  useEffect(() => {
+    if (returnTick === handledTick.current || busy) return
+    handledTick.current = returnTick
+    if (awaiting.current && !gid) setNotice(NOT_YET_NOTICE)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [returnTick, busy])
+
   // 연결 해제 - 블록에서만 뗀다. 확인은 받지 않고 GitHub 앱 설치는 그대로 둔다 (웹과 같다)
   const release = () => {
     run(async () => {
@@ -70,11 +86,11 @@ export default function GithubBox({ block, installations, busy, run, reload, set
     })
   }
 
-  // 이미 연결한 설치를 이 블록에 잇는다
+  // 이미 연결한 설치를 이 블록에 잇는다 - 작업이 받아들여진 뒤에만 고르기 창을 닫고 기다림을 끝낸다 (다른 작업 중이면 run 이 버리므로 창을 둔다)
   const pickExisting = (item) => {
-    setPicking(false)
-    awaiting.current = false
     run(async () => {
+      setPicking(false)
+      awaiting.current = false
       await accountApi.setConnectionGithub(block.c_id, item.key)
       await reload()
     })
@@ -114,6 +130,7 @@ export default function GithubBox({ block, installations, busy, run, reload, set
       {picking && (
         <ExistingPicker
           title={`${L}에 이을 GitHub 계정`}
+          busy={busy}
           items={others.map((item) => ({
             key: item.g_id,
             title: item.account_login,

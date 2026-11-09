@@ -14,6 +14,7 @@ jest.mock('../api', () => ({
 
 const INSTALL = 'https://github.com/apps/deploy-wizard/installations/new?state=1'
 const NOTICE = 'GitHub 설치 화면에서 설치를 마치고 이 앱으로 돌아오세요.'
+const NOT_YET = '아직 설치가 확인되지 않았습니다. GitHub 설치를 마쳤는지 확인하고 다시 시도하세요. 서버의 GitHub 앱 콜백 주소를 이 폰에서 열 수 없으면 PC에서 연결해야 합니다.'
 const gh = (over = {}) => ({
   g_id: 5, installation_id: 1001, account_login: 'kjfcvx12', account_type: 'User', repository_selection: 'all',
   status: 'active', created_at: '2026-11-01T00:00:00', updated_at: '2026-11-09T00:00:00', ...over,
@@ -22,7 +23,7 @@ const blockOf = (github, c_id = 1, label = '운영 계정') => ({ c_id, label, a
 const CHECK = { g_id: 5, account_login: 'kjfcvx12', repository_count: 7, repositories: ['a', 'b'] }
 
 // 화면(AccountsScreen)의 run/busy 와 같은 규칙으로 GithubBox 를 감싼다
-function Harness({ block, installations = [], reload, setNotice }) {
+function Harness({ block, installations = [], reload, setNotice, returnTick }) {
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   const busyRef = useRef(false)
@@ -37,7 +38,7 @@ function Harness({ block, installations = [], reload, setNotice }) {
   return (
     <>
       {!!error && <Notice>{error}</Notice>}
-      <GithubBox block={block} installations={installations} busy={busy} run={run} reload={reload} setNotice={setNotice} />
+      <GithubBox block={block} installations={installations} busy={busy} run={run} reload={reload} setNotice={setNotice} returnTick={returnTick} />
     </>
   )
 }
@@ -58,7 +59,7 @@ afterEach(() => {
   expect(noisy).toEqual([])
 })
 
-const el = (block, installations) => <Harness block={block} installations={installations} reload={reload} setNotice={setNotice} />
+const el = (block, installations, returnTick) => <Harness block={block} installations={installations} reload={reload} setNotice={setNotice} returnTick={returnTick} />
 const show = (block, installations) => render(el(block, installations))
 const btn = (name) => screen.getByRole('button', { name })
 
@@ -223,6 +224,29 @@ describe('GitHub 상자 - 이미 연결한 계정에서 고르기', () => {
     await fireEvent.press(screen.getByText('other-login'))
     await waitFor(() => expect(reload).toHaveBeenCalledTimes(1))
     expect(accountApi.setConnectionGithub).toHaveBeenCalledWith(1, 6)
+    expect(accountApi.setConnectionGithub).toHaveBeenCalledTimes(1)
+    expect(screen.queryByTestId('picker-modal')).toBeNull()
+  })
+
+  test('다른 작업 중에는 항목이 잠기고 눌러도 보내지 않으며 창도 닫히지 않는다 (최종 검토 4)', async () => {
+    let resolve
+    accountApi.checkGithub.mockReturnValue(new Promise((r) => { resolve = r }))
+    accountApi.setConnectionGithub.mockResolvedValue({})
+    const mine = gh({ g_id: 5, account_login: 'mine-login' })
+    const other = gh({ g_id: 6, account_login: 'other-login' })
+    await show(blockOf(mine), [mine, other])
+    await fireEvent.press(btn('운영 계정 GitHub 이미 연결한 계정에서 고르기'))
+    const item = () => btn('운영 계정에 이을 GitHub 계정: other-login, 연결됨 · 개인')
+    expect(item()).toBeEnabled()
+    await fireEvent.press(btn('운영 계정 GitHub 연결 확인'))
+    expect(item()).toBeDisabled()
+    await fireEvent.press(screen.getByText('other-login'))
+    expect(accountApi.setConnectionGithub).not.toHaveBeenCalled()
+    expect(screen.getByTestId('picker-modal')).toBeTruthy()
+    await act(async () => { resolve(CHECK) })
+    expect(item()).toBeEnabled()
+    await fireEvent.press(screen.getByText('other-login'))
+    await waitFor(() => expect(accountApi.setConnectionGithub).toHaveBeenCalledTimes(1))
     expect(screen.queryByTestId('picker-modal')).toBeNull()
   })
 
@@ -334,6 +358,107 @@ describe('GitHub 상자 - 설치 뒤 돌아왔을 때 자동 확인', () => {
     await view.unmount()
     await act(async () => { resolve(CHECK) })
     expect(setNotice).not.toHaveBeenCalled()
+  })
+})
+
+describe('GitHub 상자 - 돌아왔는데 설치가 없을 때 (최종 검토 2, 앱 전용)', () => {
+  const start = async (block, tick = 0) => {
+    accountApi.getGithubInstallUrl.mockResolvedValue({ url: INSTALL })
+    const view = await render(el(block, [], tick))
+    await fireEvent.press(btn('운영 계정 GitHub 계정 추가'))
+    await waitFor(() => expect(setNotice).toHaveBeenCalledWith(expect.stringContaining(NOTICE)))
+    return view
+  }
+
+  test('기다리는 중에 돌아왔는데도 설치가 없으면 안내를 한 번 보이고 확인은 하지 않는다', async () => {
+    const view = await start(blockOf(null))
+    setNotice.mockClear()
+    await view.rerender(el(blockOf(null), [], 1))
+    expect(setNotice).toHaveBeenCalledTimes(1)
+    expect(setNotice).toHaveBeenCalledWith(NOT_YET)
+    expect(accountApi.checkGithub).not.toHaveBeenCalled()
+    // 같은 복귀에서 목록만 다시 와도 또 보이지 않는다
+    await view.rerender(el(blockOf(null), [], 1))
+    expect(setNotice).toHaveBeenCalledTimes(1)
+  })
+
+  test('기다림은 그대로라서 다음 복귀에서 설치가 생기면 확인한다 (복귀마다 안내는 한 번)', async () => {
+    accountApi.checkGithub.mockResolvedValue(CHECK)
+    const view = await start(blockOf(null))
+    await view.rerender(el(blockOf(null), [], 1))
+    await view.rerender(el(blockOf(null), [], 2))
+    expect(setNotice.mock.calls.filter(([m]) => m === NOT_YET)).toHaveLength(2)
+    await view.rerender(el(blockOf(gh()), [], 3))
+    await waitFor(() => expect(accountApi.checkGithub).toHaveBeenCalledTimes(1))
+    expect(setNotice).not.toHaveBeenLastCalledWith(NOT_YET)
+    expect(setNotice.mock.calls.filter(([m]) => m === NOT_YET)).toHaveLength(2)
+  })
+
+  test('설치 화면을 연 적이 없으면 돌아와도 안내하지 않는다', async () => {
+    const view = await show(blockOf(null))
+    await view.rerender(el(blockOf(null), [], 1))
+    expect(setNotice).not.toHaveBeenCalled()
+  })
+
+  test('돌아왔는데 설치가 생겼으면 안내 대신 확인한다', async () => {
+    accountApi.checkGithub.mockResolvedValue(CHECK)
+    const view = await start(blockOf(null))
+    await view.rerender(el(blockOf(gh()), [], 1))
+    await waitFor(() => expect(accountApi.checkGithub).toHaveBeenCalledTimes(1))
+    expect(setNotice).not.toHaveBeenCalledWith(NOT_YET)
+  })
+
+  test('이미 설치가 있던 블록은 돌아와도 안내하지 않는다', async () => {
+    const view = await start(blockOf(gh()))
+    await view.rerender(el(blockOf(gh()), [], 1))
+    expect(setNotice).not.toHaveBeenCalledWith(NOT_YET)
+  })
+
+  test('열기가 거절되면 기다리지 않으므로 돌아와도 안내하지 않는다', async () => {
+    accountApi.getGithubInstallUrl.mockResolvedValue({ url: 'ftp://x' })
+    const view = await show(blockOf(null))
+    await fireEvent.press(btn('운영 계정 GitHub 계정 추가'))
+    await screen.findByText('주소를 열 수 없습니다')
+    await view.rerender(el(blockOf(null), [], 1))
+    expect(setNotice).not.toHaveBeenCalledWith(NOT_YET)
+  })
+
+  test('열기가 끝나기 전에 돌아온 것도 알아본다 (openURL 이 복귀 뒤에 끝나는 경우)', async () => {
+    let resolveOpen
+    Linking.openURL.mockReturnValue(new Promise((r) => { resolveOpen = r }))
+    accountApi.getGithubInstallUrl.mockResolvedValue({ url: INSTALL })
+    accountApi.checkGithub.mockResolvedValue(CHECK)
+    const view = await show(blockOf(null))
+    await fireEvent.press(btn('운영 계정 GitHub 계정 추가'))
+    await waitFor(() => expect(Linking.openURL).toHaveBeenCalledTimes(1))
+    // 아직 openURL 이 끝나지 않았는데 앱이 돌아와 목록에 설치가 생겼다
+    await view.rerender(el(blockOf(gh()), [], 1))
+    expect(accountApi.checkGithub).not.toHaveBeenCalled()
+    await act(async () => { resolveOpen(true) })
+    await waitFor(() => expect(accountApi.checkGithub).toHaveBeenCalledTimes(1))
+    expect(accountApi.checkGithub).toHaveBeenCalledWith(5)
+  })
+
+  test('열기가 끝나기 전에 돌아왔는데 설치가 없으면 열기가 끝난 뒤 안내한다', async () => {
+    let resolveOpen
+    Linking.openURL.mockReturnValue(new Promise((r) => { resolveOpen = r }))
+    accountApi.getGithubInstallUrl.mockResolvedValue({ url: INSTALL })
+    const view = await show(blockOf(null))
+    await fireEvent.press(btn('운영 계정 GitHub 계정 추가'))
+    await waitFor(() => expect(Linking.openURL).toHaveBeenCalledTimes(1))
+    await view.rerender(el(blockOf(null), [], 1))
+    await act(async () => { resolveOpen(true) })
+    await waitFor(() => expect(setNotice).toHaveBeenLastCalledWith(NOT_YET))
+  })
+
+  test('열기에 실패하면 기다림을 되돌린다', async () => {
+    Linking.openURL.mockRejectedValue(new Error('no browser'))
+    accountApi.getGithubInstallUrl.mockResolvedValue({ url: INSTALL })
+    const view = await show(blockOf(null))
+    await fireEvent.press(btn('운영 계정 GitHub 계정 추가'))
+    await screen.findByText('주소를 열 수 없습니다')
+    await view.rerender(el(blockOf(gh()), [], 1))
+    expect(accountApi.checkGithub).not.toHaveBeenCalled()
   })
 })
 

@@ -170,10 +170,10 @@ export default function AwsBox({ block, connections, awsAccounts, templateStatus
     },
   })
 
-  // 이미 연결한 계정을 이 블록에 잇는다
+  // 이미 연결한 계정을 이 블록에 잇는다 - 작업이 받아들여진 뒤에만 고르기 창을 닫는다 (다른 작업 중이면 run 이 버리므로 창을 둔다)
   const pickExisting = (item) => {
-    setPicking(false)
     run(async () => {
+      setPicking(false)
       await accountApi.setConnectionAws(block.c_id, item.key)
       await reload()
     })
@@ -267,6 +267,7 @@ export default function AwsBox({ block, connections, awsAccounts, templateStatus
       {picking && (
         <ExistingPicker
           title={`${L}에 이을 AWS 계정`}
+          busy={busy}
           items={others.map((item) => ({
             key: item.a_id,
             title: item.label,

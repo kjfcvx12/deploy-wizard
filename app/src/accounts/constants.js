@@ -19,5 +19,5 @@ export const CLEANUP_TEXT = {
   body: '스택을 만들 때 콘솔에 올린 deploy_wizard_role.yaml이 내 AWS 계정의 S3에 남아 있습니다. 그 파일만 지웁니다. 버킷과 다른 파일은 건드리지 않습니다.\n\n지워도 다시 등록할 필요는 없습니다. 이 파일은 올릴 때 쓴 사본일 뿐이고, 스택은 템플릿 내용을 따로 보관하고 있어 연결이 그대로 유지됩니다. 나중에 스택을 업데이트할 때는 최신 템플릿을 새로 올리면 됩니다.',
 }
 
-// 바깥 주소는 https:// 로 시작하는 것만 연다 (대소문자 무시, 앞뒤 공백이나 호스트 없는 주소는 거절)
-export const isHttps = (url) => typeof url === 'string' && /^https:\/\/\S+/i.test(url)
+// 바깥 주소는 https:// 로 시작하는 것만 연다 (대소문자 무시, 앞뒤 공백·가운데 공백이나 호스트 없는 주소는 거절)
+export const isHttps = (url) => typeof url === 'string' && /^https:\/\/\S+$/i.test(url)

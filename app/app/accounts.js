@@ -4,7 +4,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import { Stack } from 'expo-router'
 import { accountApi } from '../src/api'
 import { DELETE_TEXT } from '../src/accounts/constants'
-import { readPickedBlock, writePickedBlock } from '../src/accounts/pickedBlock'
+import { clearPickedBlock, readPickedBlock, writePickedBlock } from '../src/accounts/pickedBlock'
 import AddBlockForm from '../src/components/accounts/AddBlockForm'
 import AwsBox from '../src/components/accounts/AwsBox'
 import BlockCard from '../src/components/accounts/BlockCard'
@@ -36,6 +36,8 @@ export default function AccountsScreen() {
   const statusSeq = useRef(0)
   const busyRef = useRef(false)
   const pickedRead = useRef(false)
+  // 앱이 돌아와 목록을 받아 마칠 때마다 올라가는 번호 - GitHub 상자가 "돌아왔는데 설치가 없다"를 알아보는 데 쓴다
+  const [returnTick, setReturnTick] = useState(0)
   // 방금 만든 블록 - 카드가 처음 배치될 때 그 위치로 스크롤한다
   const scrollTarget = useRef(null)
 
@@ -107,8 +109,10 @@ export default function AccountsScreen() {
     }
   }
 
-  // GitHub 설치 화면(브라우저)에서 앱으로 돌아오면 목록을 한 번 다시 받는다 (딥링크가 없어 돌아온 것을 이렇게 안다)
-  useOnForeground(() => { reload() })
+  // GitHub 설치 화면(브라우저)에서 앱으로 돌아오면 목록을 한 번 다시 받는다 (딥링크가 없어 돌아온 것을 이렇게 안다). 받아 마치면 GitHub 상자에 알린다
+  useOnForeground(() => {
+    reload().then((ok) => { if (ok && alive.current) setReturnTick((tick) => tick + 1) })
+  })
 
   // 한 가지 일을 하는 동안 버튼을 잠그고, 실패하면 빨간 알림에 서버 메시지를 보인다 (끝나면 반드시 푼다)
   const run = async (work) => {
@@ -145,6 +149,8 @@ export default function AccountsScreen() {
     onConfirm: () => {
       run(async () => {
         await accountApi.deleteConnection(block.c_id)
+        // 저장해 둔 선택이 지운 블록이면 비운다 - 번호가 새 블록에 다시 쓰여도 낡은 선택으로 붙지 않게 (블록이 하나뿐이면 화면에만 선택됨일 수 있어 저장값을 읽어 본다)
+        if ((await readPickedBlock()) === block.c_id) await clearPickedBlock()
         await reload()
       })
     },
@@ -216,6 +222,7 @@ export default function AccountsScreen() {
                 run={run}
                 reload={reload}
                 setNotice={setNotice}
+                returnTick={returnTick}
               />
             </BlockCard>
           </View>

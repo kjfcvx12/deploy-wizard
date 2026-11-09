@@ -5,7 +5,7 @@ import { render, screen, fireEvent, act, waitFor } from '@testing-library/react-
 import { accountApi } from '../api'
 import { confirmAction } from '../confirm'
 import { DELETE_TEXT } from '../accounts/constants'
-import { readPickedBlock, writePickedBlock } from '../accounts/pickedBlock'
+import { clearPickedBlock, readPickedBlock, writePickedBlock } from '../accounts/pickedBlock'
 import AccountsScreen from '../../app/accounts'
 
 // KeyboardAvoidingView 는 behavior 를 화면 요소로 내보내지 않으므로, 받은 속성을 기록하는 대체품을 쓴다
@@ -44,7 +44,7 @@ jest.mock('../api', () => ({
   },
 }))
 jest.mock('../confirm', () => ({ confirmAction: jest.fn() }))
-jest.mock('../accounts/pickedBlock', () => ({ readPickedBlock: jest.fn(), writePickedBlock: jest.fn() }))
+jest.mock('../accounts/pickedBlock', () => ({ readPickedBlock: jest.fn(), writePickedBlock: jest.fn(), clearPickedBlock: jest.fn() }))
 
 const block = (c_id, label) => ({ c_id, label, aws: null, github: null })
 const ONE = [block(1, '운영 계정')]
@@ -68,6 +68,7 @@ beforeEach(() => {
   confirmAction.mockReset()
   readPickedBlock.mockReset().mockResolvedValue(null)
   writePickedBlock.mockReset().mockResolvedValue(undefined)
+  clearPickedBlock.mockReset().mockResolvedValue(undefined)
 })
 
 describe('계정 연결 화면 - 불러오기', () => {
@@ -343,6 +344,66 @@ describe('계정 연결 화면 - 블록 삭제', () => {
     await waitFor(() => expect(screen.queryByText('운영 계정')).toBeNull())
     expect(accountApi.deleteConnection).toHaveBeenCalledWith(1)
     expect(screen.getByText('개발 계정')).toBeTruthy()
+  })
+
+  describe('저장해 둔 선택 지우기 (최종 검토 7)', () => {
+    const del = async (index) => {
+      await fireEvent.press(screen.getAllByText('블록 삭제')[index])
+      await act(async () => { confirmAction.mock.calls[0][0].onConfirm() })
+    }
+
+    test('저장된 번호가 지운 블록이면 저장값을 지운다', async () => {
+      readPickedBlock.mockResolvedValue(1)
+      accountApi.getConnections.mockResolvedValueOnce(TWO).mockResolvedValue([TWO[1]])
+      accountApi.deleteConnection.mockResolvedValue(null)
+      await render(<AccountsScreen />)
+      await screen.findByText('운영 계정')
+      await del(0)
+      await waitFor(() => expect(screen.queryByText('운영 계정')).toBeNull())
+      expect(clearPickedBlock).toHaveBeenCalledTimes(1)
+    })
+
+    test('블록이 하나뿐이어도 저장된 번호가 그 블록이면 지운다', async () => {
+      readPickedBlock.mockResolvedValue(1)
+      accountApi.getConnections.mockResolvedValueOnce(ONE).mockResolvedValue([])
+      accountApi.deleteConnection.mockResolvedValue(null)
+      await render(<AccountsScreen />)
+      await screen.findByText('운영 계정')
+      await del(0)
+      await waitFor(() => expect(screen.queryByText('운영 계정')).toBeNull())
+      expect(clearPickedBlock).toHaveBeenCalledTimes(1)
+    })
+
+    test('저장된 번호가 다른 블록이면 저장값을 그대로 둔다', async () => {
+      readPickedBlock.mockResolvedValue(2)
+      accountApi.getConnections.mockResolvedValueOnce(TWO).mockResolvedValue([TWO[1]])
+      accountApi.deleteConnection.mockResolvedValue(null)
+      await render(<AccountsScreen />)
+      await screen.findByText('운영 계정')
+      await del(0)
+      await waitFor(() => expect(screen.queryByText('운영 계정')).toBeNull())
+      expect(clearPickedBlock).not.toHaveBeenCalled()
+    })
+
+    test('저장된 게 없으면 지우지 않는다', async () => {
+      accountApi.getConnections.mockResolvedValueOnce(ONE).mockResolvedValue([])
+      accountApi.deleteConnection.mockResolvedValue(null)
+      await render(<AccountsScreen />)
+      await screen.findByText('운영 계정')
+      await del(0)
+      await waitFor(() => expect(screen.queryByText('운영 계정')).toBeNull())
+      expect(clearPickedBlock).not.toHaveBeenCalled()
+    })
+
+    test('삭제가 실패하면 저장값을 건드리지 않는다', async () => {
+      readPickedBlock.mockResolvedValue(1)
+      accountApi.deleteConnection.mockRejectedValue(new Error('삭제할 수 없습니다'))
+      await render(<AccountsScreen />)
+      await screen.findByText('운영 계정')
+      await del(0)
+      expect(await screen.findByText('삭제할 수 없습니다')).toBeTruthy()
+      expect(clearPickedBlock).not.toHaveBeenCalled()
+    })
   })
 
   test('삭제가 실패하면 서버 메시지를 보여 주고 버튼이 풀린다', async () => {
@@ -621,6 +682,45 @@ describe('계정 연결 화면 - GitHub 상자와 앱 복귀', () => {
     await goAway()
     await comeBack()
     expect(accountApi.checkGithub).toHaveBeenCalledTimes(1)
+  })
+
+  test('돌아왔는데도 설치가 없으면 안내를 한 번 보이고 확인은 하지 않는다 - 다음 복귀에서 설치가 생기면 확인한다 (최종 검토 2)', async () => {
+    const NOT_YET = '아직 설치가 확인되지 않았습니다. GitHub 설치를 마쳤는지 확인하고 다시 시도하세요. 서버의 GitHub 앱 콜백 주소를 이 폰에서 열 수 없으면 PC에서 연결해야 합니다.'
+    accountApi.getConnections.mockResolvedValue(ONE)
+    accountApi.getGithubInstallUrl.mockResolvedValue({ url: 'https://github.com/apps/deploy-wizard/installations/new?state=1' })
+    accountApi.checkGithub.mockResolvedValue(CHECK)
+    await render(<AccountsScreen />)
+    await screen.findByText('운영 계정')
+    await fireEvent.press(screen.getByRole('button', { name: '운영 계정 GitHub 계정 추가' }))
+    await screen.findByText('GitHub 설치 화면에서 설치를 마치고 이 앱으로 돌아오세요.')
+    await goAway()
+    await comeBack()
+    expect(await screen.findByText(NOT_YET)).toBeTruthy()
+    expect(screen.queryByText('GitHub 설치 화면에서 설치를 마치고 이 앱으로 돌아오세요.')).toBeNull()
+    expect(accountApi.checkGithub).not.toHaveBeenCalled()
+    // 두 번째 복귀 - 안내가 다시 한 번
+    await goAway()
+    await comeBack()
+    expect(await screen.findByText(NOT_YET)).toBeTruthy()
+    expect(accountApi.checkGithub).not.toHaveBeenCalled()
+    // 세 번째 복귀에서 설치가 생기면 확인한다
+    accountApi.getConnections.mockResolvedValue(WITH_GH)
+    accountApi.listGithub.mockResolvedValue([GH])
+    await goAway()
+    await comeBack()
+    expect(await screen.findByText('GitHub 연결 확인됨 — kjfcvx12 · 레포 3개에 접근할 수 있습니다 (a, b, c)')).toBeTruthy()
+    expect(accountApi.checkGithub).toHaveBeenCalledTimes(1)
+    expect(screen.queryByText(NOT_YET)).toBeNull()
+  })
+
+  test('설치 화면을 연 적이 없으면 돌아와도 안내가 없다', async () => {
+    accountApi.getConnections.mockResolvedValue(ONE)
+    await render(<AccountsScreen />)
+    await screen.findByText('운영 계정')
+    await goAway()
+    await comeBack()
+    await waitFor(() => expect(accountApi.getConnections).toHaveBeenCalledTimes(2))
+    expect(screen.queryByText(/아직 설치가 확인되지 않았습니다/)).toBeNull()
   })
 
   test('계정 추가를 누르지 않고 돌아왔을 때 설치가 생겨도 확인하지 않는다', async () => {

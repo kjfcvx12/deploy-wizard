@@ -20,10 +20,19 @@ jest.mock('react-native/Libraries/Components/Keyboard/KeyboardAvoidingView', () 
     },
   }
 })
-jest.mock('expo-router', () => ({
-  useRouter: () => ({ replace: mockReplace, push: mockPush }),
-  Stack: { Screen: () => null },
-}))
+// 화면 포커스 흉내 - 마운트 때 효과를 한 번 실행하고, 다시 포커스를 받는 것은 mockFocus.regain() 으로 만든다
+const mockFocus = { effect: null, regain: () => mockFocus.effect() }
+jest.mock('expo-router', () => {
+  const React = require('react')
+  return {
+    useRouter: () => ({ replace: mockReplace, push: mockPush }),
+    Stack: { Screen: () => null },
+    useFocusEffect: (effect) => {
+      mockFocus.effect = effect
+      React.useEffect(() => effect(), [effect])
+    },
+  }
+})
 jest.mock('../accounts/pickedBlock', () => ({ readPickedBlock: jest.fn() }))
 jest.mock('../api', () => ({
   accountApi: { getConnections: jest.fn(), getGithubRepositories: jest.fn() },
@@ -48,6 +57,7 @@ const block = (c_id, label, aws, gh) => ({
 const URL_PLACEHOLDER = 'https://github.com/소유자/레포'
 
 beforeEach(() => {
+  mockFocus.effect = null
   mockReplace.mockClear()
   mockPush.mockClear()
   readPickedBlock.mockReset().mockResolvedValue(null)
@@ -521,5 +531,179 @@ describe('새 배포 화면 - 기본으로 고른 연결 블록 (C2 5)', () => {
     await render(<NewDeploy />)
     await screen.findByText('회사 — AWS 2222 · GitHub acme')
     expect(screen.queryByText(HINT)).toBeNull()
+  })
+})
+
+describe('새 배포 화면 - 돌아왔을 때 연결 목록 다시 받기 (최종 검토 3)', () => {
+  const HINT = '연결된 계정이 없습니다. 계정 연결을 하면 비공개 레포와 내 AWS 계정으로 배포할 수 있습니다.'
+  const ONE_BLOCK = [block(1, '회사', 5, 3)]
+  const TWO = [block(1, '회사', 5, 3), block(2, '개인', 6, 4)]
+  const regain = async () => { await act(async () => { mockFocus.regain() }) }
+
+  test('처음 열 때는 포커스가 연결 목록을 한 번 더 받지 않는다', async () => {
+    await render(<NewDeploy />)
+    await screen.findByText(HINT)
+    expect(accountApi.getConnections).toHaveBeenCalledTimes(1)
+  })
+
+  test('계정 연결을 하고 돌아오면 안내가 사라지고 그 블록이 미리 골라진다', async () => {
+    await render(<NewDeploy />)
+    expect(await screen.findByText(HINT)).toBeTruthy()
+    accountApi.getConnections.mockResolvedValue(ONE_BLOCK)
+    await regain()
+    expect(await screen.findByRole('radio', { name: /회사/, checked: true })).toBeTruthy()
+    expect(screen.queryByText(HINT)).toBeNull()
+    expect(accountApi.getConnections).toHaveBeenCalledTimes(2)
+    expect(accountApi.getGithubRepositories).toHaveBeenCalledWith(3)
+  })
+
+  test('쓸 수 있는 블록이 여럿이고 선택해 둔 것이 있으면 돌아왔을 때 그 블록을 고른다', async () => {
+    await render(<NewDeploy />)
+    await screen.findByText(HINT)
+    accountApi.getConnections.mockResolvedValue(TWO)
+    readPickedBlock.mockResolvedValue(2)
+    await regain()
+    expect(await screen.findByRole('radio', { name: /개인/, checked: true })).toBeTruthy()
+  })
+
+  test('쓸 수 있는 블록이 여럿인데 선택해 둔 것이 없으면 연결 안 함 그대로 둔다', async () => {
+    await render(<NewDeploy />)
+    await screen.findByText(HINT)
+    accountApi.getConnections.mockResolvedValue(TWO)
+    await regain()
+    expect(await screen.findByRole('radio', { name: /연결 안 함/, checked: true })).toBeTruthy()
+    expect(screen.queryByText(HINT)).toBeNull()
+  })
+
+  test('사용자가 직접 고른 블록은 돌아와도 덮지 않는다 (연결 안 함도 마찬가지)', async () => {
+    accountApi.getConnections.mockResolvedValue(TWO)
+    await render(<NewDeploy />)
+    await fireEvent.press(await screen.findByText('개인 — AWS 2222 · GitHub acme'))
+    readPickedBlock.mockResolvedValue(1)
+    await regain()
+    await waitFor(() => expect(accountApi.getConnections).toHaveBeenCalledTimes(2))
+    expect(screen.getByRole('radio', { name: /개인/, checked: true })).toBeTruthy()
+    // 연결 안 함을 골랐을 때도 기본값을 다시 적용하지 않는다
+    await fireEvent.press(screen.getByText('연결 안 함 (개발 계정 · public 레포만)'))
+    await regain()
+    await waitFor(() => expect(accountApi.getConnections).toHaveBeenCalledTimes(3))
+    expect(screen.getByRole('radio', { name: /연결 안 함/, checked: true })).toBeTruthy()
+  })
+
+  test('고른 블록이 사라지면 선택을 비우고 분석 결과도 지운다', async () => {
+    accountApi.getConnections.mockResolvedValue(TWO)
+    adviceApi.analyze.mockResolvedValue(advice)
+    await render(<NewDeploy />)
+    await fireEvent.press(await screen.findByText('개인 — AWS 2222 · GitHub acme'))
+    await typeUrl('https://github.com/acme/api')
+    await fireEvent.press(screen.getByText('분석'))
+    await screen.findByText('분석 결과')
+    accountApi.getConnections.mockResolvedValue([TWO[0]])
+    await regain()
+    await waitFor(() => expect(screen.queryByText('분석 결과')).toBeNull())
+    expect(screen.queryByText(/개인/)).toBeNull()
+    expect(screen.getByRole('radio', { name: /연결 안 함/, checked: true })).toBeTruthy()
+  })
+
+  test('고른 블록을 쓸 수 없게 되면(연결이 끊기면) 선택을 비운다', async () => {
+    accountApi.getConnections.mockResolvedValue(TWO)
+    await render(<NewDeploy />)
+    await fireEvent.press(await screen.findByText('개인 — AWS 2222 · GitHub acme'))
+    accountApi.getConnections.mockResolvedValue([TWO[0], block(2, '개인', null, null)])
+    await regain()
+    await waitFor(() => expect(screen.queryByText(/개인/)).toBeNull())
+    expect(screen.getByRole('radio', { name: /연결 안 함/, checked: true })).toBeTruthy()
+  })
+
+  test('마지막 블록이 사라지면 안내가 다시 나온다', async () => {
+    accountApi.getConnections.mockResolvedValue(ONE_BLOCK)
+    await render(<NewDeploy />)
+    await screen.findByRole('radio', { name: /회사/, checked: true })
+    accountApi.getConnections.mockResolvedValue([])
+    await regain()
+    expect(await screen.findByText(HINT)).toBeTruthy()
+  })
+
+  test('바뀐 것이 없으면 분석 결과를 그대로 둔다', async () => {
+    accountApi.getConnections.mockResolvedValue(TWO)
+    adviceApi.analyze.mockResolvedValue(advice)
+    await render(<NewDeploy />)
+    await fireEvent.press(await screen.findByText('개인 — AWS 2222 · GitHub acme'))
+    await typeUrl('https://github.com/acme/api')
+    await fireEvent.press(screen.getByText('분석'))
+    await screen.findByText('분석 결과')
+    // 같은 내용이 새 객체로 다시 와도
+    accountApi.getConnections.mockResolvedValue(TWO.map((item) => ({ ...item })))
+    await regain()
+    await waitFor(() => expect(accountApi.getConnections).toHaveBeenCalledTimes(2))
+    expect(screen.getByText('분석 결과')).toBeTruthy()
+    expect(screen.getByRole('radio', { name: /개인/, checked: true })).toBeTruthy()
+  })
+
+  test('기본으로 골라 둔 블록도 바뀐 것이 없으면 분석 결과를 지우지 않는다', async () => {
+    accountApi.getConnections.mockResolvedValue(ONE_BLOCK)
+    adviceApi.analyze.mockResolvedValue(advice)
+    await render(<NewDeploy />)
+    await screen.findByRole('radio', { name: /회사/, checked: true })
+    await typeUrl('https://github.com/acme/api')
+    await fireEvent.press(screen.getByText('분석'))
+    await screen.findByText('분석 결과')
+    await regain()
+    await waitFor(() => expect(accountApi.getConnections).toHaveBeenCalledTimes(2))
+    expect(screen.getByText('분석 결과')).toBeTruthy()
+    expect(accountApi.getGithubRepositories).toHaveBeenCalledTimes(1)
+  })
+
+  test('고른 블록의 AWS·GitHub 연결이 바뀌면 분석 결과를 지운다 (낡은 번호로 배포하지 않게)', async () => {
+    accountApi.getConnections.mockResolvedValue(TWO)
+    adviceApi.analyze.mockResolvedValue(advice)
+    await render(<NewDeploy />)
+    await fireEvent.press(await screen.findByText('개인 — AWS 2222 · GitHub acme'))
+    await typeUrl('https://github.com/acme/api')
+    await fireEvent.press(screen.getByText('분석'))
+    await screen.findByText('분석 결과')
+    accountApi.getConnections.mockResolvedValue([TWO[0], block(2, '개인', 6, 9)])
+    await regain()
+    await waitFor(() => expect(screen.queryByText('분석 결과')).toBeNull())
+    expect(screen.getByRole('radio', { name: /개인/, checked: true })).toBeTruthy()
+    expect(accountApi.getGithubRepositories).toHaveBeenLastCalledWith(9)
+  })
+
+  test('돌아와 다시 받는 목록이 실패하면 지금 화면을 그대로 둔다', async () => {
+    accountApi.getConnections.mockResolvedValue(TWO)
+    await render(<NewDeploy />)
+    await fireEvent.press(await screen.findByText('개인 — AWS 2222 · GitHub acme'))
+    accountApi.getConnections.mockRejectedValue(new Error('x'))
+    await regain()
+    await waitFor(() => expect(accountApi.getConnections).toHaveBeenCalledTimes(2))
+    expect(screen.getByRole('radio', { name: /개인/, checked: true })).toBeTruthy()
+    expect(screen.queryByText(HINT)).toBeNull()
+  })
+
+  test('늦게 온 이전 응답은 버린다 (나중에 보낸 요청이 이긴다)', async () => {
+    let resolveSlow
+    await render(<NewDeploy />)
+    await screen.findByText(HINT)
+    accountApi.getConnections.mockReturnValueOnce(new Promise((r) => { resolveSlow = r })).mockResolvedValue(ONE_BLOCK)
+    await regain()
+    await regain()
+    expect(await screen.findByRole('radio', { name: /회사/, checked: true })).toBeTruthy()
+    await act(async () => { resolveSlow([]) })
+    expect(screen.getByRole('radio', { name: /회사/, checked: true })).toBeTruthy()
+    expect(screen.queryByText(HINT)).toBeNull()
+  })
+
+  test('화면을 떠난 뒤 늦게 온 응답은 버린다 (경고도 없다)', async () => {
+    const spy = jest.spyOn(console, 'error').mockImplementation(() => {})
+    let resolve
+    const { unmount } = await render(<NewDeploy />)
+    await screen.findByText(HINT)
+    accountApi.getConnections.mockReturnValue(new Promise((r) => { resolve = r }))
+    await regain()
+    await unmount()
+    await act(async () => { resolve(ONE_BLOCK) })
+    expect(accountApi.getGithubRepositories).not.toHaveBeenCalled()
+    expect(spy).not.toHaveBeenCalled()
+    spy.mockRestore()
   })
 })

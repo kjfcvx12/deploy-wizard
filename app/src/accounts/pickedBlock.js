@@ -21,3 +21,12 @@ export const writePickedBlock = async (c_id) => {
     // 저장이 막힌 기기 - 이번 화면에서만 기억한다
   }
 }
+
+// 저장된 블록 번호 지우기 - 지운 블록의 번호가 다른 새 블록에 다시 쓰이는 것을 막는다. 막혀도 던지지 않는다
+export const clearPickedBlock = async () => {
+  try {
+    await AsyncStorage.removeItem(PICKED_BLOCK_KEY)
+  } catch {
+    // 저장이 막힌 기기 - 지울 것도 없다
+  }
+}
