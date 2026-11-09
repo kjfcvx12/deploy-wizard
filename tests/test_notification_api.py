@@ -161,3 +161,20 @@ async def test_notification_settings_api_get_defaults_and_patch(client):
 ])
 async def test_notification_settings_api_rejects_bad_patch(client, payload):
     assert (await client.patch("/api/notifications/settings", json=payload)).status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_device_api_validation_error_does_not_echo_the_token(client):
+    response=await client.post("/api/devices", json={"expo_token": TOKEN})
+
+    assert response.status_code == 422
+    assert TOKEN not in response.text and "abcdefghijklmnopqrstuvwxyz" not in response.text
+    item=response.json()["detail"][0]
+    assert "input" not in item and item["loc"] and item["msg"] and item["type"]
+
+
+@pytest.mark.asyncio
+async def test_other_routes_keep_the_default_validation_body(client):
+    response=await client.get("/api/notifications?after=0")
+
+    assert response.status_code == 422 and "input" in response.json()["detail"][0]

@@ -1,4 +1,8 @@
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Query, Request
+from fastapi.encoders import jsonable_encoder
+from fastapi.exceptions import RequestValidationError
+from fastapi.exception_handlers import request_validation_exception_handler
+from fastapi.responses import JSONResponse
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -10,6 +14,15 @@ from features.notifications.inbox import Notification_Inbox_Service
 
 
 router=APIRouter(prefix='/api',tags=['Notification'])
+
+
+# 요청 검증 오류 처리 - /api/devices 는 입력값(푸시 토큰)을 응답에 되돌려 보내지 않는다 (type/loc/msg 만). 다른 경로는 FastAPI 기본 그대로
+async def router_notification_validation_error(request:Request, exc:RequestValidationError):
+    if not request.url.path.startswith('/api/devices'):
+        return await request_validation_exception_handler(request, exc)
+
+    errors=[{key: error[key] for key in ('type', 'loc', 'msg') if key in error} for error in exc.errors()]
+    return JSONResponse(status_code=422, content={"detail": jsonable_encoder(errors)})
 
 
 # GET 앱 안 알림 목록 (최신순 100건)

@@ -374,3 +374,18 @@ async def test_notification_default_pusher_expo_http_error_becomes_failed_row(db
     assert channels['inapp'].status == 'sent'
     assert channels['push'].status == 'failed' and "HTTP 503" in channels['push'].error
     assert len((await db.execute(select(Push_Device))).scalars().all()) == 1
+
+
+@pytest.mark.asyncio
+async def test_notification_mail_subject_has_no_line_breaks(db, mail_on):
+    d_id=await make_deploy(db)
+    deploy=await db.get(Deploy, d_id)
+    deploy.service_name="my-api\r\nBcc: evil@test"
+    await db.commit()
+    incident=await make_open_incident(db, d_id)
+    mailer=Fake_Mailer()
+
+    await Notification_Service.services_notification_send_incident(db, incident, 'incident_opened', mailer=mailer, pusher=Fake_Pusher())
+
+    subject=mailer.calls[0][0]
+    assert "\r" not in subject and "\n" not in subject and subject.startswith("[배포 마법사] my-api")

@@ -37,7 +37,7 @@ class Device_Read(BaseModel):
     last_seen_at: datetime
 
 
-# 기기 등록 요청 - Expo 푸시 토큰 형식만 받는다 (잘못된 값은 그대로 되돌려 보내지 않는다)
+# 기기 등록 요청 - Expo 푸시 토큰 형식만 받는다 (검증 오류 응답에서 입력값(토큰)은 router 의 오류 처리기가 뺀다)
 class Device_Create(BaseModel):
     expo_token: str = Field(max_length=255)
     platform: Literal['ios', 'android']

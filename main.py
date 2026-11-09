@@ -3,6 +3,7 @@ import contextlib
 import logging
 
 from fastapi import FastAPI
+from fastapi.exceptions import RequestValidationError
 from fastapi.concurrency import asynccontextmanager
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
@@ -103,6 +104,7 @@ app.include_router(accounts.router)
 app.include_router(watches.router)
 app.include_router(incidents.router)
 app.include_router(notifications.router)
+app.add_exception_handler(RequestValidationError, notifications.router_notification_validation_error)
 
 
 # 빌드된 프론트가 있으면 같이 서빙한다 (npm run build -> dist/)

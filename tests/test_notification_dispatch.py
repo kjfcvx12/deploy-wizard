@@ -1,4 +1,5 @@
 import json
+import ssl
 from types import SimpleNamespace
 
 import httpx
@@ -30,7 +31,8 @@ class Fake_Smtp:
     def __exit__(self, *args):
         return False
 
-    def starttls(self, *args, **kwargs):
+    def starttls(self, *, context=None):
+        self.context=context
         self.calls.append("starttls")
 
     def login(self, user, password):
@@ -201,3 +203,31 @@ def test_dispatch_scrub_masks_keys_expo_tokens_and_mail_password(monkeypatch):
 
     assert AWS_KEY not in text and "abcdefghijklmnop" not in text and "pw-for-test" not in text
     assert text.startswith("키 ") and text.endswith(" 끝")
+
+
+@pytest.mark.asyncio
+async def test_dispatch_mail_send_verifies_certificate_before_login(smtp):
+    await dispatch_mail_send("제목", "본문")
+
+    client=smtp.instances[0]
+    assert client.calls.index("starttls") < client.calls.index(("login", "bot@test", "pw-for-test"))
+    assert isinstance(client.context, ssl.SSLContext)
+    assert client.context.verify_mode == ssl.CERT_REQUIRED and client.context.check_hostname is True
+
+
+def test_dispatch_scrub_ignores_too_short_mail_password(monkeypatch):
+    monkeypatch.setattr(settings, "mail_password", "ab")
+
+    assert dispatch_scrub("abc 배포 table") == "abc 배포 table"
+
+    monkeypatch.setattr(settings, "mail_password", "abcd")
+    assert "abcd" not in dispatch_scrub("값 abcd 끝")
+
+
+@pytest.mark.asyncio
+async def test_dispatch_mail_send_strips_line_breaks_from_subject(smtp):
+    await dispatch_mail_send("[배포 마법사] svc\r\nBcc: evil@test 제목\n둘째", "본문")
+
+    subject=smtp.instances[0].sent[0]["Subject"]
+    assert "\r" not in subject and "\n" not in subject and "Bcc: evil@test" in subject
+    assert smtp.instances[0].sent[0]["Bcc"] is None

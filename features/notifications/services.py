@@ -12,7 +12,7 @@ from shared.database import AsyncSessionLocal
 from features.notifications.crud import Notification_Crud
 from features.notifications.models import Notification_Setting, NOTIFICATION_KINDS
 from features.notifications.compose import Composed, compose_incident, compose_deploy, compose_service_name
-from features.notifications.dispatch import dispatch_scrub, dispatch_mail_send, dispatch_mail_configured, dispatch_push_send
+from features.notifications.dispatch import dispatch_scrub, dispatch_oneline, dispatch_mail_send, dispatch_mail_configured, dispatch_push_send
 
 # 알림 보내기 - 앱 안 알림(항상) -> 메일 -> 푸시 순서로, 채널마다 한 줄씩 남긴다 (docs/app-web/05-flowcharts.md 8장)
 # 한 채널이 실패해도 다른 채널과 호출한 쪽(인시던트 처리·파이프라인·폴링)은 멈추지 않는다
@@ -128,7 +128,7 @@ class Notification_Service:
 
         # 2. 메일 - 켜져 있고 SMTP 설정이 있을 때만 (설정이 없으면 줄도 남기지 않는다)
         if db_setting.notify_email and dispatch_mail_configured() and not await already('email'):
-            await Notification_Service.services_notification_send_mail(db, base, f"[배포 마법사] {service} {composed.title}", mailer)
+            await Notification_Service.services_notification_send_mail(db, base, dispatch_oneline(f"[배포 마법사] {service} {composed.title}"), mailer)
 
         # 3. 푸시 - 켜져 있고 등록된 기기가 있을 때만
         if db_setting.notify_push and not await already('push'):

@@ -1,6 +1,7 @@
 import asyncio
 import re
 import smtplib
+import ssl
 from dataclasses import dataclass, field
 from email.message import EmailMessage
 
@@ -11,6 +12,9 @@ from shared.masking import mask_text, MASK
 
 # 알림 발송기 - 메일(SMTP)과 앱 푸시(Expo). 여기서는 보내기만 하고 실패는 호출한 쪽이 기록한다
 # 토큰·비밀번호·메일 본문은 로그에 남기지 않는다 (Hard rule 6)
+
+# 이 길이보다 짧은 메일 비밀번호는 글 안의 다른 낱말까지 지우게 되므로 글 치환을 하지 않는다
+MAIL_PASSWORD_MIN_SCRUB=4
 
 PUSH_BATCH_SIZE=100
 PUSH_TITLE_MAX=100
@@ -36,10 +40,15 @@ class Push_Result:
 def dispatch_scrub(text:str|None) -> str:
     cleaned=EXPO_TOKEN_PATTERN.sub(MASK, mask_text(text))
 
-    if settings.mail_password:
+    if settings.mail_password and len(settings.mail_password) >= MAIL_PASSWORD_MIN_SCRUB:
         cleaned=cleaned.replace(settings.mail_password, MASK)
 
     return cleaned
+
+
+# 한 줄로 만들기 - 줄바꿈(CR/LF)을 공백으로 바꿔 메일 제목에 헤더가 끼어들 수 없게 한다
+def dispatch_oneline(text:str|None) -> str:
+    return re.sub(r"[\r\n]+", " ", text or "").strip()
 
 
 # 메일을 보낼 수 있게 설정돼 있는지 - 서버 주소와 받는 사람이 모두 있어야 한다
@@ -50,7 +59,8 @@ def dispatch_mail_configured() -> bool:
 # 메일 보내기 (블로킹) - STARTTLS 후 로그인하고 보낸다. 제한 시간은 MAIL_TIMEOUT_SECONDS
 def dispatch_mail_send_blocking(message:EmailMessage) -> None:
     with smtplib.SMTP(settings.mail_host, settings.mail_port, timeout=settings.mail_timeout_seconds) as client:
-        client.starttls()
+        # 서버 인증서와 호스트 이름을 검증한 연결에서만 로그인한다 (기본 컨텍스트는 검증하지 않는다)
+        client.starttls(context=ssl.create_default_context())
 
         if settings.mail_user:
             client.login(settings.mail_user, settings.mail_password or "")
@@ -66,7 +76,7 @@ async def dispatch_mail_send(subject:str, body:str) -> None:
     recipients=[address.strip() for address in settings.mail_to.split(",") if address.strip()]
 
     message=EmailMessage()
-    message["Subject"]=subject
+    message["Subject"]=dispatch_oneline(subject)
     message["From"]=settings.mail_from or settings.mail_user or recipients[0]
     message["To"]=", ".join(recipients)
     message.set_content(body)
