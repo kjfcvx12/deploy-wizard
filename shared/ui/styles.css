@@ -308,3 +308,14 @@ details.env-group > summary { font-size: 14px; }
   .explain > .row:last-child > button { flex: 1 1 100%; }
   .terminal { height: min(360px, 60vh); }
 }
+
+/* 계정 연결 폰 폭 - 상자 아래 버튼 줄은 모자라면 줄을 바꾸고, 화살표·대화상자 입력·안내 그림 입력 칸의 터치 크기를 맞춘다 */
+@media (max-width: 640px) {
+  .account-foot { display: flex; flex-wrap: wrap; gap: 8px; }
+  .account-foot > div { flex: 1 1 auto; }
+  .account-foot button { width: 100%; padding-left: 8px; padding-right: 8px; white-space: nowrap; }
+  button.account-arrow { min-width: 40px; }
+  dialog { padding: 16px; }
+  dialog input.grow { width: 100%; }
+  .shot-input { display: flex; align-items: center; min-height: 40px; }
+}
