@@ -239,6 +239,20 @@ describe('배포 목록 화면 - 문제 배너와 헬스 점', () => {
     expect(await screen.findByText('acme/api에 문제가 있습니다 · 확인이 필요합니다')).toBeTruthy()
   })
 
+  test('확인 필요(needs_action) 인시던트도 배너가 나오고 확인이 필요합니다 문구, 누르면 그 인시던트로 간다', async () => {
+    deployApi.getAll.mockResolvedValue([{ ...withIncident, open_incident_id: 21, open_incident_status: 'needs_action' }])
+    await render(<DeployList />)
+    expect(await screen.findByText('acme/api에 문제가 있습니다 · 확인이 필요합니다')).toBeTruthy()
+    await fireEvent.press(screen.getByRole('button', { name: /배포 #7\)/ }))
+    expect(mockPush).toHaveBeenCalledWith('/incidents/21')
+  })
+
+  test('복구 중(recovering)이고 자동 복구가 켜져 있으면 자동 복구 중 문구', async () => {
+    deployApi.getAll.mockResolvedValue([{ ...withIncident, open_incident_status: 'recovering' }])
+    await render(<DeployList />)
+    expect(await screen.findByText('acme/api에 문제가 있습니다 · 자동 복구 중')).toBeTruthy()
+  })
+
   test('열린 인시던트가 없으면 배너가 하나도 없다 (옛 서버 응답처럼 필드가 없어도 된다)', async () => {
     deployApi.getAll.mockResolvedValue(deploys)
     await render(<DeployList />)
@@ -251,7 +265,7 @@ describe('배포 목록 화면 - 문제 배너와 헬스 점', () => {
     await render(<DeployList />)
     await screen.findByText('acme/api')
     expect(screen.getAllByTestId('health-dot')).toHaveLength(1)
-    expect(screen.getByLabelText('서버 응답 응답 없음')).toBeTruthy()
+    expect(screen.getByLabelText('헬스체크: 응답 없음')).toBeTruthy()
   })
 
   test('연결 오류와 배너가 함께 나올 수 있다', async () => {

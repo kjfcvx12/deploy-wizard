@@ -19,7 +19,7 @@ export function IncidentBadge({ status }) {
 }
 
 // 배포 상세의 인시던트 카드 - 한 줄 요약을 받아 보여 주고 누르면 인시던트 화면. 요약을 못 받아도 카드는 남는다
-export default function IncidentCard({ d_id, i_id, onPress }) {
+export default function IncidentCard({ d_id, i_id, label, onPress }) {
   const colors = useColors()
   const [incident, setIncident] = useState(null)
 
@@ -41,7 +41,7 @@ export default function IncidentCard({ d_id, i_id, onPress }) {
       ]}
     >
       <View style={styles.head}>
-        <Text style={[styles.cardTitle, { color: colors.warn }]}>문제가 있습니다</Text>
+        <Text style={[styles.cardTitle, { color: colors.warn }]}>{label ? `문제가 있습니다 · ${label}` : '문제가 있습니다'}</Text>
         {!!incident && <IncidentBadge status={incident.status} />}
       </View>
       <Text style={[styles.summary, wrapAnywhere, { color: colors.text }]}>{summary}</Text>

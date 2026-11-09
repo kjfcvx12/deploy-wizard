@@ -33,6 +33,17 @@ describe('request', () => {
     await expect(request('/x')).rejects.toThrow(new Error('배포를 찾을 수 없습니다'))
   })
 
+  test('서버가 거절한 오류에는 status 가 붙고, 연결 실패에는 붙지 않는다', async () => {
+    global.fetch.mockResolvedValueOnce(okResponse({ detail: '배포를 찾을 수 없습니다' }, 404))
+    await expect(request('/x')).rejects.toMatchObject({ message: '배포를 찾을 수 없습니다', status: 404 })
+    global.fetch.mockResolvedValueOnce(okResponse(null, 502))
+    await expect(request('/x')).rejects.toMatchObject({ message: '요청 실패 (502)', status: 502 })
+    global.fetch.mockRejectedValueOnce(new TypeError('Network request failed'))
+    const failure = await request('/x').catch((e) => e)
+    expect(failure.message).toBe('서버에 연결할 수 없습니다')
+    expect(failure.status).toBeUndefined()
+  })
+
   test('422 detail 배열은 msg를 ", "로 잇는다', async () => {
     global.fetch.mockResolvedValue(okResponse({ detail: [{ msg: '첫째' }, { msg: '둘째' }] }, 422))
     await expect(request('/x')).rejects.toThrow('첫째, 둘째')

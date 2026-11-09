@@ -520,6 +520,16 @@ describe('배포 상세 화면 - 인시던트 카드와 헬스 점', () => {
     expect(mockPush).toHaveBeenCalledWith('/incidents/12')
   })
 
+  test('확인 필요 인시던트는 카드 제목에 확인이 필요합니다, 복구 중이면 자동 복구 중', async () => {
+    await open({ ...base, open_incident_id: 12, open_incident_status: 'needs_action', auto_recover: true })
+    expect(await screen.findByText('문제가 있습니다 · 확인이 필요합니다')).toBeTruthy()
+  })
+
+  test('복구 중 인시던트는 자동 복구가 켜져 있으면 자동 복구 중, 꺼져 있으면 확인이 필요합니다', async () => {
+    await open({ ...base, open_incident_id: 12, open_incident_status: 'recovering', auto_recover: true })
+    expect(await screen.findByText('문제가 있습니다 · 자동 복구 중')).toBeTruthy()
+  })
+
   test('open_incident_id 가 없으면 카드도, 인시던트 조회도 없다', async () => {
     await open({ ...base, open_incident_id: null })
     expect(screen.queryByText('처리 중인 문제가 있습니다')).toBeNull()
@@ -528,7 +538,7 @@ describe('배포 상세 화면 - 인시던트 카드와 헬스 점', () => {
 
   test('running 이면 머리 카드에 헬스 점과 글자가 붙고, 아니면 붙지 않는다', async () => {
     await open({ ...base, health_state: 'unhealthy' })
-    expect(screen.getByLabelText('서버 응답 응답 없음')).toBeTruthy()
+    expect(screen.getByLabelText('헬스체크: 응답 없음')).toBeTruthy()
   })
 
   test('running 이 아니면 헬스 점이 없다', async () => {

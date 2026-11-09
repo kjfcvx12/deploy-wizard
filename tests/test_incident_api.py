@@ -141,3 +141,30 @@ async def test_incident_api_open_incident_id_in_deploy_read(client):
     assert (await client.get(f"/api/deploys/{d_id}")).json()["open_incident_id"] == i_id
     listed=(await client.get("/api/deploys")).json()
     assert [row["open_incident_id"] for row in listed if row["d_id"] == d_id] == [i_id]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("state", ['open', 'recovering', 'needs_action'])
+async def test_incident_api_open_incident_status_follows_unresolved_incident(client, state):
+    d_id=await seed_deploy()
+    other=await seed_deploy()
+    i_id=await seed_incident(d_id, state)
+
+    one=(await client.get(f"/api/deploys/{d_id}")).json()
+    listed={row["d_id"]: row for row in (await client.get("/api/deploys")).json()}
+
+    assert (one["open_incident_id"], one["open_incident_status"]) == (i_id, state)
+    assert (listed[d_id]["open_incident_id"], listed[d_id]["open_incident_status"]) == (i_id, state)
+    assert (listed[other]["open_incident_id"], listed[other]["open_incident_status"]) == (None, None)
+
+
+@pytest.mark.asyncio
+async def test_incident_api_open_incident_status_is_null_when_resolved(client):
+    d_id=await seed_deploy()
+    await seed_incident(d_id, 'resolved')
+
+    one=(await client.get(f"/api/deploys/{d_id}")).json()
+    listed=[row for row in (await client.get("/api/deploys")).json() if row["d_id"] == d_id]
+
+    assert (one["open_incident_id"], one["open_incident_status"]) == (None, None)
+    assert (listed[0]["open_incident_id"], listed[0]["open_incident_status"]) == (None, None)

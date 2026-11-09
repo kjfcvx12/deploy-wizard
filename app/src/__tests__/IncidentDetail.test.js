@@ -46,6 +46,8 @@ const needsAction = {
   ...base, status: 'needs_action',
   actions: [{ ...base.actions[0], result: 'failed', detail: '재시작했지만 응답이 없습니다', finished_at: '2026-11-09T03:15:00' }],
 }
+const notFound = Object.assign(new Error('해당 id의 인시던트가 없습니다'), { status: 404 })
+const NOT_FOUND_TEXT = '문제를 찾을 수 없습니다. 이미 삭제된 배포이거나 지워진 기록일 수 있습니다.'
 const resolved = { ...base, status: 'resolved', resolved_at: '2026-11-09T03:20:00', updated_at: '2026-11-09T03:20:00' }
 
 let current
@@ -55,7 +57,7 @@ beforeEach(() => {
   mockCanGoBack = true
   mockFocus.effect = null
   current = base
-  incidentApi.getOne.mockReset().mockImplementation(async () => current)
+  incidentApi.getOne.mockReset().mockImplementation(async () => ({ ...current }))
   healthApi.getHistory.mockReset().mockResolvedValue([])
   deployApi.redeploy.mockReset().mockResolvedValue({})
   deployApi.stop.mockReset().mockResolvedValue({})
@@ -138,10 +140,14 @@ describe('인시던트 상세 - 내용', () => {
     expect(screen.getAllByTestId('timeline-item')).toHaveLength(1)
   })
 
-  test('헬스 이력을 못 받아도 인시던트는 보이고 막대 자리에 안내가 나온다', async () => {
+  test('헬스 이력을 못 받아도 인시던트는 보이고 막대는 조용히 비어 있다 (오류 글자 없음)', async () => {
     healthApi.getHistory.mockRejectedValue(new Error('x'))
     await open()
-    expect(await screen.findByText('헬스 이력을 불러오지 못했습니다')).toBeTruthy()
+    await act(async () => {})
+    expect(healthApi.getHistory).toHaveBeenCalledTimes(1)
+    expect(screen.getByLabelText('최근 24시간 확인 기록 없음')).toBeTruthy()
+    expect(screen.queryByText('x')).toBeNull()
+    expect(screen.queryByText('헬스 이력을 불러오지 못했습니다')).toBeNull()
     expect(screen.getByText('원인')).toBeTruthy()
   })
 })
@@ -243,15 +249,172 @@ describe('인시던트 상세 - 갱신', () => {
   })
 })
 
+describe('인시던트 상세 - 헬스 이력 호출', () => {
+  test('처음 한 번, 이후 5초 틱에서는 부르지 않고 60초가 지나야 다시 부른다', async () => {
+    await open()
+    await act(async () => {})
+    expect(healthApi.getHistory).toHaveBeenCalledTimes(1)
+    for (let i = 0; i < 11; i += 1) await tick(5000)
+    expect(incidentApi.getOne).toHaveBeenCalledTimes(12)
+    expect(healthApi.getHistory).toHaveBeenCalledTimes(1)
+    await tick(5000)
+    expect(healthApi.getHistory).toHaveBeenCalledTimes(2)
+    for (let i = 0; i < 11; i += 1) await tick(5000)
+    expect(healthApi.getHistory).toHaveBeenCalledTimes(2)
+    await tick(5000)
+    expect(healthApi.getHistory).toHaveBeenCalledTimes(3)
+  })
+
+  test('상태가 바뀌면 60초 전이라도 바로 다시 받는다', async () => {
+    await open({ ...base, status: 'open', actions: [] })
+    await act(async () => {})
+    expect(healthApi.getHistory).toHaveBeenCalledTimes(1)
+    current = base
+    await tick(5000)
+    expect(healthApi.getHistory).toHaveBeenCalledTimes(2)
+    current = resolved
+    await tick(5000)
+    expect(healthApi.getHistory).toHaveBeenCalledTimes(3)
+  })
+
+  test('포커스 복귀와 끌어당김(수동 새로고침)에서는 60초 전이라도 다시 받는다', async () => {
+    await open(needsAction)
+    await act(async () => {})
+    expect(healthApi.getHistory).toHaveBeenCalledTimes(1)
+    await act(async () => { mockFocus.regain() })
+    expect(healthApi.getHistory).toHaveBeenCalledTimes(2)
+    await act(async () => { screen.getByTestId('incident-scroll').props.refreshControl.props.onRefresh() })
+    expect(healthApi.getHistory).toHaveBeenCalledTimes(3)
+  })
+
+  test('이력 호출이 끝나지 않아도 인시던트 갱신은 기다리지 않는다', async () => {
+    healthApi.getHistory.mockReturnValue(new Promise(() => {}))
+    await open()
+    current = resolved
+    await tick(5000)
+    expect(await screen.findByText('해결됨')).toBeTruthy()
+    expect(screen.getByLabelText('최근 24시간 확인 기록 없음')).toBeTruthy()
+  })
+
+  test('이력 호출이 실패해도 지난 이력은 지우지 않고, 60초 뒤에 다시 시도한다', async () => {
+    healthApi.getHistory.mockResolvedValueOnce([{ h_c_id: 1, ok: true, checked_at: new Date(Date.now() - 60000).toISOString().replace('Z', '') }])
+    await open()
+    expect(await screen.findByLabelText('최근 24시간 정상 100%')).toBeTruthy()
+    healthApi.getHistory.mockRejectedValue(new Error('x'))
+    for (let i = 0; i < 12; i += 1) await tick(5000)
+    expect(healthApi.getHistory).toHaveBeenCalledTimes(2)
+    expect(screen.getByLabelText(/최근 24시간 정상 \d+%/)).toBeTruthy()
+  })
+
+  test('늦게 온 이력 응답은 더 새로운 응답을 덮지 않고, 언마운트 뒤에는 무시한다', async () => {
+    const resolvers = []
+    healthApi.getHistory.mockImplementation(() => new Promise((r) => { resolvers.push(r) }))
+    const { unmount } = await open(needsAction)
+    await act(async () => { mockFocus.regain() })
+    const mk = (ok) => [{ h_c_id: 1, ok, checked_at: new Date(Date.now() - 60000).toISOString().replace('Z', '') }]
+    await act(async () => { resolvers[1](mk(true)) })
+    expect(await screen.findByLabelText('최근 24시간 정상 100%')).toBeTruthy()
+    await act(async () => { resolvers[0](mk(false)) })
+    expect(screen.getByLabelText('최근 24시간 정상 100%')).toBeTruthy()
+    await unmount()
+    await act(async () => { resolvers[1](mk(false)) })
+  })
+})
+
 describe('인시던트 상세 - 오류', () => {
-  test('404: 한국어 메시지, 돌아가기와 다시 시도, 자동으로 계속 부르지 않는다', async () => {
-    incidentApi.getOne.mockReset().mockRejectedValue(new Error('해당 id의 인시던트가 없습니다'))
+  test('404: 한국어 안내와 돌아가기, 자동으로 계속 부르지 않는다', async () => {
+    incidentApi.getOne.mockReset().mockRejectedValue(notFound)
     await render(<IncidentDetail />)
-    expect(await screen.findByText('해당 id의 인시던트가 없습니다')).toBeTruthy()
-    await tick(60000)
+    expect(await screen.findByText(NOT_FOUND_TEXT)).toBeTruthy()
+    expect(screen.queryByRole('button', { name: '다시 시도' })).toBeNull()
+    await tick(120000)
     expect(incidentApi.getOne).toHaveBeenCalledTimes(1)
     await fireEvent.press(screen.getByRole('button', { name: '돌아가기' }))
     expect(mockBack).toHaveBeenCalledTimes(1)
+  })
+
+  test('폴링 도중 404(배포·인시던트가 지워짐): 폴링이 멈추고 안내와 돌아가기가 나온다', async () => {
+    await open()
+    incidentApi.getOne.mockRejectedValue(notFound)
+    await tick(5000)
+    expect(await screen.findByText(NOT_FOUND_TEXT)).toBeTruthy()
+    expect(screen.getByRole('button', { name: '돌아가기' })).toBeTruthy()
+    expect(screen.queryByText('원인')).toBeNull()
+    const calls = incidentApi.getOne.mock.calls.length
+    await tick(120000)
+    expect(incidentApi.getOne.mock.calls.length).toBe(calls)
+  })
+
+  test('404 다음에 포커스가 돌아와 성공하면 내용이 다시 보인다', async () => {
+    await open(needsAction)
+    incidentApi.getOne.mockRejectedValueOnce(notFound)
+    await act(async () => { mockFocus.regain() })
+    expect(await screen.findByText(NOT_FOUND_TEXT)).toBeTruthy()
+    await act(async () => { mockFocus.regain() })
+    expect(await screen.findByText('원인')).toBeTruthy()
+    expect(screen.queryByText(NOT_FOUND_TEXT)).toBeNull()
+  })
+
+  test('연결 실패가 이어지면 5초, 10초, 20초, 30초, 30초로 간격을 늘리고 성공하면 5초로 돌아온다', async () => {
+    await open()
+    incidentApi.getOne.mockRejectedValue(new Error('서버에 연결할 수 없습니다'))
+    const calls = () => incidentApi.getOne.mock.calls.length
+    expect(calls()).toBe(1)
+    await tick(5000); expect(calls()).toBe(2)
+    await tick(4999); expect(calls()).toBe(2)
+    await tick(1); expect(calls()).toBe(3)
+    await tick(9999); expect(calls()).toBe(3)
+    await tick(1); expect(calls()).toBe(4)
+    await tick(19999); expect(calls()).toBe(4)
+    await tick(1); expect(calls()).toBe(5)
+    await tick(29999); expect(calls()).toBe(5)
+    await tick(1); expect(calls()).toBe(6)
+    await tick(29999); expect(calls()).toBe(6)
+    incidentApi.getOne.mockImplementation(async () => base)
+    await tick(1); expect(calls()).toBe(7)
+    expect(await screen.findByText('원인')).toBeTruthy()
+    await tick(4999); expect(calls()).toBe(7)
+    await tick(1); expect(calls()).toBe(8)
+    expect(screen.queryByText('서버에 연결할 수 없습니다')).toBeNull()
+  })
+
+  test('연결 실패 뒤 성공하면 다음 실패는 다시 5초부터 시작한다', async () => {
+    await open()
+    incidentApi.getOne.mockRejectedValue(new Error('서버에 연결할 수 없습니다'))
+    await tick(5000)
+    await tick(5000)
+    await tick(10000)
+    incidentApi.getOne.mockImplementation(async () => base)
+    await tick(20000)
+    incidentApi.getOne.mockRejectedValue(new Error('서버에 연결할 수 없습니다'))
+    const calls = incidentApi.getOne.mock.calls.length
+    await tick(5000)
+    expect(incidentApi.getOne.mock.calls.length).toBe(calls + 1)
+    await tick(4999)
+    expect(incidentApi.getOne.mock.calls.length).toBe(calls + 1)
+    await tick(1)
+    expect(incidentApi.getOne.mock.calls.length).toBe(calls + 2)
+    await tick(9999)
+    expect(incidentApi.getOne.mock.calls.length).toBe(calls + 2)
+    await tick(1)
+    expect(incidentApi.getOne.mock.calls.length).toBe(calls + 3)
+  })
+
+  test('먼저 보낸 느린 응답이 나중에 와도 더 새로운 응답을 덮어쓰지 않는다', async () => {
+    let slow
+    incidentApi.getOne.mockReset()
+      .mockImplementationOnce(async () => needsAction)
+      .mockImplementationOnce(() => new Promise((r) => { slow = r }))
+      .mockImplementation(async () => resolved)
+    await render(<IncidentDetail />)
+    expect(await screen.findByText('확인 필요')).toBeTruthy()
+    await act(async () => { mockFocus.regain() })
+    await act(async () => { mockFocus.regain() })
+    expect(await screen.findByText('해결됨')).toBeTruthy()
+    await act(async () => { slow({ ...needsAction, summary: '오래된 응답' }) })
+    expect(screen.queryByText('오래된 응답')).toBeNull()
+    expect(screen.getByText('해결됨')).toBeTruthy()
+    expect(screen.queryByText('확인 필요')).toBeNull()
   })
 
   test('돌아갈 화면이 없으면(주소로 바로 들어옴) 목록으로 바꾼다', async () => {

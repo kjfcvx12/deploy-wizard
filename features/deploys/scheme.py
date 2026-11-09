@@ -52,11 +52,12 @@ class Deploy_In_DB(Deploy_Base):
     # 값이 비어 있는 필수 환경변수 수 - DB 열이 아니라 서비스가 채운다
     env_pending: int = 0
 
-    # 운영 복구 (D1) - 자동 복구 스위치와 헬스 요약. open_incident_id 는 DB 열이 아니라 서비스가 채운다
+    # 운영 복구 (D1) - 자동 복구 스위치와 헬스 요약. open_incident_id·open_incident_status(끝나지 않은 open|recovering|needs_action 인시던트의 번호·상태)는 DB 열이 아니라 서비스가 채운다
     auto_recover: bool = True
     health_state: str = 'unknown'
     last_health_at: datetime | None = None
     open_incident_id: int | None = None
+    open_incident_status: str | None = None
 
     created_at: datetime
     updated_at: datetime

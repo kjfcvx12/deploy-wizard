@@ -5,7 +5,7 @@ import HealthBar, { healthBuckets } from '../components/ops/HealthBar'
 import HealthDot from '../components/ops/HealthDot'
 import IncidentCard from '../components/ops/IncidentCard'
 import IncidentTimeline from '../components/ops/IncidentTimeline'
-import ProblemBanner from '../components/ops/ProblemBanner'
+import ProblemBanner, { problemLabel } from '../components/ops/ProblemBanner'
 import { formatTime } from '../ops/format'
 import { darkColors, lightColors, toneColors } from '../theme'
 
@@ -178,6 +178,36 @@ describe('ProblemBanner', () => {
     expect(screen.getByText('acme/api에 문제가 있습니다 · 확인이 필요합니다')).toBeTruthy()
   })
 
+  test('확인 필요(needs_action) 인시던트는 자동 복구가 켜져 있어도 확인이 필요합니다', async () => {
+    await render(<ProblemBanner deploy={{ ...deploy, open_incident_status: 'needs_action' }} onPress={() => {}} />)
+    expect(screen.getByText('acme/api에 문제가 있습니다 · 확인이 필요합니다')).toBeTruthy()
+  })
+
+  test.each([
+    [{ open_incident_status: 'open', auto_recover: true }, '자동 복구 중'],
+    [{ open_incident_status: 'recovering', auto_recover: true }, '자동 복구 중'],
+    [{ open_incident_status: 'open', auto_recover: false }, '확인이 필요합니다'],
+    [{ open_incident_status: 'needs_action', auto_recover: false }, '확인이 필요합니다'],
+    [{ open_incident_status: undefined, auto_recover: true }, '자동 복구 중'],
+    [{ open_incident_status: null, auto_recover: false }, '확인이 필요합니다'],
+    [{ open_incident_status: 'weird', auto_recover: true }, '자동 복구 중'],
+    [{ auto_recover: undefined }, '자동 복구 중'],
+  ])('problemLabel %j -> %s', (over, expected) => {
+    expect(problemLabel({ ...deploy, ...over })).toBe(expected)
+  })
+
+  test('같은 레포의 배포 둘을 접근성 라벨과 힌트로 구분할 수 있다', async () => {
+    await render(<>
+      <ProblemBanner deploy={{ ...deploy, d_id: 7 }} onPress={() => {}} />
+      <ProblemBanner deploy={{ ...deploy, d_id: 8, open_incident_id: 13 }} onPress={() => {}} />
+    </>)
+    const seven = screen.getByRole('button', { name: /배포 #7\)/ })
+    const eight = screen.getByRole('button', { name: /배포 #8\)/ })
+    expect(seven.props.accessibilityHint).toContain('#7')
+    expect(eight.props.accessibilityHint).toContain('#8')
+    expect(seven.props.accessibilityLabel).toBe('acme/api에 문제가 있습니다 · 자동 복구 중 (배포 #7)')
+  })
+
   test('누르면 onPress, 버튼 역할과 배포 이름이 든 라벨, 높이 44 이상', async () => {
     const onPress = jest.fn()
     await render(<ProblemBanner deploy={deploy} onPress={onPress} />)
@@ -191,13 +221,13 @@ describe('ProblemBanner', () => {
 describe('HealthDot', () => {
   test('상태별 라벨과 색', async () => {
     const { rerender } = await render(<HealthDot state="healthy" />)
-    expect(screen.getByLabelText('서버 응답 응답 정상')).toBeTruthy()
+    expect(screen.getByLabelText('헬스체크: 응답 정상')).toBeTruthy()
     expect(StyleSheet.flatten(screen.getByTestId('health-dot').props.style).backgroundColor).toBe(lightColors.ok)
     await rerender(<HealthDot state="unhealthy" />)
-    expect(screen.getByLabelText('서버 응답 응답 없음')).toBeTruthy()
+    expect(screen.getByLabelText('헬스체크: 응답 없음')).toBeTruthy()
     expect(StyleSheet.flatten(screen.getByTestId('health-dot').props.style).backgroundColor).toBe(lightColors.err)
     await rerender(<HealthDot state="unknown" />)
-    expect(screen.getByLabelText('서버 응답 확인 전')).toBeTruthy()
+    expect(screen.getByLabelText('헬스체크: 확인 전')).toBeTruthy()
     expect(StyleSheet.flatten(screen.getByTestId('health-dot').props.style).backgroundColor).toBe(lightColors.muted)
   })
 
@@ -221,6 +251,12 @@ describe('IncidentCard', () => {
     expect(incidentApi.getOne).toHaveBeenCalledWith(12)
     await fireEvent.press(screen.getByRole('button', { name: /배포 #7/ }))
     expect(onPress).toHaveBeenCalledTimes(1)
+  })
+
+  test('label 을 주면 제목에 상태 글이 붙는다', async () => {
+    incidentApi.getOne.mockResolvedValue({ i_id: 12, status: 'needs_action', summary: '요약' })
+    await render(<IncidentCard d_id={7} i_id={12} label="확인이 필요합니다" onPress={() => {}} />)
+    expect(await screen.findByText('문제가 있습니다 · 확인이 필요합니다')).toBeTruthy()
   })
 
   test('요약을 못 받아도 카드는 그려지고 누를 수 있다', async () => {

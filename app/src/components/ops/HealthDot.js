@@ -9,7 +9,7 @@ export default function HealthDot({ state, withLabel = false }) {
   if (!label) return null
   const color = state === 'healthy' ? colors.ok : state === 'unhealthy' ? colors.err : colors.muted
   return (
-    <View accessible accessibilityRole="image" accessibilityLabel={`서버 응답 ${label}`} style={styles.row}>
+    <View accessible accessibilityRole="image" accessibilityLabel={`헬스체크: ${label}`} style={styles.row}>
       <View testID="health-dot" style={[styles.dot, { backgroundColor: color }]} />
       {withLabel && <Text style={[styles.label, { color }]}>{label}</Text>}
     </View>

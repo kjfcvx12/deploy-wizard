@@ -10,6 +10,7 @@ import IssueHistory from '../../src/components/IssueHistory'
 import LogTerminal, { appendLogs } from '../../src/components/LogTerminal'
 import HealthDot from '../../src/components/ops/HealthDot'
 import IncidentCard from '../../src/components/ops/IncidentCard'
+import { problemLabel } from '../../src/components/ops/ProblemBanner'
 import StatusBadge from '../../src/components/StatusBadge'
 import StepProgress from '../../src/components/StepProgress'
 import { Button, Card, Collapsible, Notice } from '../../src/components/ui'
@@ -192,7 +193,7 @@ function DeployDetail({ d_id }) {
         )}
 
         {!!deploy.open_incident_id && (
-          <IncidentCard d_id={deploy.d_id} i_id={deploy.open_incident_id} onPress={() => router.push(`/incidents/${deploy.open_incident_id}`)} />
+          <IncidentCard d_id={deploy.d_id} i_id={deploy.open_incident_id} label={problemLabel(deploy)} onPress={() => router.push(`/incidents/${deploy.open_incident_id}`)} />
         )}
 
         {status === 'stopped' && (

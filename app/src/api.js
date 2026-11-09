@@ -36,7 +36,8 @@ export async function request(path, options = {}) {
     if (!response.ok) {
       const detail = data?.detail
       const message = Array.isArray(detail) ? detail.map((d) => d.msg).join(', ') : detail
-      throw new Error(message || `요청 실패 (${response.status})`)
+      // 화면이 404 같은 상태를 가려낼 수 있게 상태코드를 붙인다 (메시지는 그대로)
+      throw Object.assign(new Error(message || `요청 실패 (${response.status})`), { status: response.status })
     }
 
     return data

@@ -108,7 +108,7 @@ async def test_ops_push_device_token_is_unique(db):
 
 
 @pytest.mark.asyncio
-async def test_ops_incident_open_ids_picks_newest_open_or_recovering(db):
+async def test_ops_incident_open_ids_picks_newest_unresolved(db):
     first=await make_deploy(db)
     second=await make_deploy(db)
     third=await make_deploy(db)
@@ -123,9 +123,15 @@ async def test_ops_incident_open_ids_picks_newest_open_or_recovering(db):
     result=await Incident_Service.services_incident_open_ids(db, [first, second, third])
 
     assert result[first] is not None
-    assert result[second] is None
+    assert result[second] is not None
     assert result[third] is None
     assert await Incident_Service.services_incident_open_ids(db, []) == {}
+
+    states=await Incident_Service.services_incident_open_states(db, [first, second, third])
+    assert states[first] == (result[first], 'recovering')
+    assert states[second] == (result[second], 'needs_action')
+    assert states[third] == (None, None)
+    assert await Incident_Service.services_incident_open_states(db, []) == {}
 
 
 @pytest.mark.asyncio

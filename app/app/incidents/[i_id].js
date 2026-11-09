@@ -13,9 +13,13 @@ import { INCIDENT_ACTIVE_STATUSES, INCIDENT_KIND_LABEL } from '../../src/ops/con
 import { durationText, formatTime } from '../../src/ops/format'
 import { spacing, useColors, wrapAnywhere } from '../../src/theme'
 
-// 갱신 간격(ms) - 복구 중에는 5초마다, 조회가 실패해도 5초 뒤 다시 (처음부터 실패하면 다시 시도 버튼을 기다린다)
+// 갱신 간격(ms) - 복구 중에는 5초마다. 연결 실패가 이어지면 5, 10, 20초로 늘려 최대 30초까지, 성공하면 처음으로 (404 는 다시 부르지 않는다)
 const POLL_MS = 5000
+const MAX_BACKOFF_MS = 30000
+// 헬스 이력은 처음·상태가 바뀔 때·수동 새로고침 때 받고, 그 밖에는 60초에 한 번만
 const HEALTH_HOURS = 24
+const HEALTH_REFRESH_MS = 60000
+const NOT_FOUND_TEXT = '문제를 찾을 수 없습니다. 이미 삭제된 배포이거나 지워진 기록일 수 있습니다.'
 
 // 인시던트 상세 화면 (S-13) - 주소의 i_id 가 바뀌면 화면을 새로 만들어 다른 인시던트의 상태가 남지 않게 한다
 export default function IncidentDetailScreen() {
@@ -31,35 +35,49 @@ function IncidentDetail({ i_id }) {
   const scrollRef = useRef(null)
   const alive = useRef(false)
   const busyRef = useRef(false)
-  const loadedRef = useRef(false)
-  const checksRef = useRef(null)
+  const failsRef = useRef(0)
+  const statusRef = useRef(null)
+  const forceHistoryRef = useRef(false)
+  const lastHistoryAt = useRef(0)
+  const historySeq = useRef(0)
 
   const [busy, setBusy] = useState(false)
   const [actionError, setActionError] = useState('')
   const [notice, setNotice] = useState('')
   const [acted, setActed] = useState(false)
   const [pulling, setPulling] = useState(false)
+  const [checks, setChecks] = useState([])
 
   useEffect(() => {
     alive.current = true
     return () => { alive.current = false }
   }, [])
 
-  // 인시던트와 최근 24시간 헬스 이력을 함께 받는다 - 이력만 실패하면 지난 이력(없으면 null)을 쓴다
-  const { data, error, loading, refresh } = usePolling(async () => {
-    const incident = await incidentApi.getOne(i_id)
-    loadedRef.current = true
-    try {
-      checksRef.current = await healthApi.getHistory(incident.d_id, HEALTH_HOURS)
-    } catch (e) {
-      // 이력을 못 받으면 막대 자리에 안내만 나온다
-    }
-    return { incident, checks: checksRef.current }
-  }, (value, failure) => {
-    if (failure) return loadedRef.current ? POLL_MS : STOP_POLLING
-    return INCIDENT_ACTIVE_STATUSES.includes(value.incident.status) ? POLL_MS : STOP_POLLING
+  // 인시던트만 폴링한다 - 헬스 이력은 아래에서 따로 받아 느려도 갱신을 붙잡지 않는다
+  const { data: incident, error, loading, refresh: poll } = usePolling(() => incidentApi.getOne(i_id), (value, failure) => {
+    if (!failure) { failsRef.current = 0; return INCIDENT_ACTIVE_STATUSES.includes(value.status) ? POLL_MS : STOP_POLLING }
+    if (failure.status === 404) return STOP_POLLING
+    failsRef.current += 1
+    return Math.min(MAX_BACKOFF_MS, POLL_MS * 2 ** (failsRef.current - 1))
   }, [i_id])
-  const incident = data?.incident
+
+  // 지금 바로 새로 받는다 (수동 새로고침·포커스 복귀·동작 뒤) - 헬스 이력도 60초를 기다리지 않는다
+  const refresh = useCallback(() => { forceHistoryRef.current = true; return poll() }, [poll])
+
+  // 헬스 이력 - 첫 응답, 상태 변경, 수동 새로고침, 60초 경과 때만. 실패하면 지난 이력을 그대로 둔다 (조용히)
+  useEffect(() => {
+    if (!incident) return
+    const changed = statusRef.current !== incident.status
+    statusRef.current = incident.status
+    const now = Date.now()
+    if (!changed && !forceHistoryRef.current && now - lastHistoryAt.current < HEALTH_REFRESH_MS) return
+    forceHistoryRef.current = false
+    lastHistoryAt.current = now
+    const mine = ++historySeq.current
+    healthApi.getHistory(incident.d_id, HEALTH_HOURS)
+      .then((result) => { if (alive.current && mine === historySeq.current) setChecks(result) })
+      .catch(() => {})
+  }, [incident])
 
   // 다른 화면에서 돌아오면 한 번 새로 받는다 (처음 열 때는 usePolling 이 이미 받는다)
   const focusedOnce = useRef(false)
@@ -114,7 +132,15 @@ function IncidentDetail({ i_id }) {
   }
 
   let body
-  if (!incident) {
+  if (error?.status === 404) {
+    // 인시던트나 배포가 지워졌다 - 처음 열 때든 보던 중이든 같은 안내
+    body = (
+      <View style={styles.stack}>
+        <Notice>{NOT_FOUND_TEXT}</Notice>
+        <Button label="돌아가기" onPress={leave} style={styles.self} />
+      </View>
+    )
+  } else if (!incident) {
     body = loading
       ? <ActivityIndicator accessibilityLabel="불러오는 중" size="large" color={colors.accent} style={styles.spinner} />
       : (
@@ -154,7 +180,7 @@ function IncidentDetail({ i_id }) {
 
         <IncidentExplain explain={incident.explain} onError={setActionError} />
         <Card><IncidentTimeline incident={incident} /></Card>
-        <Card><HealthBar checks={data.checks} hours={HEALTH_HOURS} /></Card>
+        <Card><HealthBar checks={checks} hours={HEALTH_HOURS} /></Card>
 
         {needsAction ? (
           <View style={styles.stack}>
@@ -190,6 +216,7 @@ const styles = StyleSheet.create({
   content: { padding: spacing.lg },
   stack: { gap: spacing.md },
   row: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.md },
+  self: { alignSelf: 'flex-start' },
   spinner: { marginTop: spacing.xl * 2 },
   headTop: { flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between', gap: spacing.md },
   summary: { flex: 1, minWidth: 0, fontSize: 17, fontWeight: '700', lineHeight: 24 },
