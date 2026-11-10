@@ -62,7 +62,23 @@ src/hooks/        usePolling (주기 호출, 백그라운드에서는 멈춤, ST
 
 목록 상단에 `계정 연결` 버튼이 있고, 목록은 화면에 다시 올 때마다 새로 읽는다. `/new` 는 `계정 연결` 에서 `선택`한 블록(없으면 쓸 수 있는 블록이 하나뿐일 때 그것)을 미리 고르고, 쓸 수 있는 연결이 없으면 `계정 연결 열기` 안내를 보여 준다. `계정 연결` 에 다녀와 다시 보이면 연결 목록을 다시 읽는다 (직접 고른 선택은 덮지 않고, 고른 블록이 사라지거나 쓸 수 없게 되면 선택과 분석 결과를 비운다).
 
-없는 것: 알림(푸시), 장애 이력 화면, 로그인, 설정, 스토어 빌드(EAS), GitHub·AWS 에서 앱으로 돌아오는 딥링크, 웹의 "PC에서 이어서 하기" 같은 링크. 앱 이름과 번들 ID(`app.json`)는 임시값이다.
+없는 것: 장애 이력 화면, 로그인, 스토어 빌드(EAS), GitHub·AWS 에서 앱으로 돌아오는 딥링크, 웹의 "PC에서 이어서 하기" 같은 링크. 앱 이름과 번들 ID(`app.json`)는 임시값이다.
+
+## 푸시 알림 (D2 Task 5)
+
+코드: `src/ops/push.js` (상태 읽기·등록·해제·알림 탭 경로), `src/hooks/useNotificationRouting.js` (루트 레이아웃에서 한 번: 앞에서 받은 알림 표시, 알림 탭 이동, 꺼져 있다가 눌러 켠 첫 실행), `src/hooks/usePushSetup.js` + `PushSetupCard` (배포가 `running` 일 때 한 번 보이는 안내 카드), `PushPermissionGuide` (S-17), `app/notification-settings.js` (알림 설정, 목록의 `알림 설정` 버튼).
+
+- 권한은 안내 글을 읽고 `알림 켜기` 를 누른 뒤에만 묻는다. 앱 시작·화면 열림·카드 표시는 묻지 않는다.
+- 푸시 토큰은 `POST /api/devices` 로만 보낸다. 화면·로그·저장소·오류 문장에 넣지 않는다. 저장소에는 서버가 돌려준 기기 번호(`p_d_id`, 키 `dw-push-device`)만 둔다. 안내 카드를 닫은 기록은 `dw-push-card-dismissed`.
+- EAS 프로젝트 id 는 `Constants.expoConfig.extra.eas.projectId` (없으면 `Constants.easConfig.projectId`)에서 읽는다. `app.json` 에는 값을 넣지 않았다. 없으면 상태가 `no_project` 이고 앱이 "스토어 빌드 준비(EAS 프로젝트 연결)가 필요하다"고 안내한다 (나머지 기능은 그대로). 프로젝트를 만들어 id 를 넣는 것은 사람이 해야 하는 일이다 (`npx eas init` 등, 이 저장소에서는 하지 않았다).
+- 알림 탭은 `data.link` 가 `deploywizard://deploys/{n}` 또는 `deploywizard://incidents/{n}` 일 때만 그 화면으로 보낸다. 다른 값은 모두 무시한다 (`ops/links.js` 의 `parseAppLink`).
+- 웹에서는 `expo-notifications` 를 번들에 넣지 않는다 (`src/ops/notifications.web.js`) - 불러오기만 해도 콘솔 경고가 나서다. 웹의 푸시 상태는 `unsupported` 다.
+- `expo-device` 는 쓰지 않는다 (공식 설정 문서가 요구하지 않는다). 그래서 "실제 기기가 아님"을 따로 가려내지 않고, 시뮬레이터·에뮬레이터에서는 OS 와 `getExpoPushTokenAsync` 가 되는 만큼만 된다.
+
+**Expo Go 제한 (공식 문서 인용):** "Push notifications (remote notifications) functionality ... is unavailable in Expo Go on Android from SDK 53. A development build is required." 로컬 알림은 Expo Go 에서도 된다. 그래서 푸시는 개발 빌드(`expo-dev-client`/EAS Build) 또는 실제 기기 빌드에서만 시험할 수 있고, Expo Go 에서는 안드로이드 푸시가 오지 않는다. iOS 의 Expo Go 제한은 이번에 확인한 문서에 없었다. 푸시는 Expo 푸시 서비스와 EAS 프로젝트 id 가 있어야 하며, 이 저장소에서는 한 번도 돌려 보지 못했다.
+
+**확인한 것:** `npx jest` 로 `expo-notifications` 를 목(mock)으로 바꾼 테스트 - 권한은 버튼에서만, 등록 한 번(연타 포함)·해제(404·오프라인 허용), 토큰이 화면·콘솔·저장소·오류에 없음, 알림 탭 경로 표(허용·허용 밖·다른 스킴·`data` 없음·문자열 아님·첫 실행), 설정 스위치 적용·되돌림, 안내 카드 조건. `expo export --platform web` 빌드, 웹 번들을 Playwright(390x844, 라이트·다크)로 열어 `/api/**` 를 모의하고 목록 `알림 설정` → 설정 화면(푸시 줄에 `unsupported` 안내) → 메일·종류 스위치 PATCH 본문 확인 → 실패 되돌림 → 뒤로.
+**확인 못 한 것 (전부):** 실제 iOS·안드로이드 기기·에뮬레이터에서의 실행, 실제 OS 권한 창과 설정 열기, 실제 `getExpoPushTokenAsync` 와 Expo 푸시 서비스로 보낸 알림, 알림 채널(안드로이드), 앞에서·뒤에서·꺼진 상태에서 알림을 눌렀을 때의 실제 이동(특히 첫 실행에서 `router.push` 가 내비게이션 준비 전에 불리는지), 실제 백엔드·SMTP. 푸시는 검증되지 않았다.
 
 ## 웹과 겹치는 파일
 

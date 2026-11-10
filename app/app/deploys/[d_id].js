@@ -11,6 +11,7 @@ import LogTerminal, { appendLogs } from '../../src/components/LogTerminal'
 import HealthDot from '../../src/components/ops/HealthDot'
 import IncidentCard from '../../src/components/ops/IncidentCard'
 import { problemLabel } from '../../src/components/ops/ProblemBanner'
+import PushSetupCard from '../../src/components/ops/PushSetupCard'
 import StatusBadge from '../../src/components/StatusBadge'
 import StepProgress from '../../src/components/StepProgress'
 import { Button, Card, Collapsible, Notice } from '../../src/components/ui'
@@ -185,6 +186,8 @@ function DeployDetail({ d_id }) {
           </View>
           <StepProgress status={status} errorStep={deploy.error_step} />
         </Card>
+
+        <PushSetupCard active={status === 'running'} />
 
         {showsEnvCard(status) && <EnvVarsCard deploy={deploy} onContinued={bumpRound} onRedeploy={redeployNow} />}
 

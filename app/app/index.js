@@ -106,6 +106,7 @@ export default function DeployListScreen() {
   const goNew = () => router.push('/new')
   const goAccounts = () => router.push('/accounts')
   const goNotifications = () => router.push('/notifications')
+  const goNotificationSettings = () => router.push('/notification-settings')
 
   // 다른 화면에서 돌아오면 목록과 안 읽은 알림 수를 다시 받는다 (계정 연결·새 배포·상세·알림 화면에서 바뀐 것이 낡게 남지 않게). 처음 열 때는 usePolling 이 이미 받는다
   const focusedOnce = useRef(false)
@@ -151,7 +152,7 @@ export default function DeployListScreen() {
           </View>
         ),
       }} />
-      <QuickLinks links={[{ label: '계정 연결', onPress: goAccounts }]} />
+      <QuickLinks links={[{ label: '계정 연결', onPress: goAccounts }, { label: '알림 설정', onPress: goNotificationSettings }]} />
       <FlatList
         testID="deploy-list"
         data={data || []}

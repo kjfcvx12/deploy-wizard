@@ -157,6 +157,14 @@ describe('배포 목록 화면 - 계정 연결과 포커스 새로고침', () =>
     expect(mockPush).toHaveBeenCalledWith('/new')
   })
 
+  test('보조 줄의 알림 설정을 누르면 알림 설정 화면으로 간다', async () => {
+    deployApi.getAll.mockResolvedValue(deploys)
+    await render(<DeployList />)
+    await screen.findByText('acme/api')
+    await fireEvent.press(screen.getByRole('button', { name: '알림 설정' }))
+    expect(mockPush).toHaveBeenCalledWith('/notification-settings')
+  })
+
   test('계정 연결은 헤더에 없다', async () => {
     mockHeader.show = true
     deployApi.getAll.mockResolvedValue(deploys)
