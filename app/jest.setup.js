@@ -7,6 +7,7 @@ jest.mock('@react-native-async-storage/async-storage', () => require('@react-nat
 // expo-notifications 는 네이티브 모듈이라 jest 에서는 쓸 수 없으므로 목으로 바꾼다 (권한은 '허용', 알림 응답은 없음). 각 테스트가 필요한 동작을 mockResolvedValue 등으로 덮어쓴다
 jest.mock('expo-notifications', () => ({
   AndroidImportance: { DEFAULT: 5, HIGH: 6, MAX: 7 },
+  DEFAULT_ACTION_IDENTIFIER: 'expo.modules.notifications.actions.DEFAULT',
   getPermissionsAsync: jest.fn(async () => ({ status: 'granted', granted: true, canAskAgain: true })),
   requestPermissionsAsync: jest.fn(async () => ({ status: 'granted', granted: true, canAskAgain: true })),
   getExpoPushTokenAsync: jest.fn(async () => ({ type: 'expo', data: 'ExponentPushToken[jest-mock-token]' })),

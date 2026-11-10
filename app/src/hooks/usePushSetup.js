@@ -18,7 +18,11 @@ export function usePushSetup(active) {
 
   // 보여 줄 조건: running + 아직 안 물음 + 닫은 적 없음
   useEffect(() => {
-    if (!active) return undefined
+    // running 을 벗어나면 이미 보이던 카드도 거둔다
+    if (!active) {
+      setState(null)
+      return undefined
+    }
     let cancelled = false
     const check = async () => {
       if (await readCardDismissed()) return

@@ -1,6 +1,7 @@
 import { NOTIFICATION_KINDS } from './constants'
 
 export const MAIL_HINT = '서버에 메일 설정이 있을 때만 보내집니다'
+export const PUSH_SCOPE_HINT = '이 설정은 모든 기기에 적용됩니다'
 export const PUSH_HINT = '이 기기로 문제와 배포 소식을 바로 받습니다. 처음 켤 때 알림 권한을 묻습니다.'
 
 // 종류별 설명 한 줄

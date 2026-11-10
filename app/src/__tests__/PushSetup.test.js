@@ -168,6 +168,15 @@ describe('PushSetupCard - 한 번짜리 안내 카드', () => {
     expect(Notifications.getPermissionsAsync).not.toHaveBeenCalled()
   })
 
+  test('이미 보인 카드는 배포가 running 을 벗어나면(active=false) 사라진다 - 다시 running 이면 보인다', async () => {
+    const view = await render(<PushSetupCard active />)
+    expect(await screen.findByRole('button', { name: '알림 켜기' })).toBeTruthy()
+    await view.rerender(<PushSetupCard active={false} />)
+    expect(screen.toJSON()).toBeNull()
+    await view.rerender(<PushSetupCard active />)
+    expect(await screen.findByRole('button', { name: '알림 켜기' })).toBeTruthy()
+  })
+
   test('[나중에]: 카드가 사라지고 기억하며, 다시 열어도 안 보인다', async () => {
     const first = await render(<PushSetupCard active />)
     await fireEvent.press(await screen.findByRole('button', { name: '나중에' }))

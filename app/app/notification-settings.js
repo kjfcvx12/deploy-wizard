@@ -8,8 +8,8 @@ import SettingSwitch from '../src/components/SettingSwitch'
 import { Button, Notice } from '../src/components/ui'
 import { useOnForeground } from '../src/hooks/useOnForeground'
 import { NOTIFICATION_KIND_LABEL, NOTIFICATION_KINDS } from '../src/ops/constants'
-import { KIND_HINT, MAIL_HINT, PUSH_HINT, readValues } from '../src/ops/notificationSettings'
-import { getPushState, requestAndRegister, unregister } from '../src/ops/push'
+import { KIND_HINT, MAIL_HINT, PUSH_HINT, PUSH_SCOPE_HINT, readValues } from '../src/ops/notificationSettings'
+import { getPushState, readPushDevice, requestAndRegister, unregister } from '../src/ops/push'
 import { spacing, useColors } from '../src/theme'
 
 const SAVED_TEXT = '저장했습니다'
@@ -30,6 +30,8 @@ export default function NotificationSettingsScreen() {
 
   const [values, setValues] = useState(null)
   const [pushState, setPushState] = useState(null)
+  // 이 기기가 서버에 등록돼 있는지 (저장된 p_d_id 가 있는지) - 서버의 notify_push 는 모든 기기 공통이라 이 기기의 준비 상태와 따로 본다
+  const [hasDevice, setHasDevice] = useState(false)
   const [guideOpen, setGuideOpen] = useState(false)
   const [loading, setLoading] = useState(true)
   const [loadError, setLoadError] = useState(null)
@@ -51,11 +53,12 @@ export default function NotificationSettingsScreen() {
     setLoading(true)
     setLoadError(null)
     try {
-      const [settings, push] = await Promise.all([notificationApi.getSettings(), getPushState()])
+      const [settings, push, device] = await Promise.all([notificationApi.getSettings(), getPushState(), readPushDevice()])
       if (!alive.current || mine !== loadSeq.current) return
       valuesRef.current = readValues(settings)
       setValues(valuesRef.current)
       setPushState(push)
+      setHasDevice(device != null)
     } catch (e) {
       if (alive.current && mine === loadSeq.current) setLoadError(e)
     } finally {
@@ -126,7 +129,10 @@ export default function NotificationSettingsScreen() {
 
   // 푸시 끄기 - 서버 설정을 먼저 끄고(실패하면 되돌림), 된 뒤에 이 기기의 등록을 지운다
   const disablePush = async () => {
-    if (await save('notify_push', { notify_push: false }, { notify_push: false })) await unregister()
+    if (await save('notify_push', { notify_push: false }, { notify_push: false })) {
+      await unregister()
+      if (alive.current) setHasDevice(false)
+    }
   }
 
   // 푸시 켜기 - 버튼을 누른 뒤에만 부른다: 권한(필요하면 OS 창) → 기기 등록 → 서버 설정 켬. 서버 설정이 실패하면 방금 한 등록을 지운다
@@ -143,15 +149,19 @@ export default function NotificationSettingsScreen() {
         setGuideOpen(true)
         return
       }
-      try {
-        await notificationApi.patchSettings({ notify_push: true })
-      } catch (e) {
-        await unregister()
-        if (alive.current) setMessage({ tone: 'err', text: e.message })
-        return
+      // 서버 값이 이미 켬이면(모든 기기 공통) 다시 보내지 않는다
+      if (!valuesRef.current.notify_push) {
+        try {
+          await notificationApi.patchSettings({ notify_push: true })
+        } catch (e) {
+          await unregister()
+          if (alive.current) setMessage({ tone: 'err', text: e.message })
+          return
+        }
       }
       if (!alive.current) return
       setLocal({ notify_push: true })
+      setHasDevice(true)
       setGuideOpen(false)
       showSaved()
     } catch (e) {
@@ -161,10 +171,13 @@ export default function NotificationSettingsScreen() {
     }
   }
 
-  // 푸시 스위치 - 켜져 있으면 끄고, 꺼져 있으면 이미 허용된 기기만 바로 켜고 나머지는 안내를 먼저 보인다 (권한 창은 안내의 [알림 켜기]에서)
+  // 스위치에 보이는 푸시 값 - 서버 설정이 켬이고, 이 기기가 알림을 허용했고, 이 기기가 서버에 등록돼 있을 때만 켬 (서버 값만으로는 켜져 보이지 않게)
+  const pushOn = values?.notify_push === true && pushState === 'granted' && hasDevice
+
+  // 푸시 스위치 - 켜져 보이면 끄고, 꺼져 보이면 이미 허용된 기기만 바로 켜고 나머지는 안내를 먼저 보인다 (권한 창은 안내의 [알림 켜기]에서)
   const togglePush = () => {
     if (busyRef.current.notify_push || !valuesRef.current) return
-    if (valuesRef.current.notify_push) disablePush()
+    if (pushOn) disablePush()
     else if (pushState === 'granted') enablePush()
     else setGuideOpen(true)
   }
@@ -196,9 +209,10 @@ export default function NotificationSettingsScreen() {
           accessibilityLabel="메일 받기" onToggle={toggleMail}
         />
         <SettingSwitch
-          title="푸시 받기" description={PUSH_HINT} value={values.notify_push} busy={!!busy.notify_push}
+          title="푸시 받기" description={PUSH_HINT} value={pushOn} busy={!!busy.notify_push}
           accessibilityLabel="푸시 받기" onToggle={togglePush}
         />
+        <Text style={[styles.note, { color: colors.muted }]}>{PUSH_SCOPE_HINT}</Text>
         {(fixedInfo || guideOpen) && (
           <PushPermissionGuide
             state={pushState} busy={!!busy.notify_push} onEnable={enablePush}

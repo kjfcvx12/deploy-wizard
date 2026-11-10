@@ -75,6 +75,8 @@ const flush = async () => { await act(async () => {}) }
 
 describe('알림 설정 - 처음 값', () => {
   test('서버 값을 그대로 보여 주고 설정은 한 번만 받는다 (메일 설명 문구 포함)', async () => {
+    Notifications.getPermissionsAsync.mockResolvedValue(GRANTED)
+    await AsyncStorage.setItem('dw-push-device', '4')
     await open(settings({ notify_email: false, notify_push: true, kinds: ['deploy_failed', 'new_commit'] }))
     expect(checked('메일 받기')).toBe(false)
     expect(checked('푸시 받기')).toBe(true)
@@ -318,6 +320,7 @@ describe('알림 설정 - 푸시', () => {
   })
 
   test('켬→끔: {notify_push:false} 를 보내고 성공하면 기기 등록을 지운다', async () => {
+    Notifications.getPermissionsAsync.mockResolvedValue(GRANTED)
     await AsyncStorage.setItem('dw-push-device', '4')
     await open(settings({ notify_push: true }))
     await fireEvent.press(row('푸시 받기'))
@@ -328,6 +331,7 @@ describe('알림 설정 - 푸시', () => {
   })
 
   test('켬→끔 저장 실패: 켠 채로 되돌리고 기기 등록은 그대로', async () => {
+    Notifications.getPermissionsAsync.mockResolvedValue(GRANTED)
     await AsyncStorage.setItem('dw-push-device', '4')
     await open(settings({ notify_push: true }))
     notificationApi.patchSettings.mockRejectedValue(new Error('저장하지 못했습니다'))
@@ -339,6 +343,7 @@ describe('알림 설정 - 푸시', () => {
   })
 
   test('끄기는 서버에 기기가 이미 없어도(404) 끝난다', async () => {
+    Notifications.getPermissionsAsync.mockResolvedValue(GRANTED)
     await AsyncStorage.setItem('dw-push-device', '4')
     deviceApi.remove.mockRejectedValue(Object.assign(new Error('해당 id의 기기가 없습니다'), { status: 404 }))
     await open(settings({ notify_push: true }))
@@ -386,11 +391,96 @@ describe('알림 설정 - 이 환경에서 푸시를 못 쓸 때', () => {
     expect(notificationApi.patchSettings).toHaveBeenCalledWith({ kinds: ALL.filter((k) => k !== 'deploy_failed') })
   })
 
-  test('서버 설정이 푸시 켬이면 지원 안 하는 환경에서도 끌 수 있다', async () => {
+  test('서버 설정이 푸시 켬이어도 지원 안 하는 환경에서는 꺼진 것으로 보이고 아무것도 보내지 않는다', async () => {
     jest.replaceProperty(Platform, 'OS', 'web')
     await open(settings({ notify_push: true }))
+    expect(checked('푸시 받기')).toBe(false)
     await fireEvent.press(row('푸시 받기'))
-    expect(notificationApi.patchSettings).toHaveBeenCalledWith({ notify_push: false })
+    expect(notificationApi.patchSettings).not.toHaveBeenCalled()
     expect(deviceApi.remove).not.toHaveBeenCalled()
+  })
+})
+
+describe('알림 설정 - 푸시 스위치는 이 기기가 준비됐을 때만 켜져 보인다 (서버 값은 모든 기기 공통)', () => {
+  test('처음 설치(서버 켬, 아직 안 물음, 등록 없음): 꺼져 보이고 아무것도 요청하지 않는다', async () => {
+    await open(settings({ notify_push: true }))
+    expect(checked('푸시 받기')).toBe(false)
+    expect(Notifications.requestPermissionsAsync).not.toHaveBeenCalled()
+    expect(notificationApi.patchSettings).not.toHaveBeenCalled()
+  })
+
+  test('처음 설치에서 눌러 켜기: 안내 -> 권한 -> 등록 뒤 켜져 보이고, 서버 값이 이미 켬이면 PATCH 를 보내지 않는다', async () => {
+    await open(settings({ notify_push: true }))
+    await fireEvent.press(row('푸시 받기'))
+    expect(screen.getByText(/알림 권한이 필요합니다/)).toBeTruthy()
+    expect(Notifications.requestPermissionsAsync).not.toHaveBeenCalled()
+    await fireEvent.press(screen.getByRole('button', { name: '알림 켜기' }))
+    await waitFor(() => expect(checked('푸시 받기')).toBe(true))
+    expect(deviceApi.register).toHaveBeenCalledTimes(1)
+    expect(notificationApi.patchSettings).not.toHaveBeenCalled()
+    expect(await AsyncStorage.getItem('dw-push-device')).toBe('4')
+    expect(screen.queryByText(/알림 권한이 필요합니다/)).toBeNull()
+  })
+
+  test('서버 값이 꺼짐이면 등록 뒤 {notify_push:true} 를 보낸다 (기존 동작)', async () => {
+    Notifications.getPermissionsAsync.mockResolvedValue(GRANTED)
+    await open(settings({ notify_push: false }))
+    await fireEvent.press(row('푸시 받기'))
+    await waitFor(() => expect(checked('푸시 받기')).toBe(true))
+    expect(notificationApi.patchSettings).toHaveBeenCalledWith({ notify_push: true })
+  })
+
+  test('거부됨(서버 켬): 꺼져 보이고 누르면 기기 설정 안내, 요청 없음', async () => {
+    Notifications.getPermissionsAsync.mockResolvedValue(DENIED)
+    await AsyncStorage.setItem('dw-push-device', '4')
+    await open(settings({ notify_push: true }))
+    expect(checked('푸시 받기')).toBe(false)
+    await fireEvent.press(row('푸시 받기'))
+    expect(screen.getByRole('button', { name: '설정 열기' })).toBeTruthy()
+    expect(Notifications.requestPermissionsAsync).not.toHaveBeenCalled()
+    expect(notificationApi.patchSettings).not.toHaveBeenCalled()
+  })
+
+  test('허용 + 등록 있음 + 서버 켬: 켜져 보인다', async () => {
+    Notifications.getPermissionsAsync.mockResolvedValue(GRANTED)
+    await AsyncStorage.setItem('dw-push-device', '4')
+    await open(settings({ notify_push: true }))
+    expect(checked('푸시 받기')).toBe(true)
+  })
+
+  test('허용인데 이 기기 등록이 없고 서버 켬: 꺼져 보이고, 누르면 안내 없이 등록만 하고 PATCH 는 없다', async () => {
+    Notifications.getPermissionsAsync.mockResolvedValue(GRANTED)
+    await open(settings({ notify_push: true }))
+    expect(checked('푸시 받기')).toBe(false)
+    await fireEvent.press(row('푸시 받기'))
+    await waitFor(() => expect(checked('푸시 받기')).toBe(true))
+    expect(Notifications.requestPermissionsAsync).not.toHaveBeenCalled()
+    expect(deviceApi.register).toHaveBeenCalledTimes(1)
+    expect(notificationApi.patchSettings).not.toHaveBeenCalled()
+  })
+
+  test('켜는 데 실패하면(서버 켬 상태) 그대로 꺼져 보이고 오류를 보인다', async () => {
+    Notifications.getPermissionsAsync.mockResolvedValue(GRANTED)
+    deviceApi.register.mockRejectedValue(new Error('서버에 연결할 수 없습니다'))
+    await open(settings({ notify_push: true }))
+    await fireEvent.press(row('푸시 받기'))
+    expect(await screen.findByText('서버에 연결할 수 없습니다')).toBeTruthy()
+    expect(checked('푸시 받기')).toBe(false)
+    expect(notificationApi.patchSettings).not.toHaveBeenCalled()
+  })
+
+  test('켜져 보일 때 끄면 서버를 먼저 끄고 기기 등록을 지운 뒤 꺼져 보인다', async () => {
+    Notifications.getPermissionsAsync.mockResolvedValue(GRANTED)
+    await AsyncStorage.setItem('dw-push-device', '4')
+    await open(settings({ notify_push: true }))
+    await fireEvent.press(row('푸시 받기'))
+    await waitFor(() => expect(deviceApi.remove).toHaveBeenCalledWith(4))
+    expect(notificationApi.patchSettings).toHaveBeenCalledWith({ notify_push: false })
+    expect(checked('푸시 받기')).toBe(false)
+  })
+
+  test('푸시 줄 아래에 "모든 기기에 적용" 안내가 있다', async () => {
+    await open()
+    expect(screen.getByText('이 설정은 모든 기기에 적용됩니다')).toBeTruthy()
   })
 })

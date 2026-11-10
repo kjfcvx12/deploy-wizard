@@ -16,7 +16,8 @@ jest.mock('expo-router', () => {
 })
 jest.mock('expo-status-bar', () => ({ StatusBar: () => null }))
 
-const response = (link, id = 'n-1') => ({ notification: { request: { identifier: id, content: { data: { link } } } } })
+const DEFAULT_ACTION = 'expo.modules.notifications.actions.DEFAULT'
+const response = (link, id = 'n-1', actionIdentifier = DEFAULT_ACTION) => ({ actionIdentifier, notification: { request: { identifier: id, content: { data: { link } } } } })
 // 리스너를 한 번 등록한 뒤 그 함수를 돌려준다
 const listener = () => Notifications.addNotificationResponseReceivedListener.mock.calls[0][0]
 
@@ -46,7 +47,32 @@ describe('루트 레이아웃 - 알림 연결', () => {
     await render(<RootLayout />)
     expect(screen.getByTestId('stack')).toBeTruthy()
     const { handleNotification } = Notifications.setNotificationHandler.mock.calls[0][0]
+    // iOS 는 조용히 (소리 없음)
     expect(await handleNotification({})).toEqual({ shouldShowBanner: true, shouldShowList: true, shouldPlaySound: false, shouldSetBadge: false })
+  })
+
+  test('안드로이드에서는 shouldPlaySound 가 true 다 (false 면 앞에서 받은 알림의 상단 배너가 뜨지 않는다 - 타입 정의 설명)', async () => {
+    jest.replaceProperty(Platform, 'OS', 'android')
+    await render(<RootLayout />)
+    const { handleNotification } = Notifications.setNotificationHandler.mock.calls[0][0]
+    expect(await handleNotification({})).toEqual({ shouldShowBanner: true, shouldShowList: true, shouldPlaySound: true, shouldSetBadge: false })
+  })
+
+  test.each([
+    ['다른 액션 버튼', 'expo.modules.notifications.actions.OTHER'],
+    ['알림 닫기', 'expo.modules.notifications.actions.DISMISS'],
+    ['액션 없음', null],
+  ])('알림 탭: 기본 액션이 아니면(%s) 링크가 유효해도 이동하지 않는다', async (_name, action) => {
+    await render(<RootLayout />)
+    listener()(response('deploywizard://deploys/12', 'n-1', action))
+    expect(mockPush).not.toHaveBeenCalled()
+  })
+
+  test('첫 실행의 응답도 기본 액션이 아니면 이동하지 않는다 (비우기는 한다)', async () => {
+    Notifications.getLastNotificationResponse.mockReturnValue(response('deploywizard://deploys/12', 'cold', 'expo.modules.notifications.actions.OTHER'))
+    await render(<RootLayout />)
+    expect(mockPush).not.toHaveBeenCalled()
+    expect(Notifications.clearLastNotificationResponse).toHaveBeenCalledTimes(1)
   })
 
   test('앱을 켜는 것만으로는 권한도 토큰도 요청하지 않는다', async () => {

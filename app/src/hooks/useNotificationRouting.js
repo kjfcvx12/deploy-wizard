@@ -5,7 +5,8 @@ import * as Notifications from '../ops/notifications'
 import { routeFromNotificationResponse } from '../ops/push'
 
 // 앱이 켜져 있는 동안 들어온 알림도 배너와 목록에 보인다 - 소리와 앱 아이콘 숫자는 쓰지 않는다 (SDK 58 NotificationBehavior)
-const FOREGROUND_BEHAVIOR = { shouldShowBanner: true, shouldShowList: true, shouldPlaySound: false, shouldSetBadge: false }
+// 안드로이드는 shouldPlaySound 가 false 면 앞에서 받은 알림의 상단 배너가 뜨지 않는다 (타입 정의 설명) - 그래서 안드로이드만 true, iOS 는 조용히
+const foregroundBehavior = () => ({ shouldShowBanner: true, shouldShowList: true, shouldPlaySound: Platform.OS === 'android', shouldSetBadge: false })
 
 // 알림 처리 연결 (루트 레이아웃에서 한 번) - 앞에서 받은 알림의 표시 방식, 알림을 눌렀을 때의 이동(켜져 있을 때·꺼져 있다가 눌러 켠 첫 실행)
 // 이동은 routeFromNotificationResponse 가 허용한 경로 두 가지뿐이고 그 밖의 알림은 모두 무시한다. 웹에서는 아무것도 하지 않는다. 권한은 절대 묻지 않는다
@@ -20,6 +21,8 @@ export function useNotificationRouting() {
     let handledId = null
     let subscription = null
     const go = (response) => {
+      // 알림 본문을 누른 것(기본 액션)만 이동한다 - 닫기·다른 액션 버튼은 무시
+      if (response?.actionIdentifier !== Notifications.DEFAULT_ACTION_IDENTIFIER) return
       const target = routeFromNotificationResponse(response)
       if (!target) return
       try {
@@ -29,7 +32,7 @@ export function useNotificationRouting() {
       }
     }
     try {
-      Notifications.setNotificationHandler({ handleNotification: async () => FOREGROUND_BEHAVIOR })
+      Notifications.setNotificationHandler({ handleNotification: async () => foregroundBehavior() })
       subscription = Notifications.addNotificationResponseReceivedListener((response) => {
         const id = response?.notification?.request?.identifier
         if (handledId && id === handledId) {
