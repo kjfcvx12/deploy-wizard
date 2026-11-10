@@ -199,4 +199,12 @@ describe('IssueHistory', () => {
     expect(screen.getByText('weird')).toBeTruthy()
     expect(screen.getByText('원문 메시지')).toBeTruthy()
   })
+
+  test('시간대 표시가 없는 서버 시각(UTC)은 기기 현지 시각으로 바꿔 보여 준다', async () => {
+    await render(<IssueHistory issues={[{ d_i_id: 1, step: 'building', created_at: '2026-11-01T03:12:30', error_msg: '원문', explain: null }]} />)
+    await fireEvent.press(screen.getByText(/문제 이력/))
+    const d = new Date(Date.UTC(2026, 10, 1, 3, 12, 30))
+    const pad = (n) => String(n).padStart(2, '0')
+    expect(screen.getByText(`${d.getMonth() + 1}월 ${d.getDate()}일 ${pad(d.getHours())}:${pad(d.getMinutes())}`)).toBeTruthy()
+  })
 })

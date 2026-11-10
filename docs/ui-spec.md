@@ -124,7 +124,7 @@ S-20 와이어프레임의 "수준 선택 3칸"(사용자가 가벼움/보통/�
 
 두 카드 모두 삭제는 확인 대화상자 — "이 연결을 쓰던 배포들의 연결이 끊깁니다. 앱 설치나 CFN 스택 자체는 지워지지 않습니다" 안내(연결만 끊는다는 뜻, 실제 회수는 각자 콘솔/github.com에서 하라는 것을 명확히).
 
-## 앱 (Expo, `app/`, C1·C2)
+## 앱 (Expo, `app/`, C1·C2·D2)
 
 웹 화면을 그대로 옮긴 휴대폰 앱이다. 문구, 상태 이름, 환경변수 종류, 분석 라벨은 웹과 같고, 서버 필드 이름도 그대로다. 설명과 실행법은 `app/README.md`.
 
@@ -133,6 +133,10 @@ S-20 와이어프레임의 "수준 선택 3칸"(사용자가 가벼움/보통/�
 | `/` 목록 | `app/app/index.js` | `features/deploys/ui/DeployListPage.jsx` (목록) |
 | `/new` 새 배포 | `app/app/new.js`, `app/src/components/AdvicePanel.js`, `ConnectionPicker.js` | `DeployForm.jsx`, `features/advice/ui/AdvicePanel.jsx` (S-20) |
 | `/deploys/[d_id]` 상세 | `app/app/deploys/[d_id].js`, `StepProgress` `LogTerminal` `ExplainCard` `IssueHistory` `EndpointCard` `EnvVarsCard` `EnvRow` | `DeployDetailPage.jsx`, `StepProgress.jsx` `LogTerminal.jsx` `IssueHistory.jsx`, `features/envvars/ui/EnvVarsCard.jsx` (S-19) |
+| `/incidents/[i_id]` 인시던트 (D2) | `app/app/incidents/[i_id].js`, `app/src/components/ops/` (`HealthBar` `IncidentCard` `IncidentTimeline` `ProblemBanner` `HealthDot`), `app/src/ops/` | 없음 (웹은 다음 계획) (S-13, D-07·D-08) |
+| `/deploy-settings/[d_id]` 배포 설정 (D2) | `app/app/deploy-settings/[d_id].js`, `app/src/components/SettingSwitch.js` | 없음 (S-14, D-09) |
+| `/notifications` 알림 (D2) | `app/app/notifications.js`, `app/src/components/ops/NotificationItem.js` `BellButton.js` | 없음 (S-12) |
+| `/notification-settings` 알림 설정 (D2) | `app/app/notification-settings.js`, `app/src/ops/push.js` `notificationSettings.js`, `PushPermissionGuide` `PushSetupCard` | 없음 (S-15 알림 부분, S-17) |
 | `/accounts` 계정 연결 (C2) | `app/app/accounts.js`, `app/src/components/accounts/` (`BlockCard` `AddBlockForm` `AwsBox` `AwsGuide` `AwsUpdateGuide` `GithubBox` `ExistingPicker` `GuideParts`), `app/src/accounts/` | `features/accounts/ui/AccountsPage.jsx` `AccountBox.jsx` `AwsStackGuide.jsx` `AwsStackUpdateGuide.jsx` (B-01~B-07, S-08~S-11) |
 
 **양쪽을 같이 고친다**: 웹의 위 파일이나 `constants.js`(`features/deploys/ui/`, `features/envvars/ui/`, `features/advice/ui/`)의 문구·상태·규칙을 바꾸면 `app/src/`의 같은 곳도 바꾼다 (앱은 웹 파일을 가져오지 않고 옮겨 적었다). 상태 값을 바꿀 때는 `CLAUDE.md`의 세 곳에 앱 `src/constants.js`가 더해진다.
@@ -157,7 +161,26 @@ S-20 와이어프레임의 "수준 선택 3칸"(사용자가 가벼움/보통/�
 - **터치 크기**: 앱 쪽 버튼·입력·선택 줄은 44pt 이상으로 만들고 웹 번들로 쟀다. 헤더 뒤로 가기는 웹 번들에서 30×30으로 나왔다(내비게이션 기본 헤더, 기기에서 미확인).
 - **다크 모드**: 시스템 설정을 따른다. 색은 `app/src/theme.js`의 토큰이고, 터미널 색은 라이트·다크 모두 어두운 바탕용 값이다.
 
-앱에 없는 화면: 알림, 장애 이력, 로그인, 설정. 딥링크 복귀와 웹의 "PC에서 이어서 하기" 링크도 없다.
+### 인시던트·알림·설정 (D2)
+
+**웹에는 아직 없음 - 웹 대응은 다음 계획이다.** 아래 화면은 앱에만 있다. 서버 필드 이름(`i_id`, `open_incident_id`, `open_incident_status`, `health_state`, `auto_recover`, `explain.fix_where` ...)과 상태·종류 값은 백엔드와 같고 `app/src/ops/constants.js` 한 곳에 있다 (`incident.status`: `open|recovering|resolved|needs_action`).
+
+- **목록 머리줄 (웹과 다름)**: 머리에는 알림 종 + `＋ 새 배포` 만 둔다. 종은 44×44, 안 읽은 알림이 있으면 숫자 배지(99 넘으면 `99+`), 접근성 라벨 `알림 {n}개 읽지 않음`/`알림`. `계정 연결`·`알림 설정` 은 머리 밑 줄의 칩(44pt 이상)이다 (머리에 다 담기지 않아서 옮겼다). 종을 누르면 `/notifications`.
+- **문제 배너**: 끝나지 않은 인시던트(`open_incident_id` 가 있는)가 있는 배포마다 목록 위에 한 줄 `{레포}에 문제가 있습니다 · 자동 복구 중`. 인시던트가 `needs_action` 이거나 그 배포의 `auto_recover` 가 꺼져 있으면 `... · 확인이 필요합니다` (`open_incident_status` 를 모르는 옛 서버는 `auto_recover` 만 본다). 누르면 `/incidents/{id}`. `running` 카드의 오른쪽에 헬스 점(초록·빨강·회색, `health_state`). 배포 상세에는 인시던트 카드(한 줄 요약 + `자세히 보기`).
+- **인시던트 상세** (S-13): 요약 + 상태 배지(감지됨·복구 중·해결됨·확인 필요), 배포 번호·종류·감지(·해결) 시각, `원인`(없으면 "아직 원인을 확인하지 못했습니다"), `고칠 곳`(고정폭, 선택·복사 가능, 긴 ARN 도 줄바꿈), `해야 할 일`, `마법사가 한 일` 세로 타임라인(자동 재시작·되돌리기와 결과는 **읽기 전용 기록**), `헬스체크 이력` 최근 24시간 막대(15분 칸, `최근 24시간 정상 N%`). `open`·`recovering` 인 동안 5초마다 갱신하고, `resolved`·`needs_action` 이 되면 멈춘다 (앱이 백그라운드면 멈춤). 불러오기가 실패하면 404 일 때 멈추고, 그 밖의 실패는 5→10→20→30초로 늘려 가며 다시 시도한다. 삭제된 배포·없는 인시던트는 한국어 안내 + `돌아가기`. `needs_action` 이면 `다시 배포`·`멈춤`(확인 창, 안전한 `그대로 두기` 먼저)·`그대로 두기`; 동작 뒤에는 `배포 보기` 만 남는다. 앱은 자동 조치를 하지 않는다 (CLAUDE.md 규칙 3: 서버가 하는 재시작·되돌리기만 있고 앱의 모든 변경은 사용자가 누른 버튼이다).
+- **배포 설정** (S-14): `새 커밋이 오면 자동 재배포`, `문제가 생기면 자동 복구` 스위치 줄(56pt 이상, 줄 전체가 눌림 대상, 라벨에 `배포 #번호`). 누르면 바로 저장(바꾼 항목만 `PATCH`), 실패하면 그 스위치만 되돌리고 서버 문구를 보인다. 자동 복구 설명에 "재시작과 이전 버전으로 되돌리기만 합니다. 삭제나 사양 변경은 직접 확인한 뒤에만 합니다." 가 들어 있다. 배포 상세의 `설정` 버튼(`deleting`·`deleted` 가 아니면 보임)으로 들어간다.
+- **알림 목록** (S-12): 안 읽은 알림은 굵게 + 점, 아이콘·종류·시각, 누르면 읽음 처리 후 인시던트(`incident_*` 종류)나 배포 화면으로 이동. `모두 읽음`, `더 보기`(가장 오래된 `n_id` 를 `after` 로), 비었을 때 `새 알림이 없습니다`, 불러오기 실패 시 `다시 시도`. 목록에서 읽음 처리가 실패하면 되돌리고 맨 위에 안내.
+- **알림 설정** (S-15 알림 부분, S-17): 메일 스위치("서버에 메일 설정이 있을 때만 보내집니다"), 푸시 스위치("이 설정은 모든 기기에 적용됩니다"), 종류 6개 스위치("끈 종류는 앱 안 알림 목록에도 남지 않습니다" 안내 한 줄). 푸시는 안내 글을 읽고 `알림 켜기` 를 누른 뒤에만 OS 권한을 묻는다 (앱 시작·화면 열림에는 묻지 않음). 푸시 스위치는 이 기기가 준비됐을 때만 켜져 보인다. 거부됐으면 OS 설정에서 켜는 방법을 안내한다. `running` 배포의 상세에는 이 기기의 알림 권한이 아직 정해지지 않았을 때 안내 카드가 뜬다 (`나중에` 로 닫으면 다시 안 뜸).
+- **알림을 눌렀을 때**: `data.link` 가 `deploywizard://deploys/{n}`·`deploywizard://incidents/{n}` 일 때만 그 화면으로 가고 그 밖의 값은 무시한다.
+
+플랫폼 메모:
+- **웹 번들**: 푸시를 지원하지 않는다 (`expo-notifications` 를 번들에 넣지 않음). 푸시 줄에 "이 환경(웹, 알림을 지원하지 않는 기기)에서는 푸시 알림을 쓸 수 없습니다. 앱 안 알림 목록은 그대로 쓸 수 있습니다." 안내만 보이고 `알림 켜기` 는 없다. 확인 창은 브라우저 `confirm` 이다.
+- **Expo Go(안드로이드)**: SDK 53 부터 원격 푸시가 안 된다 (개발 빌드 필요). 푸시는 개발 빌드나 실제 기기 빌드에서만 시험할 수 있다. **EAS 프로젝트 id 가 아직 없어서** 어느 빌드든 푸시 상태는 `no_project` 이고 "스토어 빌드 준비(EAS 프로젝트 연결)가 필요합니다" 안내가 나온다. 푸시는 실제로 돌려 보지 못했다.
+- 터치 크기: 새 화면의 버튼·스위치 줄·칩은 44pt 이상이고 웹 번들로 쟀다. 헤더 뒤로 가기만 30×30 이다 (기본 헤더, 기기에서 미확인). 가로 넘침 없음(390).
+
+확인은 jest(목), 웹 번들 내보내기, `/api/**` 를 모의한 Playwright(390×844 라이트·다크)뿐이다. 실제 기기·실제 백엔드·실제 푸시 발송으로는 돌려 보지 않았다.
+
+앱에 없는 화면: 인시던트 목록, 로그인, 운영 에이전트. 딥링크 복귀와 웹의 "PC에서 이어서 하기" 링크도 없다.
 
 계정 연결 화면은 실제 기기·에뮬레이터, 실제 백엔드, 실제 AWS·GitHub 로 돌려 보지 않았다. 웹 번들(390×844 라이트·다크, `/api/**` 모의)과 jest 로만 확인했다. `Modal` 안의 키보드와 안전 영역, 외부 브라우저 왕복 때의 `AppState` 순서는 기기 확인 전이다.
 

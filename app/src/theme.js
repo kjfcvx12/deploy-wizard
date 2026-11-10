@@ -62,6 +62,15 @@ export const monoFont = Platform.select({ ios: 'Menlo', default: 'monospace' })
 // 공백 없는 긴 글자(변수 이름 등)를 웹에서도 줄바꿈한다 - 앱(iOS/안드로이드)은 기본으로 줄바꿈한다
 export const wrapAnywhere = Platform.OS === 'web' ? { overflowWrap: 'anywhere', minWidth: 0 } : null
 
+// 톤 이름(ok | warn | err | accent | muted)을 글자색·배경색 한 쌍으로 바꾼다 - 모르는 톤은 흐린 색
+export function toneColors(colors, tone) {
+  if (tone === 'ok') return { fg: colors.ok, bg: colors.okBg }
+  if (tone === 'warn') return { fg: colors.warn, bg: colors.warnBg }
+  if (tone === 'err') return { fg: colors.err, bg: colors.errBg }
+  if (tone === 'accent') return { fg: colors.accent, bg: colors.infoBg }
+  return { fg: colors.muted, bg: colors.surface2 }
+}
+
 // 시스템 색상 모드에 맞는 색 묶음을 돌려준다
 export function useColors() {
   const scheme = useColorScheme()

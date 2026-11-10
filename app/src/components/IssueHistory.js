@@ -1,5 +1,6 @@
 import { StyleSheet, Text, View } from 'react-native'
 import { STEPS } from '../constants'
+import { formatTime } from '../ops/format'
 import { spacing, useColors } from '../theme'
 import { Collapsible } from './ui'
 
@@ -16,7 +17,7 @@ export default function IssueHistory({ issues }) {
         <View key={issue.d_i_id} style={[styles.item, { borderTopColor: colors.border }]}>
           <View style={styles.row}>
             <Text style={[styles.step, { color: colors.text }]}>{STEP_LABEL[issue.step] || issue.step}</Text>
-            <Text style={[styles.small, { color: colors.muted }]}>{new Date(issue.created_at).toLocaleString('ko-KR')}</Text>
+            <Text style={[styles.small, { color: colors.muted }]}>{formatTime(issue.created_at)}</Text>
           </View>
           <Text style={[styles.small, styles.message, { color: colors.muted }]}>{issue.explain?.summary || issue.error_msg}</Text>
         </View>

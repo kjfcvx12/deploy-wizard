@@ -1,6 +1,6 @@
 import { AppState, StyleSheet } from 'react-native'
 import { render, screen, fireEvent, act } from '@testing-library/react-native'
-import { deployApi } from '../api'
+import { deployApi, notificationApi } from '../api'
 import DeployList from '../../app/index'
 import StatusBadge from '../components/StatusBadge'
 import { lightColors } from '../theme'
@@ -22,7 +22,7 @@ jest.mock('expo-router', () => {
     },
   }
 })
-jest.mock('../api', () => ({ deployApi: { getAll: jest.fn() } }))
+jest.mock('../api', () => ({ deployApi: { getAll: jest.fn() }, notificationApi: { getUnreadCount: jest.fn() } }))
 
 const deploys = [
   { d_id: 7, repo_url: 'https://github.com/acme/api', branch: 'main', language: 'Node.js', status: 'running', endpoint: 'https://abc.example.com', env_pending: 0 },
@@ -36,6 +36,7 @@ beforeEach(() => {
   mockHeader.show = false
   mockFocus.effect = null
   deployApi.getAll.mockReset()
+  notificationApi.getUnreadCount.mockReset().mockResolvedValue({ count: 0 })
   jest.spyOn(AppState, 'addEventListener').mockImplementation(() => ({ remove: jest.fn() }))
 })
 
@@ -143,25 +144,47 @@ describe('배포 목록 화면', () => {
 })
 
 describe('배포 목록 화면 - 계정 연결과 포커스 새로고침', () => {
-  test('헤더에 계정 연결 버튼이 있고 누르면 /accounts 로 간다', async () => {
-    mockHeader.show = true
+  test('헤더에는 ＋ 새 배포가, 헤더 아래 보조 줄에는 계정 연결이 있다 (390pt 에 모두 들어가도록)', async () => {
     deployApi.getAll.mockResolvedValue(deploys)
     await render(<DeployList />)
     await screen.findByText('acme/api')
+    // 헤더를 켜지 않아도 계정 연결은 본문 보조 줄에서 눌린다
     await fireEvent.press(screen.getByText('계정 연결'))
     expect(mockPush).toHaveBeenCalledWith('/accounts')
-    await fireEvent.press(screen.getByText('＋ 새 배포'))
+    mockHeader.show = true
+    await render(<DeployList />)
+    await fireEvent.press(screen.getAllByText('＋ 새 배포')[0])
     expect(mockPush).toHaveBeenCalledWith('/new')
   })
 
-  test('헤더 버튼은 눌림 높이가 44 이상이다', async () => {
+  test('보조 줄의 알림 설정을 누르면 알림 설정 화면으로 간다', async () => {
+    deployApi.getAll.mockResolvedValue(deploys)
+    await render(<DeployList />)
+    await screen.findByText('acme/api')
+    await fireEvent.press(screen.getByRole('button', { name: '알림 설정' }))
+    expect(mockPush).toHaveBeenCalledWith('/notification-settings')
+  })
+
+  test('계정 연결은 헤더에 없다', async () => {
     mockHeader.show = true
     deployApi.getAll.mockResolvedValue(deploys)
     await render(<DeployList />)
     await screen.findByText('acme/api')
-    const style = StyleSheet.flatten(screen.getByRole('button', { name: '계정 연결' }).props.style)
-    expect(style.minHeight).toBeGreaterThanOrEqual(44)
-    expect(style.minWidth).toBeGreaterThanOrEqual(44)
+    expect(screen.getAllByText('계정 연결')).toHaveLength(1)
+    expect(screen.getAllByText('＋ 새 배포')).toHaveLength(1)
+    expect(screen.getAllByTestId('quick-links')).toHaveLength(1)
+  })
+
+  test('보조 줄 버튼과 헤더 버튼은 눌림 높이가 44 이상이다', async () => {
+    mockHeader.show = true
+    deployApi.getAll.mockResolvedValue(deploys)
+    await render(<DeployList />)
+    await screen.findByText('acme/api')
+    for (const name of ['계정 연결', '＋ 새 배포', '알림']) {
+      const style = StyleSheet.flatten(screen.getByRole('button', { name }).props.style)
+      expect(style.minHeight).toBeGreaterThanOrEqual(44)
+      expect(style.minWidth).toBeGreaterThanOrEqual(44)
+    }
   })
 
   test('처음 열 때는 포커스 새로고침이 한 번 더 부르지 않는다', async () => {
@@ -217,5 +240,118 @@ describe('StatusBadge', () => {
   test('모르는 상태는 값 그대로', async () => {
     await render(<StatusBadge status="weird" />)
     expect(screen.getByText('weird')).toBeTruthy()
+  })
+})
+
+describe('배포 목록 화면 - 문제 배너와 헬스 점', () => {
+  const withIncident = { ...deploys[0], open_incident_id: 12, auto_recover: true, health_state: 'unhealthy' }
+
+  test('open_incident_id 가 있는 배포만 배너가 나오고, 누르면 인시던트 화면으로 간다', async () => {
+    deployApi.getAll.mockResolvedValue([withIncident, { ...deploys[1], open_incident_id: null }])
+    await render(<DeployList />)
+    expect(await screen.findByText('acme/api에 문제가 있습니다 · 자동 복구 중')).toBeTruthy()
+    expect(screen.queryByText(/acme\/web에 문제가 있습니다/)).toBeNull()
+    await fireEvent.press(screen.getByRole('button', { name: /acme\/api에 문제가 있습니다/ }))
+    expect(mockPush).toHaveBeenCalledWith('/incidents/12')
+    expect(mockPush).not.toHaveBeenCalledWith('/deploys/7')
+  })
+
+  test('자동 복구가 꺼진 배포는 확인이 필요합니다 문구', async () => {
+    deployApi.getAll.mockResolvedValue([{ ...withIncident, auto_recover: false }])
+    await render(<DeployList />)
+    expect(await screen.findByText('acme/api에 문제가 있습니다 · 확인이 필요합니다')).toBeTruthy()
+  })
+
+  test('확인 필요(needs_action) 인시던트도 배너가 나오고 확인이 필요합니다 문구, 누르면 그 인시던트로 간다', async () => {
+    deployApi.getAll.mockResolvedValue([{ ...withIncident, open_incident_id: 21, open_incident_status: 'needs_action' }])
+    await render(<DeployList />)
+    expect(await screen.findByText('acme/api에 문제가 있습니다 · 확인이 필요합니다')).toBeTruthy()
+    await fireEvent.press(screen.getByRole('button', { name: /배포 #7\)/ }))
+    expect(mockPush).toHaveBeenCalledWith('/incidents/21')
+  })
+
+  test('복구 중(recovering)이고 자동 복구가 켜져 있으면 자동 복구 중 문구', async () => {
+    deployApi.getAll.mockResolvedValue([{ ...withIncident, open_incident_status: 'recovering' }])
+    await render(<DeployList />)
+    expect(await screen.findByText('acme/api에 문제가 있습니다 · 자동 복구 중')).toBeTruthy()
+  })
+
+  test('열린 인시던트가 없으면 배너가 하나도 없다 (옛 서버 응답처럼 필드가 없어도 된다)', async () => {
+    deployApi.getAll.mockResolvedValue(deploys)
+    await render(<DeployList />)
+    await screen.findByText('acme/api')
+    expect(screen.queryByText(/에 문제가 있습니다/)).toBeNull()
+  })
+
+  test('실행 중인 카드에만 헬스 점이 붙는다', async () => {
+    deployApi.getAll.mockResolvedValue([withIncident, { ...deploys[1], health_state: 'healthy' }])
+    await render(<DeployList />)
+    await screen.findByText('acme/api')
+    expect(screen.getAllByTestId('health-dot')).toHaveLength(1)
+    expect(screen.getByLabelText('헬스체크: 응답 없음')).toBeTruthy()
+  })
+
+  test('연결 오류와 배너가 함께 나올 수 있다', async () => {
+    deployApi.getAll.mockResolvedValueOnce([withIncident]).mockRejectedValue(new Error('연결 끊김'))
+    await render(<DeployList />)
+    await screen.findByText('acme/api에 문제가 있습니다 · 자동 복구 중')
+    await act(async () => { jest.advanceTimersByTime(15000) })
+    expect(await screen.findByText('서버에 연결할 수 없습니다 :연결 끊김')).toBeTruthy()
+    expect(screen.getByText('acme/api에 문제가 있습니다 · 자동 복구 중')).toBeTruthy()
+  })
+})
+
+describe('배포 목록 화면 - 알림 종 버튼과 안 읽은 수 배지', () => {
+  beforeEach(() => { mockHeader.show = true })
+
+  test('읽지 않은 알림이 있으면 배지에 수가 나오고 라벨에도 들어간다', async () => {
+    deployApi.getAll.mockResolvedValue(deploys)
+    notificationApi.getUnreadCount.mockResolvedValue({ count: 3 })
+    await render(<DeployList />)
+    expect(await screen.findByText('3')).toBeTruthy()
+    expect(screen.getByRole('button', { name: '알림 3개 읽지 않음' })).toBeTruthy()
+  })
+
+  test('99를 넘으면 99+ 로 줄여 보인다', async () => {
+    deployApi.getAll.mockResolvedValue(deploys)
+    notificationApi.getUnreadCount.mockResolvedValue({ count: 150 })
+    await render(<DeployList />)
+    expect(await screen.findByText('99+')).toBeTruthy()
+  })
+
+  test('0 이면 배지가 없고 라벨은 알림', async () => {
+    deployApi.getAll.mockResolvedValue(deploys)
+    await render(<DeployList />)
+    await screen.findByText('acme/api')
+    expect(screen.queryByTestId('unread-badge')).toBeNull()
+    expect(screen.getByRole('button', { name: '알림' })).toBeTruthy()
+  })
+
+  test('조회가 실패하면 배지 없이 조용하다', async () => {
+    deployApi.getAll.mockResolvedValue(deploys)
+    notificationApi.getUnreadCount.mockRejectedValue(new Error('x'))
+    await render(<DeployList />)
+    await screen.findByText('acme/api')
+    expect(screen.queryByTestId('unread-badge')).toBeNull()
+  })
+
+  test('종을 누르면 /notifications 로 간다', async () => {
+    deployApi.getAll.mockResolvedValue(deploys)
+    notificationApi.getUnreadCount.mockResolvedValue({ count: 2 })
+    await render(<DeployList />)
+    await fireEvent.press(await screen.findByRole('button', { name: '알림 2개 읽지 않음' }))
+    expect(mockPush).toHaveBeenCalledWith('/notifications')
+  })
+
+  test('알림 화면에서 돌아와 포커스를 받으면 안 읽은 수를 다시 받는다', async () => {
+    deployApi.getAll.mockResolvedValue(deploys)
+    notificationApi.getUnreadCount.mockResolvedValue({ count: 3 })
+    await render(<DeployList />)
+    expect(await screen.findByText('3')).toBeTruthy()
+    expect(notificationApi.getUnreadCount).toHaveBeenCalledTimes(1)
+    notificationApi.getUnreadCount.mockResolvedValue({ count: 0 })
+    await act(async () => { mockFocus.regain() })
+    expect(notificationApi.getUnreadCount).toHaveBeenCalledTimes(2)
+    expect(screen.queryByTestId('unread-badge')).toBeNull()
   })
 })

@@ -88,11 +88,18 @@ EXPLAIN_DEFAULT=("앱이 헬스체크에 연속으로 응답하지 않았습니�
 
 class Incident_Service:
 
-    # 열린 인시던트 번호 조회 - 배포 d_id 마다 없으면 None (deploys 가 목록·상세에 채운다)
+    # 끝나지 않은 인시던트의 번호와 상태 조회 - 배포 d_id 마다 (i_id, status), 없으면 (None, None) (deploys 가 목록·상세에 채운다)
+    @staticmethod
+    async def services_incident_open_states(db:AsyncSession, d_ids:list[int]) -> dict[int, tuple[int | None, str | None]]:
+        open_incidents=await Incident_Crud.crud_incident_get_open_by_d_ids(db, d_ids)
+        return {d_id: ((open_incidents[d_id].i_id, open_incidents[d_id].status) if d_id in open_incidents else (None, None)) for d_id in d_ids}
+
+
+    # 끝나지 않은 인시던트 번호 조회 - 배포 d_id 마다 없으면 None
     @staticmethod
     async def services_incident_open_ids(db:AsyncSession, d_ids:list[int]) -> dict[int, int | None]:
-        open_incidents=await Incident_Crud.crud_incident_get_open_by_d_ids(db, d_ids)
-        return {d_id: (open_incidents[d_id].i_id if d_id in open_incidents else None) for d_id in d_ids}
+        states=await Incident_Service.services_incident_open_states(db, d_ids)
+        return {d_id: i_id for d_id, (i_id, _) in states.items()}
 
 
     # 현재 시각 - DB 의 CURRENT_TIMESTAMP 와 같은 UTC (시간대 없는 값)

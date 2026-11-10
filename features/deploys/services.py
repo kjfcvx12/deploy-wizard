@@ -34,11 +34,11 @@ class Deploy_Service:
         deploys=await Deploy_Crud.crud_deploy_get_all(db)
         pending=await Env_Service.services_env_pending_many(db, [d.d_id for d in deploys])
 
-        open_ids=await Incident_Service.services_incident_open_ids(db, [d.d_id for d in deploys])
+        open_states=await Incident_Service.services_incident_open_states(db, [d.d_id for d in deploys])
 
         for deploy in deploys:
             deploy.env_pending=pending[deploy.d_id]
-            deploy.open_incident_id=open_ids[deploy.d_id]
+            deploy.open_incident_id, deploy.open_incident_status=open_states[deploy.d_id]
 
         return deploys
 
@@ -53,7 +53,7 @@ class Deploy_Service:
                                 detail='해당 id의 배포가 없습니다')
 
         deploy.env_pending=await Env_Service.services_env_pending_count(db, d_id)
-        deploy.open_incident_id=(await Incident_Service.services_incident_open_ids(db, [d_id]))[d_id]
+        deploy.open_incident_id, deploy.open_incident_status=(await Incident_Service.services_incident_open_states(db, [d_id]))[d_id]
         return deploy
 
 

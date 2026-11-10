@@ -2,7 +2,7 @@ import { Alert, AppState, Linking, Platform, StyleSheet } from 'react-native'
 import { SafeAreaProvider } from 'react-native-safe-area-context'
 import * as Clipboard from 'expo-clipboard'
 import { render, screen, fireEvent, act } from '@testing-library/react-native'
-import { deployApi, envApi } from '../api'
+import { deployApi, envApi, incidentApi } from '../api'
 import DeployDetail from '../../app/deploys/[d_id]'
 import { monoFont } from '../theme'
 
@@ -21,12 +21,23 @@ jest.mock('react-native/Libraries/Components/Keyboard/KeyboardAvoidingView', () 
   }
 })
 const mockDismissTo = jest.fn()
+const mockPush = jest.fn()
+const mockBack = jest.fn()
 let mockCanGoBack = true
-jest.mock('expo-router', () => ({
-  useRouter: () => ({ replace: mockReplace, dismissTo: mockDismissTo, canGoBack: () => mockCanGoBack, push: jest.fn() }),
-  useLocalSearchParams: () => ({ d_id: '7' }),
-  Stack: { Screen: () => null },
-}))
+// 화면 포커스 흉내 - 처음 연 것과 다시 포커스를 받은 것을 구분한다
+const mockFocus = { effect: null, regain: () => mockFocus.effect() }
+jest.mock('expo-router', () => {
+  const React = require('react')
+  return {
+    useRouter: () => ({ replace: mockReplace, dismissTo: mockDismissTo, canGoBack: () => mockCanGoBack, push: mockPush, back: mockBack }),
+    useLocalSearchParams: () => ({ d_id: '7' }),
+    Stack: { Screen: () => null },
+    useFocusEffect: (effect) => {
+      mockFocus.effect = effect
+      React.useEffect(() => effect(), [effect])
+    },
+  }
+})
 jest.mock('expo-clipboard', () => ({ setStringAsync: jest.fn() }))
 jest.mock('../api', () => ({
   deployApi: {
@@ -34,6 +45,7 @@ jest.mock('../api', () => ({
     redeploy: jest.fn(), stop: jest.fn(), start: jest.fn(), remove: jest.fn(),
   },
   envApi: { getAll: jest.fn(), put: jest.fn(), clearValue: jest.fn(), continueDeploy: jest.fn() },
+  incidentApi: { getOne: jest.fn() },
 }))
 
 const ENDPOINT = 'https://deploy-wizard-example-service-abcdefghij.ecs.ap-northeast-2.on.aws'
@@ -59,6 +71,9 @@ beforeEach(() => {
   jest.useFakeTimers()
   mockReplace.mockClear()
   mockDismissTo.mockClear()
+  mockPush.mockClear()
+  mockBack.mockClear()
+  mockFocus.effect = null
   mockCanGoBack = true
   current = base
   for (const fn of Object.values(deployApi)) fn.mockReset()
@@ -69,6 +84,7 @@ beforeEach(() => {
   for (const fn of Object.values(envApi)) fn.mockReset()
   envApi.getAll.mockResolvedValue([])
   Clipboard.setStringAsync.mockReset().mockResolvedValue(true)
+  incidentApi.getOne.mockReset().mockResolvedValue({ i_id: 12, status: 'recovering', summary: '앱이 오류로 응답하고 있습니다.' })
   jest.spyOn(AppState, 'addEventListener').mockImplementation(() => ({ remove: jest.fn() }))
   jest.spyOn(console, 'error')
 })
@@ -220,6 +236,66 @@ describe('배포 상세 화면 - 상태별 화면', () => {
     expect(await screen.findByText('배포를 찾을 수 없습니다')).toBeTruthy()
     await fireEvent.press(screen.getByText('다시 시도'))
     expect(await screen.findByText('acme/api')).toBeTruthy()
+  })
+})
+
+describe('배포 상세 화면 - 없는 배포(404)', () => {
+  const notFound = Object.assign(new Error('해당 id의 배포가 없습니다'), { status: 404 })
+  const NOT_FOUND_TEXT = '배포를 찾을 수 없습니다. 이미 삭제된 배포일 수 있습니다.'
+
+  test('처음 열 때 404: 고정 한국어 안내와 돌아가기, 서버 원문과 다시 시도는 없고 다시 부르지 않는다', async () => {
+    deployApi.getOne.mockReset().mockRejectedValue(notFound)
+    await render(<DeployDetail />)
+    expect(await screen.findByText(NOT_FOUND_TEXT)).toBeTruthy()
+    expect(screen.queryByText('해당 id의 배포가 없습니다')).toBeNull()
+    expect(screen.queryByText('다시 시도')).toBeNull()
+    await tick(120000)
+    expect(deployApi.getOne).toHaveBeenCalledTimes(1)
+    await fireEvent.press(screen.getByRole('button', { name: '돌아가기' }))
+    expect(mockBack).toHaveBeenCalledTimes(1)
+    expect(mockReplace).not.toHaveBeenCalled()
+  })
+
+  test('돌아갈 화면이 없으면 목록으로 바꾼다', async () => {
+    mockCanGoBack = false
+    deployApi.getOne.mockReset().mockRejectedValue(notFound)
+    await render(<DeployDetail />)
+    await fireEvent.press(await screen.findByRole('button', { name: '돌아가기' }))
+    expect(mockReplace).toHaveBeenCalledWith('/')
+    expect(mockBack).not.toHaveBeenCalled()
+  })
+
+  test('보던 중 404 (다른 곳에서 지워짐): 폴링이 멈추고 안내가 나온다', async () => {
+    await open()
+    deployApi.getOne.mockReset().mockRejectedValue(notFound)
+    await act(async () => { mockFocus.regain() })
+    expect(await screen.findByText(NOT_FOUND_TEXT)).toBeTruthy()
+    expect(screen.queryByText('acme/api')).toBeNull()
+    const calls = deployApi.getOne.mock.calls.length
+    await tick(120000)
+    expect(deployApi.getOne.mock.calls.length).toBe(calls)
+  })
+
+  test('404 가 아닌 실패는 그대로: 서버 메시지와 다시 시도, 5초 뒤 다시 부른다', async () => {
+    deployApi.getOne.mockReset().mockRejectedValueOnce(Object.assign(new Error('서버가 바쁩니다'), { status: 503 })).mockImplementation(async () => base)
+    await render(<DeployDetail />)
+    expect(await screen.findByText('서버가 바쁩니다')).toBeTruthy()
+    expect(screen.queryByText(NOT_FOUND_TEXT)).toBeNull()
+    expect(screen.getByRole('button', { name: '다시 시도' })).toBeTruthy()
+    await tick(5000)
+    expect(await screen.findByText('acme/api')).toBeTruthy()
+  })
+})
+
+describe('배포 상세 화면 - 설정 버튼', () => {
+  test.each(['running', 'stopped', 'failed', 'needs_input', 'building'])('%s 에서는 설정 버튼이 있다', async (status) => {
+    await open({ ...base, status, endpoint: null })
+    expect(screen.getByRole('button', { name: '배포 #7 설정' })).toBeTruthy()
+  })
+
+  test.each(['deleting', 'deleted'])('%s 에서는 설정 버튼이 없다', async (status) => {
+    await open({ ...base, status, endpoint: null })
+    expect(screen.queryByRole('button', { name: '배포 #7 설정' })).toBeNull()
   })
 })
 
@@ -383,11 +459,58 @@ describe('배포 상세 화면 - 동작과 확인 창', () => {
 })
 
 describe('배포 상세 화면 - 폴링과 로그', () => {
-  test('running 이고 새 로그가 없으면 폴링이 멈춘다', async () => {
+  test('running 이고 새 로그가 없으면 30초마다 느리게 부른다 (새 문제 카드·헬스 점이 나타나도록)', async () => {
     await open()
     expect(deployApi.getOne).toHaveBeenCalledTimes(1)
-    await tick(60000)
+    await tick(29999)
     expect(deployApi.getOne).toHaveBeenCalledTimes(1)
+    await tick(1)
+    expect(deployApi.getOne).toHaveBeenCalledTimes(2)
+    await tick(30000)
+    expect(deployApi.getOne).toHaveBeenCalledTimes(3)
+  })
+
+  test('running 에서 새 인시던트가 생기면 30초 뒤 카드와 헬스 점이 나타난다', async () => {
+    await open({ ...base, health_state: 'healthy', open_incident_id: null })
+    expect(screen.queryByRole('button', { name: /문제 상세 보기/ })).toBeNull()
+    current = { ...base, health_state: 'unhealthy', open_incident_id: 12, open_incident_status: 'recovering', auto_recover: true }
+    await tick(30000)
+    expect(await screen.findByRole('button', { name: /배포 #7 문제 상세 보기/ })).toBeTruthy()
+    expect(screen.getByLabelText('헬스체크: 응답 없음')).toBeTruthy()
+  })
+
+  test('열린 인시던트 카드는 배포를 새로 받을 때 요약도 다시 받는다', async () => {
+    await open({ ...base, open_incident_id: 12, open_incident_status: 'recovering', auto_recover: true })
+    expect(await screen.findByText('앱이 오류로 응답하고 있습니다.')).toBeTruthy()
+    expect(incidentApi.getOne).toHaveBeenCalledTimes(1)
+    incidentApi.getOne.mockResolvedValue({ i_id: 12, status: 'needs_action', summary: '재시작했지만 응답이 없습니다.' })
+    await tick(30000)
+    expect(await screen.findByText('재시작했지만 응답이 없습니다.')).toBeTruthy()
+    expect(incidentApi.getOne).toHaveBeenCalledTimes(2)
+  })
+
+  test.each(['stopped', 'failed', 'needs_input'])('%s 이면 폴링이 멈춘다 (느린 폴링도 없다)', async (status) => {
+    await open({ ...base, status, endpoint: null })
+    expect(deployApi.getOne).toHaveBeenCalledTimes(1)
+    await tick(120000)
+    expect(deployApi.getOne).toHaveBeenCalledTimes(1)
+  })
+
+  test('다른 화면에서 돌아오면(포커스) 한 번 새로 받는다 - 처음 열 때는 아니다', async () => {
+    await open()
+    expect(deployApi.getOne).toHaveBeenCalledTimes(1)
+    current = { ...base, health_state: 'unhealthy', open_incident_id: 12, open_incident_status: 'needs_action' }
+    await act(async () => { mockFocus.regain() })
+    expect(deployApi.getOne).toHaveBeenCalledTimes(2)
+    expect(await screen.findByRole('button', { name: /배포 #7 문제 상세 보기/ })).toBeTruthy()
+  })
+
+  test('stopped 배포도 포커스로 돌아오면 새로 받는다 (멈춘 채로면 다시 멈춘다)', async () => {
+    await open({ ...base, status: 'stopped', endpoint: null })
+    await act(async () => { mockFocus.regain() })
+    expect(deployApi.getOne).toHaveBeenCalledTimes(2)
+    await tick(120000)
+    expect(deployApi.getOne).toHaveBeenCalledTimes(2)
   })
 
   test('진행 중이면 1.5초마다 부르고 지난 로그 번호 이후만 받는다', async () => {
@@ -402,13 +525,15 @@ describe('배포 상세 화면 - 폴링과 로그', () => {
     expect(screen.getByLabelText('실행 로그 3줄')).toBeTruthy()
   })
 
-  test('로그가 들어오는 동안은 running 이어도 계속 부르다가, 더 안 오면 멈춘다', async () => {
+  test('로그가 들어오는 동안은 running 이어도 1.5초마다 부르다가, 더 안 오면 30초 간격으로 내려간다', async () => {
     deployApi.getLogs.mockResolvedValueOnce(makeLogs(2)).mockResolvedValue([])
     await open()
     await tick(1500)
     expect(deployApi.getOne).toHaveBeenCalledTimes(2)
-    await tick(60000)
+    await tick(29999)
     expect(deployApi.getOne).toHaveBeenCalledTimes(2)
+    await tick(1)
+    expect(deployApi.getOne).toHaveBeenCalledTimes(3)
   })
 
   test('round 가 바뀌면(다시 배포) 폴링이 다시 시작되고 로그를 처음부터 받는다', async () => {
@@ -470,6 +595,16 @@ describe('배포 상세 화면 - 폴링과 로그', () => {
     expect(deployApi.getOne).toHaveBeenCalledTimes(3)
   })
 
+  test('running 느린 폴링도 언마운트하면 남지 않는다', async () => {
+    const { unmount } = await render(<DeployDetail />)
+    await screen.findByText('acme/api')
+    await tick(30000)
+    expect(deployApi.getOne).toHaveBeenCalledTimes(2)
+    await unmount()
+    await tick(120000)
+    expect(deployApi.getOne).toHaveBeenCalledTimes(2)
+  })
+
   test('언마운트하면 타이머가 남지 않는다', async () => {
     current = { ...base, status: 'building', endpoint: null }
     const { unmount } = await render(<DeployDetail />)
@@ -504,5 +639,41 @@ describe('배포 상세 화면 - 안전 영역과 글꼴', () => {
     await fireEvent.press(screen.getByText(/Dockerfile/))
     expect(StyleSheet.flatten(screen.getByText(/줄 1/).props.style).fontFamily).toBe(monoFont)
     expect(StyleSheet.flatten(screen.getByText(/FROM node:20/).props.style).fontFamily).toBe(monoFont)
+  })
+})
+
+describe('배포 상세 화면 - 인시던트 카드와 헬스 점', () => {
+  test('open_incident_id 가 있으면 요약이 든 카드가 나오고, 누르면 인시던트 화면으로 간다', async () => {
+    await open({ ...base, open_incident_id: 12, auto_recover: true })
+    expect(await screen.findByText('앱이 오류로 응답하고 있습니다.')).toBeTruthy()
+    expect(incidentApi.getOne).toHaveBeenCalledWith(12)
+    await fireEvent.press(screen.getByRole('button', { name: /배포 #7 문제 상세 보기/ }))
+    expect(mockPush).toHaveBeenCalledWith('/incidents/12')
+  })
+
+  test('확인 필요 인시던트는 카드 제목에 확인이 필요합니다, 복구 중이면 자동 복구 중', async () => {
+    await open({ ...base, open_incident_id: 12, open_incident_status: 'needs_action', auto_recover: true })
+    expect(await screen.findByText('문제가 있습니다 · 확인이 필요합니다')).toBeTruthy()
+  })
+
+  test('복구 중 인시던트는 자동 복구가 켜져 있으면 자동 복구 중, 꺼져 있으면 확인이 필요합니다', async () => {
+    await open({ ...base, open_incident_id: 12, open_incident_status: 'recovering', auto_recover: true })
+    expect(await screen.findByText('문제가 있습니다 · 자동 복구 중')).toBeTruthy()
+  })
+
+  test('open_incident_id 가 없으면 카드도, 인시던트 조회도 없다', async () => {
+    await open({ ...base, open_incident_id: null })
+    expect(screen.queryByText('처리 중인 문제가 있습니다')).toBeNull()
+    expect(incidentApi.getOne).not.toHaveBeenCalled()
+  })
+
+  test('running 이면 머리 카드에 헬스 점과 글자가 붙고, 아니면 붙지 않는다', async () => {
+    await open({ ...base, health_state: 'unhealthy' })
+    expect(screen.getByLabelText('헬스체크: 응답 없음')).toBeTruthy()
+  })
+
+  test('running 이 아니면 헬스 점이 없다', async () => {
+    await open({ ...base, status: 'stopped', endpoint: null, health_state: 'healthy' })
+    expect(screen.queryByTestId('health-dot')).toBeNull()
   })
 })

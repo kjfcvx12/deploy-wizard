@@ -2,6 +2,9 @@ import { STEPS } from './constants.js'
 
 const STEP_LABEL = Object.fromEntries(STEPS.map((step) => [step.key, step.label]))
 
+// 서버 시각은 UTC 이고 Z 가 없다 - 시간대 표시가 없으면 UTC 로 읽어 현지 시각으로 보여 준다
+const toLocalTime = (iso) => new Date(/(?:Z|[+-]\d{2}:?\d{2})$/i.test(iso) ? iso : `${iso}Z`).toLocaleString('ko-KR')
+
 // 문제 이력 - 다시 배포해도 지난 실패를 모아서 본다 (M5)
 export default function IssueHistory({ issues }) {
   if (!issues?.length) return null
@@ -15,7 +18,7 @@ export default function IssueHistory({ issues }) {
             <li key={issue.d_i_id} className="issue-item">
               <div className="row spread">
                 <strong>{STEP_LABEL[issue.step] || issue.step}</strong>
-                <span className="muted small">{new Date(issue.created_at).toLocaleString('ko-KR')}</span>
+                <span className="muted small">{toLocalTime(issue.created_at)}</span>
               </div>
               <p className="muted small" style={{ margin: '4px 0 0' }}>
                 {issue.explain?.summary || issue.error_msg}

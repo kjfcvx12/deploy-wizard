@@ -53,7 +53,7 @@
 | 변경 | 내용 |
 |---|---|
 | 모든 엔드포인트 | 3단계부터 인증 필요, 소유권 필터 |
-| `Deploy_Read` 필드 추가 | `auto_recover`(bool), `health_state`(`healthy\|unhealthy\|unknown`), `last_health_at`, `open_incident_id`(없으면 null) |
+| `Deploy_Read` 필드 추가 | `auto_recover`(bool), `health_state`(`healthy\|unhealthy\|unknown`), `last_health_at`, `open_incident_id`(없으면 null), `open_incident_status`(`open\|recovering\|needs_action`, 없으면 null) |
 | **신규** `PATCH /api/deploys/{d_id}/settings` | `{auto_redeploy?, auto_recover?}` — 보내지 않은 쪽은 그대로 | 200 `Deploy_Read` |
 | **신규** `GET /api/deploys/{d_id}/health-history?hours=24` | 헬스 결과를 시간순으로 (최대 1440건) | 200 `Health_Check_Read[]` |
 | **신규** `GET /api/deploys/{d_id}/releases` | 배포된 버전 목록 (되돌리기 대상 확인용) | 200 `Release_Read[]` |

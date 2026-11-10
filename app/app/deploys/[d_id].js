@@ -1,29 +1,37 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { ActivityIndicator, KeyboardAvoidingView, Platform, RefreshControl, ScrollView, StyleSheet, Text, View } from 'react-native'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
-import { Stack, useLocalSearchParams, useRouter } from 'expo-router'
+import { Stack, useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router'
 import { deployApi } from '../../src/api'
 import EndpointCard from '../../src/components/EndpointCard'
 import EnvVarsCard from '../../src/components/EnvVarsCard'
 import ExplainCard from '../../src/components/ExplainCard'
 import IssueHistory from '../../src/components/IssueHistory'
 import LogTerminal, { appendLogs } from '../../src/components/LogTerminal'
+import HealthDot from '../../src/components/ops/HealthDot'
+import IncidentCard from '../../src/components/ops/IncidentCard'
+import { problemLabel } from '../../src/components/ops/ProblemBanner'
+import PushSetupCard from '../../src/components/ops/PushSetupCard'
 import StatusBadge from '../../src/components/StatusBadge'
 import StepProgress from '../../src/components/StepProgress'
 import { Button, Card, Collapsible, Notice } from '../../src/components/ui'
 import { isProgress, repoName, showsEnvCard } from '../../src/constants'
 import { confirmAction } from '../../src/confirm'
+import { confirmStopDeploy } from '../../src/deployConfirms'
 import { STOP_POLLING, usePolling } from '../../src/hooks/usePolling'
 import { monoFont, radius, spacing, useColors } from '../../src/theme'
 
-// 갱신 간격 (웹 DeployDetailPage 와 같다) - 진행 중이거나 로그가 들어오는 동안 1.5초, 조회가 실패하면 5초
+// 갱신 간격 (웹 DeployDetailPage 와 같다) - 진행 중이거나 로그가 들어오는 동안 1.5초, 조회가 실패하면 5초, 떠 있는 동안은 30초 (새 문제가 생기면 카드·점이 나타나게)
 const FAST_MS = 1500
 const RETRY_MS = 5000
+const RUNNING_MS = 30000
+const NOT_FOUND_TEXT = '배포를 찾을 수 없습니다. 이미 삭제된 배포일 수 있습니다.'
 
-// 다음 조회까지 기다릴 시간 - 진행 중도 아니고 새 로그도 없으면 멈춘다 (다시 시작은 round 가 바뀔 때)
+// 다음 조회까지 기다릴 시간 - 없는 배포(404)는 다시 부르지 않고, 진행 중도 아니고 새 로그도 없으면 running 만 느리게 이어 간다 (다시 시작은 round 가 바뀔 때)
 function detailDelay(value, error) {
-  if (error) return RETRY_MS
-  return isProgress(value.deploy.status) || value.logs.length > 0 ? FAST_MS : STOP_POLLING
+  if (error) return error.status === 404 ? STOP_POLLING : RETRY_MS
+  if (isProgress(value.deploy.status) || value.logs.length > 0) return FAST_MS
+  return value.deploy.status === 'running' ? RUNNING_MS : STOP_POLLING
 }
 
 // 상세 화면 (S-04..S-07, S-16) - 주소의 d_id 가 바뀌면 화면을 새로 만들어 다른 배포의 상태가 남지 않게 한다
@@ -86,6 +94,13 @@ function DeployDetail({ d_id }) {
     return () => { alive = false }
   }, [d_id, round, status])
 
+  // 다른 화면(문제·설정)에서 돌아오면 한 번 새로 받는다 (처음 열 때는 usePolling 이 이미 받는다)
+  const focusedOnce = useRef(false)
+  useFocusEffect(useCallback(() => {
+    if (!focusedOnce.current) { focusedOnce.current = true; return }
+    refresh()
+  }, [refresh]))
+
   const bumpRound = useCallback(() => setRound((n) => n + 1), [])
 
   // 동작 하나를 실행한다 - 실행하는 동안 버튼을 잠그고, 실패하면 빨간 알림을 띄운다
@@ -114,19 +129,16 @@ function DeployDetail({ d_id }) {
   const start = () => { perform(() => deployApi.start(d_id), bumpRound) }
 
   // 멈춤 - 요금이 나가는 서비스만 내린다. 이미지는 남아서 [다시 켜기]가 빌드 없이 끝난다
-  const askStop = () => confirmAction({
-    title: '이 배포를 멈출까요?',
-    message: 'ECS 서비스를 내려서 컨테이너 요금이 멈춥니다. 주소는 접속되지 않게 됩니다. 이미지와 설정은 남겨 두므로 [다시 켜기] 한 번으로 다시 띄울 수 있습니다.',
-    cancelText: '그대로 두기',
-    confirmText: '멈춤',
-    onConfirm: () => { perform(() => deployApi.stop(d_id), bumpRound) },
-  })
+  const askStop = () => confirmStopDeploy(() => { perform(() => deployApi.stop(d_id), bumpRound) })
 
   // 목록으로 돌아간다 - 아래에 목록이 있으면 그 목록으로 되돌아가 낡은 목록이 남지 않게 하고, 없으면(주소로 바로 들어온 경우) 목록으로 바꾼다
   const backToList = () => {
     if (router.canGoBack()) router.dismissTo('/')
     else router.replace('/')
   }
+
+  // 없는 배포 화면에서 돌아간다 - 아래 화면이 없으면(주소로 바로 들어온 경우) 목록으로
+  const leave = () => { if (router.canGoBack()) router.back(); else router.replace('/') }
 
   // 삭제 - AWS 리소스까지 지우므로 확인 뒤에만 부른다
   const askRemove = () => confirmAction({
@@ -148,7 +160,15 @@ function DeployDetail({ d_id }) {
   }
 
   let body
-  if (!deploy) {
+  if (error?.status === 404) {
+    // 배포가 지워졌다 - 처음 열 때든 보던 중이든 같은 안내
+    body = (
+      <View style={styles.stack}>
+        <Notice>{NOT_FOUND_TEXT}</Notice>
+        <Button label="돌아가기" onPress={leave} style={styles.self} />
+      </View>
+    )
+  } else if (!deploy) {
     body = loading
       ? <ActivityIndicator accessibilityLabel="불러오는 중" size="large" color={colors.accent} style={styles.spinner} />
       : (
@@ -183,14 +203,21 @@ function DeployDetail({ d_id }) {
           <View style={styles.badges}>
             {deploy.support_level === 'experimental' && <Tag text="실험 지원" />}
             {deploy.fix_count > 0 && <Tag text={`자가수정 ${deploy.fix_count}회`} />}
+            {status === 'running' && <HealthDot state={deploy.health_state} withLabel />}
           </View>
           <StepProgress status={status} errorStep={deploy.error_step} />
         </Card>
+
+        <PushSetupCard active={status === 'running'} />
 
         {showsEnvCard(status) && <EnvVarsCard deploy={deploy} onContinued={bumpRound} onRedeploy={redeployNow} />}
 
         {status === 'running' && deploy.endpoint && (
           <EndpointCard endpoint={deploy.endpoint} health={health} onError={setActionError} />
+        )}
+
+        {!!deploy.open_incident_id && (
+          <IncidentCard d_id={deploy.d_id} i_id={deploy.open_incident_id} refreshKey={data} label={problemLabel(deploy)} onPress={() => router.push(`/incidents/${deploy.open_incident_id}`)} />
         )}
 
         {status === 'stopped' && (
@@ -229,6 +256,10 @@ function DeployDetail({ d_id }) {
         )}
 
         <IssueHistory issues={issues} />
+
+        {status !== 'deleting' && status !== 'deleted' && (
+          <Button label="설정" accessibilityLabel={`배포 #${d_id} 설정`} onPress={() => router.push(`/deploy-settings/${d_id}`)} />
+        )}
 
         {idle && (
           <View style={styles.stack}>
