@@ -106,12 +106,15 @@ function DeploySettings({ d_id }) {
     try {
       await deployApi.patchSettings(d_id, { [field]: next })
       if (!alive.current) return
+      clearTimeout(timerRef.current)
       setMessage({ tone: 'info', text: SAVED_TEXT })
       timerRef.current = setTimeout(() => { if (alive.current) setMessage(null) }, SAVED_MS)
     } catch (e) {
       if (!alive.current) return
       valuesRef.current = { ...valuesRef.current, [field]: previous }
       setValues(valuesRef.current)
+      // 다른 스위치의 저장 안내 타이머가 이 오류를 지우지 않게 한다
+      clearTimeout(timerRef.current)
       setMessage({ tone: 'err', text: e.message })
       // 그 사이 배포가 지워졌으면 없는 배포 안내로 바꾼다
       if (e.status === 404) setLoadError(e)

@@ -19,7 +19,8 @@ export function IncidentBadge({ status }) {
 }
 
 // 배포 상세의 인시던트 카드 - 한 줄 요약을 받아 보여 주고 누르면 인시던트 화면. 요약을 못 받아도 카드는 남는다
-export default function IncidentCard({ d_id, i_id, label, onPress }) {
+// refreshKey 가 바뀌면(부모가 배포를 새로 받으면) 요약을 다시 받는다
+export default function IncidentCard({ d_id, i_id, label, onPress, refreshKey }) {
   const colors = useColors()
   const [incident, setIncident] = useState(null)
 
@@ -27,7 +28,7 @@ export default function IncidentCard({ d_id, i_id, label, onPress }) {
     let alive = true
     incidentApi.getOne(i_id).then((result) => alive && setIncident(result)).catch(() => {})
     return () => { alive = false }
-  }, [i_id])
+  }, [i_id, refreshKey])
 
   const summary = incident?.summary || incident?.explain?.summary || '처리 중인 문제가 있습니다'
   return (

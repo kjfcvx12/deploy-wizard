@@ -12,6 +12,7 @@ jest.mock('expo-router', () => ({
   useRouter: () => ({ back: mockBack, replace: mockReplace, push: mockPush, dismissTo: jest.fn(), canGoBack: () => mockCanGoBack }),
   useLocalSearchParams: () => ({ d_id: '7' }),
   Stack: { Screen: () => null },
+  useFocusEffect: () => {},
 }))
 jest.mock('expo-clipboard', () => ({ setStringAsync: jest.fn() }))
 jest.mock('../api', () => ({
@@ -159,6 +160,21 @@ describe('배포 설정 - 변경', () => {
     expect(screen.queryByText('저장했습니다')).toBeNull()
     await act(async () => { pending.resolve({}) })
     expect(screen.getByText('저장했습니다')).toBeTruthy()
+  })
+
+  test('한 스위치의 저장 안내 타이머가 다른 스위치의 오류를 지우지 않는다 (B 가 느리게 실패)', async () => {
+    const slow = deferred()
+    await open()
+    deployApi.patchSettings.mockReturnValueOnce(slow.promise).mockResolvedValueOnce({})
+    await fireEvent.press(row(REDEPLOY))
+    await fireEvent.press(row(RECOVER))
+    await flush()
+    expect(screen.getByText('저장했습니다')).toBeTruthy()
+    await act(async () => { jest.advanceTimersByTime(1000) })
+    await act(async () => { slow.reject(new Error('서버 오류')) })
+    expect(screen.getByText('서버 오류')).toBeTruthy()
+    await act(async () => { jest.advanceTimersByTime(5000) })
+    expect(screen.getByText('서버 오류')).toBeTruthy()
   })
 
   test('실패하면 이전 값으로 되돌리고 서버의 한국어 메시지를 보여 준다', async () => {

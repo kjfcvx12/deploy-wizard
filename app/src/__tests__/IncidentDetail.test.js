@@ -140,15 +140,31 @@ describe('인시던트 상세 - 내용', () => {
     expect(screen.getAllByTestId('timeline-item')).toHaveLength(1)
   })
 
-  test('헬스 이력을 못 받아도 인시던트는 보이고 막대는 조용히 비어 있다 (오류 글자 없음)', async () => {
+  test('헬스 이력을 못 받아도 인시던트는 보이고 막대 자리에는 못 불러왔다는 글이 나온다 (기록 없음이 아니다)', async () => {
     healthApi.getHistory.mockRejectedValue(new Error('x'))
     await open()
     await act(async () => {})
     expect(healthApi.getHistory).toHaveBeenCalledTimes(1)
-    expect(screen.getByLabelText('최근 24시간 확인 기록 없음')).toBeTruthy()
+    expect(screen.getByText('헬스 이력을 불러오지 못했습니다')).toBeTruthy()
+    expect(screen.queryByLabelText('최근 24시간 확인 기록 없음')).toBeNull()
     expect(screen.queryByText('x')).toBeNull()
+    expect(screen.getAllByText('앱이 오류로 응답하고 있습니다.').length).toBeGreaterThan(0)
+  })
+
+  test('헬스 이력을 받는 동안에는 막대도 실패 글도 그리지 않는다', async () => {
+    healthApi.getHistory.mockReturnValue(new Promise(() => {}))
+    await open()
+    expect(screen.queryByText('헬스체크 이력')).toBeNull()
     expect(screen.queryByText('헬스 이력을 불러오지 못했습니다')).toBeNull()
-    expect(screen.getByText('원인')).toBeTruthy()
+    expect(screen.queryByLabelText('최근 24시간 확인 기록 없음')).toBeNull()
+  })
+
+  test('이력이 비어 있으면(받았지만 기록 없음) 확인 기록 없음', async () => {
+    healthApi.getHistory.mockResolvedValue([])
+    await open()
+    await act(async () => {})
+    expect(screen.getByLabelText('최근 24시간 확인 기록 없음')).toBeTruthy()
+    expect(screen.queryByText('헬스 이력을 불러오지 못했습니다')).toBeNull()
   })
 })
 
@@ -293,7 +309,7 @@ describe('인시던트 상세 - 헬스 이력 호출', () => {
     current = resolved
     await tick(5000)
     expect(await screen.findByText('해결됨')).toBeTruthy()
-    expect(screen.getByLabelText('최근 24시간 확인 기록 없음')).toBeTruthy()
+    expect(screen.queryByText('헬스체크 이력')).toBeNull()
   })
 
   test('이력 호출이 실패해도 지난 이력은 지우지 않고, 60초 뒤에 다시 시도한다', async () => {

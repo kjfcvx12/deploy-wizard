@@ -4,7 +4,9 @@ import { RECOVERY_ACTION_LABEL, RECOVERY_RESULT_LABEL, RECOVERY_RESULT_TONE } fr
 export const toMs = (iso) => {
   if (typeof iso !== 'string' || !iso) return NaN
   const hasZone = /(?:Z|[+-]\d{2}:?\d{2})$/i.test(iso)
-  return new Date(hasZone ? iso : `${iso}Z`).getTime()
+  // 소수점 초는 3자리(밀리초)까지만 둔다 - Hermes 는 그보다 긴 자리를 믿을 수 없게 읽는다
+  const trimmed = iso.replace(/(\.\d{3})\d+/, '$1')
+  return new Date(hasZone ? trimmed : `${trimmed}Z`).getTime()
 }
 
 // 기기의 현지 시각으로 "11월 9일 12:12" 를 만든다 (읽을 수 없으면 빈 글자)

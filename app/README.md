@@ -60,8 +60,8 @@ src/components/SettingSwitch.js  설정 스위치 한 줄 (배포 설정·알림
 |---|---|---|
 | `/` | 배포 목록 (진행 중 3초, 아니면 15초마다 갱신) | `/` 의 목록 |
 | `/new` | 새 배포: 주소 입력 → `분석` → 결과 패널 → `이 레포로 배포` | `/` 의 새 배포 폼 + 분석 패널 (S-20) |
-| `/deploys/[d_id]` | 배포 상세: 진행 단계, 주소, 로그, 해설, 이력, 다시 배포·멈춤·다시 켜기·삭제, 환경변수 카드 (S-19) | `/deploys/:d_id` |
-| `/incidents/[i_id]` | 인시던트 상세 (D2): 상태 배지, 원인·고칠 곳(복사)·해야 할 일, `마법사가 한 일` 타임라인(감지, 재시작·되돌리기 시도와 결과, 해결·확인 필요), 최근 24시간 헬스체크 막대. 진행 중(`open`·`recovering`)이면 5초마다 갱신하고 `resolved`·`needs_action` 이 되면 멈춘다. `needs_action` 이면 `다시 배포`·`멈춤`(확인 창)·`그대로 두기`. 앱이 스스로 하는 조치는 없고 모두 사용자가 누른 버튼이다 | 아직 없음 (웹 대응은 다음 계획) |
+| `/deploys/[d_id]` | 배포 상세: 진행 단계, 주소, 로그, 해설, 이력, 다시 배포·멈춤·다시 켜기·삭제, 환경변수 카드 (S-19). 진행 중이거나 로그가 들어오면 1.5초, `running` 이면 30초마다 다시 받고(새 문제 카드·헬스 점이 나타나도록), 다른 화면에서 돌아오면 한 번 더 받는다. 404(지워진 배포)는 한국어 안내 + `돌아가기` 로 멈춘다 | `/deploys/:d_id` |
+| `/incidents/[i_id]` | 인시던트 상세 (D2): 상태 배지, 원인·고칠 곳(복사)·해야 할 일, `마법사가 한 일` 타임라인(감지, 재시작·되돌리기 시도와 결과, 해결·확인 필요), 최근 24시간 헬스체크 막대. 진행 중(`open`·`recovering`)이면 5초마다 갱신하고 `resolved`·`needs_action` 이 되면 멈춘다. 불러오기가 실패하면 404 일 때 멈추고, 그 밖의 실패는 5→10→20→30초로 늘려 가며 다시 시도한다. `needs_action` 이면 `다시 배포`·`멈춤`(확인 창)·`그대로 두기`. 앱이 스스로 하는 조치는 없고 모두 사용자가 누른 버튼이다 | 아직 없음 (웹 대응은 다음 계획) |
 | `/notifications` | 알림 목록 (D2): 안 읽은 것은 굵게, 누르면 읽음 처리(`POST /notifications/{n_id}/read`)하고 인시던트·배포 화면으로 이동, `모두 읽음`, `더 보기`(`after` 로 이어 받기), 아래로 당겨 새로고침 | 아직 없음 |
 | `/notification-settings` | 알림 설정 (D2): 메일·푸시 스위치, 알림 종류 6개 스위치(바꾸면 전체 종류 배열을 `PATCH /notifications/settings` 로 보냄). 푸시 줄에서만 OS 권한을 묻는다 (아래 "푸시 알림") | 아직 없음 |
 | `/deploy-settings/[d_id]` | 배포 설정 (D2): `새 커밋이 오면 자동 재배포`·`문제가 생기면 자동 복구` 스위치. 바꾼 항목만 `PATCH /deploys/{d_id}/settings` 로 보낸다 (실패하면 그 스위치만 되돌림). 배포 상세의 `설정` 버튼으로 들어간다 | 아직 없음 |
@@ -75,15 +75,15 @@ src/components/SettingSwitch.js  설정 스위치 한 줄 (배포 설정·알림
 
 코드: `src/ops/push.js` (상태 읽기·등록·해제·알림 탭 경로), `src/hooks/useNotificationRouting.js` (루트 레이아웃에서 한 번: 앞에서 받은 알림 표시, 알림 탭 이동, 꺼져 있다가 눌러 켠 첫 실행), `src/hooks/usePushSetup.js` + `PushSetupCard` (배포가 `running` 일 때 한 번 보이는 안내 카드), `PushPermissionGuide` (S-17), `app/notification-settings.js` (알림 설정, 목록의 `알림 설정` 칩).
 
-- 권한은 안내 글을 읽고 `알림 켜기` 를 누른 뒤에만 묻는다. 앱 시작·화면 열림·카드 표시는 묻지 않는다.
+- 권한은 **버튼에서만** 묻는다: 알림 설정의 푸시 줄(안내의 `알림 켜기`)과 `running` 배포 상세의 안내 카드. 앱 시작·화면 열림·카드 표시는 묻지 않는다.
 - 푸시 토큰은 `POST /api/devices` 로만 보낸다. 화면·로그·저장소·오류 문장에 넣지 않는다. 저장소에는 서버가 돌려준 기기 번호(`p_d_id`, 키 `dw-push-device`)만 둔다. 안내 카드를 닫은 기록은 `dw-push-card-dismissed`.
 - EAS 프로젝트 id 는 `Constants.expoConfig.extra.eas.projectId` (없으면 `Constants.easConfig.projectId`)에서 읽는다. `app.json` 에는 값을 넣지 않았다. 없으면 상태가 `no_project` 이고 앱이 "스토어 빌드 준비(EAS 프로젝트 연결)가 필요하다"고 안내한다 (나머지 기능은 그대로). 프로젝트를 만들어 id 를 넣는 것은 사람이 해야 하는 일이다 (`npx eas init` 등, 이 저장소에서는 하지 않았다).
 - 알림 탭은 `data.link` 가 `deploywizard://deploys/{n}` 또는 `deploywizard://incidents/{n}` 일 때만 그 화면으로 보낸다. 다른 값은 모두 무시한다 (`ops/links.js` 의 `parseAppLink`).
-- 설정 화면의 푸시 스위치는 서버의 `notify_push`(모든 기기 공통)가 켜져 있고, **이 기기가 준비됐을 때**(권한이 허용이고 저장된 `p_d_id` 가 있을 때)만 켜진 것으로 보인다. 이 기기가 준비되지 않았으면 서버 값이 켬이어도 꺼진 것으로 보인다. 그래서 준비되지 않은 기기에서는 모든 기기 공통인 `notify_push` 를 끌 수 없다 (켜려면 `알림 켜기` 를 거쳐야 하고, 이 기기에서 끄는 것은 서버 값과 기기 등록을 함께 끈다). 화면에 "이 설정은 모든 기기에 적용됩니다"가 적혀 있다.
+- 설정 화면의 푸시 스위치는 서버의 `notify_push`(모든 기기 공통)가 켜져 있고, **이 기기가 준비됐을 때**(권한이 허용이고 저장된 `p_d_id` 가 있을 때)만 켜진 것으로 보인다. 이 기기가 준비되지 않았으면 서버 값이 켬이어도 꺼진 것으로 보인다. 그래서 준비되지 않은 기기에서는 모든 기기 공통인 `notify_push` 를 끌 수 없다 (권한이 아직 허용되지 않았으면 켜기가 `알림 켜기` 안내를 거치고, 권한이 이미 허용돼 있는데 이 기기만 등록되지 않았다면 스위치를 켜는 즉시 안내 없이 등록한다. 이 기기에서 끄는 것은 서버 값과 기기 등록을 함께 끈다). 화면에 "이 설정은 모든 기기에 적용됩니다"가 적혀 있다.
 - 웹에서는 `expo-notifications` 를 번들에 넣지 않는다 (`src/ops/notifications.web.js`) - 불러오기만 해도 콘솔 경고가 나서다. 웹의 푸시 상태는 `unsupported` 다.
 - `expo-device` 는 쓰지 않는다 (공식 설정 문서가 요구하지 않는다). 그래서 "실제 기기가 아님"을 따로 가려내지 않고, 시뮬레이터·에뮬레이터에서는 OS 와 `getExpoPushTokenAsync` 가 되는 만큼만 된다.
 
-**Expo Go 제한 (공식 문서 인용):** "Push notifications (remote notifications) functionality ... is unavailable in Expo Go on Android from SDK 53. A development build is required." 로컬 알림은 Expo Go 에서도 된다. 그래서 푸시는 개발 빌드(`expo-dev-client`/EAS Build) 또는 실제 기기 빌드에서만 시험할 수 있고, Expo Go 에서는 안드로이드 푸시가 오지 않는다. iOS 의 Expo Go 제한은 이번에 확인한 문서에 없었다. 푸시는 Expo 푸시 서비스와 EAS 프로젝트 id 가 있어야 하며, 이 저장소에서는 한 번도 돌려 보지 못했다.
+**Expo Go 제한 (설치된 패키지의 경고문):** `app/node_modules/expo-notifications/src/DevicePushTokenAutoRegistration.fx.ts` 에는 "Push notifications (remote notifications) are unavailable in Expo Go on Android since SDK 53. Local notifications remain available. Use a development build for push notifications", `src/warnOfExpoGoPushUsage.ts` 에는 "... functionality provided by expo-notifications was removed from Expo Go with the release of SDK 53. Use a development build instead of Expo Go." 라고 적혀 있다 (원문 그대로, 패키지 버전이 바뀌면 달라질 수 있다). 로컬 알림은 Expo Go 에서도 된다. 그래서 푸시는 개발 빌드(`expo-dev-client`/EAS Build) 또는 실제 기기 빌드에서만 시험할 수 있고, Expo Go 에서는 안드로이드 푸시가 오지 않는다. iOS 의 Expo Go 제한은 이번에 확인한 문서에 없었다. 푸시는 Expo 푸시 서비스와 EAS 프로젝트 id 가 있어야 하며, 이 저장소에서는 한 번도 돌려 보지 못했다.
 
 **확인한 것 (푸시, 목 테스트와 모의 웹):** `npx jest` 로 `expo-notifications` 를 목(mock)으로 바꾼 테스트 - 권한은 버튼에서만, 등록 한 번(연타 포함)·해제(404·오프라인 허용), 토큰이 화면·콘솔·저장소·오류에 없음, 알림 탭 경로 표(허용·허용 밖·다른 스킴·`data` 없음·문자열 아님·첫 실행), 설정 스위치 적용·되돌림, 안내 카드 조건. `expo export --platform web` 빌드, 웹 번들을 Playwright(390x844, 라이트·다크)로 열어 `/api/**` 를 모의하고 목록 `알림 설정` → 설정 화면(푸시 줄에 `unsupported` 안내) → 메일·종류 스위치 PATCH 본문 확인 → 실패 되돌림 → 뒤로.
 **확인 못 한 것 (전부, 푸시):** 실제 iOS·안드로이드 기기·에뮬레이터에서의 실행, 실제 OS 권한 창과 설정 열기, 실제 `getExpoPushTokenAsync` 와 Expo 푸시 서비스로 보낸 알림, 알림 채널(안드로이드), 앞에서·뒤에서·꺼진 상태에서 알림을 눌렀을 때의 실제 이동(특히 첫 실행에서 `router.push` 가 내비게이션 준비 전에 불리는지), 실제 백엔드·SMTP. 푸시는 검증되지 않았다.
@@ -147,15 +147,21 @@ src/components/SettingSwitch.js  설정 스위치 한 줄 (배포 설정·알림
 
 ## 알려진 빈틈 (고치지 않음)
 
-인시던트·알림·설정 (D2):
-- `IssueHistory`(배포 상세의 문제 이력)가 서버가 시간대 없이 보내는 UTC 시각을 현지 시각으로 바꾸지 않아 한국에서 9시간 어긋나 보인다 (웹도 같다). 고쳐야 한다. 새 화면(`ops/format.js` 의 `toMs`)은 UTC 로 읽는다.
-- 알림 항목의 아이콘 뒤 `U+FE0E`(텍스트형 표시) 처리와 그 이스케이프는 기기에서 안 봤다.
+인시던트·알림·설정 (D2) - 최종 리뷰 수정(2026-11-10)에서 고친 것: 배포 상세가 `running` 에서 낡아지던 문제(30초 폴링 + 포커스 새로고침), 지워진 배포(404) 안내, 저장 안내 타이머가 오류를 지우던 문제, `IssueHistory` 시각(UTC → 현지), 헬스 이력 실패 표시, `설정` 버튼의 `deleting` 노출, 푸시 카드의 서버 설정 실패 처리. 남은 빈틈:
+- 알림 항목의 아이콘 뒤 `U+FE0E`(텍스트형 표시)는 기기에서 안 봤다 (소스에는 이스케이프로 적었다).
 - 목록 머리줄 테스트에 같은 헤더가 두 번 그려지는 구간이 있다 (테스트 목 한정).
-- 배포 설정에서 성공 안내(`저장했습니다`, 3초 뒤 사라짐)의 타이머가 그 사이에 난 뒤 오류 문구를 지울 수 있다.
-- 배포 설정을 바꿔도 이미 열려 있는 배포 상세 화면은 그 값을 다시 읽지 않는다.
-- 배포 상세의 `설정` 버튼이 `deleting` 상태에서도 보인다.
-- 저장된 `p_d_id`(푸시 기기 번호)는 서버 DB 를 비우고 번호가 다시 쓰이면 다른 기기를 가리킬 수 있다.
-- `app/notification-settings.js` 가 261줄이다.
+- 저장된 `p_d_id`(푸시 기기 번호)는 서버 DB 를 비우고 번호가 다시 쓰이면 다른 기기를 가리킬 수 있고, 이후 실행에서 다시 등록하지 않는다 (EAS·로그인 계획에서 다룸).
+- `app/notification-settings.js` 가 270줄이다.
+- `services_incident_open_ids` 를 부르는 운영 코드가 없다 (서버).
+- 인시던트 화면에서 수동 새로고침이 실패하면 `forceHistoryRef` 가 켜진 채 남아 다음 갱신 때 헬스 이력을 한 번 더 받는다.
+- 알림 목록에서 `모두 읽음` 중에 `더 보기` 로 가져온 항목은 읽지 않은 모양으로 남는다.
+- 알림 한 줄마다 600ms 읽음 처리 중복 방지가 있다 (줄별).
+- 알림 종 `🔔` 은 테마 색을 따르지 않는다.
+- 알림 목록은 포커스를 다시 받거나 푸시가 도착해도 다시 받지 않는다 (당겨서 새로고침).
+- 기기 등록 해제(PATCH)가 실패한 뒤 `hasDevice` 를 되돌리지 않는다.
+- 알림 종류 스위치들이 하나의 잠금을 공유한다 (한 번에 하나만 저장).
+- 이 기기가 준비되지 않았으면 전체(모든 기기 공통) 푸시 설정을 끌 수 없다.
+- 배포 설정을 바꿔도 이미 열려 있는 배포 상세는 그 값을 다음 포커스·폴링 때에야 읽는다.
 
 계정 연결 (C2):
 - `계정 추가` 요청이 서버에서는 끝났는데 앱의 15초 제한이 먼저 끝나면 ExternalId 를 받지 못한다. 새 계정은 `역할 등록 대기` 로 남고 `역할 ARN 입력` 의 이어서 하기 안내(ExternalId 를 다시 볼 수 없다는 설명)로 이어 갈 수 있다.

@@ -90,9 +90,17 @@ export default function NotificationSettingsScreen() {
     valuesRef.current = { ...valuesRef.current, ...patch }
     setValues(valuesRef.current)
   }
+  // 저장 안내를 띄우고 3초 뒤에 거둔다 (앞선 안내 타이머는 먼저 지운다)
   const showSaved = () => {
+    clearTimeout(timerRef.current)
     setMessage({ tone: 'info', text: SAVED_TEXT })
     timerRef.current = setTimeout(() => { if (alive.current) setMessage(null) }, SAVED_MS)
+  }
+
+  // 실패 안내를 띄운다 - 다른 스위치의 저장 안내 타이머가 이 안내를 지우지 않게 타이머를 먼저 지운다
+  const showError = (text) => {
+    clearTimeout(timerRef.current)
+    setMessage({ tone: 'err', text })
   }
 
   // 값을 먼저 바꿔 보이고 서버에 보낸다 - 실패하면 이전 값으로 되돌리고 서버 메시지를 보인다. 성공하면 true
@@ -110,7 +118,7 @@ export default function NotificationSettingsScreen() {
     } catch (e) {
       if (alive.current) {
         setLocal(previous)
-        setMessage({ tone: 'err', text: e.message })
+        showError(e.message)
       }
       return false
     } finally {
@@ -155,7 +163,7 @@ export default function NotificationSettingsScreen() {
           await notificationApi.patchSettings({ notify_push: true })
         } catch (e) {
           await unregister()
-          if (alive.current) setMessage({ tone: 'err', text: e.message })
+          if (alive.current) showError(e.message)
           return
         }
       }
@@ -165,7 +173,7 @@ export default function NotificationSettingsScreen() {
       setGuideOpen(false)
       showSaved()
     } catch (e) {
-      if (alive.current) setMessage({ tone: 'err', text: e.message })
+      if (alive.current) showError(e.message)
     } finally {
       lock('notify_push', false)
     }
@@ -231,6 +239,7 @@ export default function NotificationSettingsScreen() {
             onToggle={() => toggleKind(kind)}
           />
         ))}
+        <Text style={[styles.note, { color: colors.muted }]}>끈 종류는 앱 안 알림 목록에도 남지 않습니다</Text>
         <Text style={[styles.note, { color: colors.muted }]}>변경은 누르는 즉시 저장됩니다.</Text>
       </View>
     )

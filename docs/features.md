@@ -100,7 +100,7 @@
 
 ## 모바일 앱 (`app/`, C1)
 
-`app/`는 `features/`·`shared/`와 따로 있는 Expo 앱(독립 패키지, 순수 JS)이다. 서버는 바꾸지 않고 기존 API만 부른다. C1 범위는 배포 목록, 새 배포(분석 → 배포), 배포 상세(진행·로그·해설·이력·다시 배포·멈춤·다시 켜기·삭제), 환경변수 입력 카드, C2 에서 더한 계정 연결 화면(`/accounts`: 블록, AWS·GitHub 연결·확인·해제)까지다. D2 에서 인시던트 상세(`/incidents/[i_id]`), 배포 설정, 알림 목록·종 배지, 푸시 권한·토큰 등록, 알림 설정 화면이 더해졌다(푸시는 기기에서 미확인, EAS 프로젝트 id 없음, 웹에는 아직 없음). 로그인, 스토어 빌드, 딥링크 복귀는 아직 없다. 웹과 같은 문구·상태 값을 쓰도록 웹 `ui/` 파일을 보고 옮겼으므로 양쪽을 같이 고친다 (목록은 `app/README.md`와 `docs/ui-spec.md`의 "앱"). 실제 기기에서는 확인하지 못했다.
+`app/`는 `features/`·`shared/`와 따로 있는 Expo 앱(독립 패키지, 순수 JS)이다. 기존 API만 부른다 (서버는 바꾸지 않았다. 다만 D2 에서 `Deploy_Read` 에 `open_incident_status` 를 더하고 `open_incident_id` 가 `needs_action` 인시던트도 덮게 했다). C1 범위는 배포 목록, 새 배포(분석 → 배포), 배포 상세(진행·로그·해설·이력·다시 배포·멈춤·다시 켜기·삭제), 환경변수 입력 카드, C2 에서 더한 계정 연결 화면(`/accounts`: 블록, AWS·GitHub 연결·확인·해제)까지다. D2 에서 인시던트 상세(`/incidents/[i_id]`), 배포 설정, 알림 목록·종 배지, 푸시 권한·토큰 등록, 알림 설정 화면이 더해졌다(푸시는 기기에서 미확인, EAS 프로젝트 id 없음, 웹에는 아직 없음). 로그인, 스토어 빌드, 딥링크 복귀는 아직 없다. 웹과 같은 문구·상태 값을 쓰도록 웹 `ui/` 파일을 보고 옮겼으므로 양쪽을 같이 고친다 (목록은 `app/README.md`와 `docs/ui-spec.md`의 "앱"). 실제 기기에서는 확인하지 못했다.
 
 ### health / incidents / notifications (D1, 코드 완료 - 실제 AWS·SMTP·Expo 로는 아직 검증 전)
 - 흐름·한도·재시작 때 정리는 [`architecture.md`](./architecture.md) "운영 감시와 자동 복구", 엔드포인트와 응답은 [`api-spec.md`](./api-spec.md) "Incidents", "Notifications · Devices".

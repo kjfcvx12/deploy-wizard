@@ -65,8 +65,8 @@ describe('알림 목록 - 보이는 모습', () => {
     expect(weight('제목 1')).not.toBe('700')
     expect(screen.getAllByTestId('unread-dot')).toHaveLength(1)
     // 종류 아이콘 (텍스트 표시 선택자가 붙는다)
-    expect(screen.getByText('✖︎')).toBeTruthy()
-    expect(screen.getByText('↺︎')).toBeTruthy()
+    expect(screen.getByText('✖\uFE0E')).toBeTruthy()
+    expect(screen.getByText('↺\uFE0E')).toBeTruthy()
   })
 
   test('불러오는 동안 스피너', async () => {

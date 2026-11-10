@@ -1,11 +1,9 @@
 import { useEffect, useRef, useState } from 'react'
 import { Linking, Pressable, StyleSheet, Text, View } from 'react-native'
 import * as Clipboard from 'expo-clipboard'
+import { HEALTH_STATE_LABEL } from '../ops/constants'
 import { radius, spacing, useColors } from '../theme'
 import { Button, Card } from './ui'
-
-// 응답 확인 결과 라벨 (웹 DeployDetailPage 와 같다)
-const HEALTH_LABEL = { healthy: '응답 정상', unhealthy: '응답 없음', unknown: '확인 전' }
 
 // 복사됨 표시를 거두는 시간(ms)
 const COPIED_MS = 2000
@@ -60,7 +58,7 @@ export default function EndpointCard({ endpoint, health, onError }) {
         {!!health && (
           <View style={[styles.badge, { backgroundColor: health.health === 'healthy' ? colors.okBg : colors.errBg }]}>
             <Text style={[styles.badgeText, { color: health.health === 'healthy' ? colors.ok : colors.err }]}>
-              {HEALTH_LABEL[health.health] || health.health}
+              {HEALTH_STATE_LABEL[health.health] || health.health}
             </Text>
           </View>
         )}

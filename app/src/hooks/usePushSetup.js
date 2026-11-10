@@ -43,8 +43,13 @@ export function usePushSetup(active) {
       const next = await requestAndRegister()
       if (!alive.current) return
       if (next === 'granted') {
-        // 서버 쪽 푸시 설정도 켠다 - 기본값이 켜짐이라 실패해도 카드는 성공으로 본다
-        notificationApi.patchSettings({ notify_push: true }).catch(() => {})
+        // 서버 쪽 푸시 설정도 켠다 - 실패하면 성공이라 하지 않고 서버 메시지를 카드에 보인다 (카드는 남아 다시 누를 수 있다)
+        try {
+          await notificationApi.patchSettings({ notify_push: true })
+        } catch (e) {
+          if (alive.current) setError(e.message)
+          return
+        }
         await writeCardDismissed()
         if (alive.current) setState(null)
       } else if (next === 'denied') {

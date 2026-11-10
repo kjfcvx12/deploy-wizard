@@ -49,5 +49,5 @@ export const RECOVERY_ACTION_LABEL = { restart: '재시작', rollback: '이전 �
 export const RECOVERY_RESULT_LABEL = { running: '진행 중', ok: '성공', failed: '실패' }
 export const RECOVERY_RESULT_TONE = { running: 'accent', ok: 'ok', failed: 'err' }
 
-// 마지막 헬스체크 요약 (components/EndpointCard.js 와 같은 글)
+// 마지막 헬스체크 요약 (웹 DeployDetailPage 와 같은 글) - HealthDot 과 EndpointCard 가 함께 쓴다
 export const HEALTH_STATE_LABEL = { healthy: '응답 정상', unhealthy: '응답 없음', unknown: '확인 전' }

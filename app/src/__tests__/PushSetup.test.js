@@ -13,6 +13,7 @@ jest.mock('expo-router', () => ({
   useRouter: () => ({ replace: jest.fn(), dismissTo: jest.fn(), canGoBack: () => true, push: jest.fn() }),
   useLocalSearchParams: () => ({ d_id: '7' }),
   Stack: { Screen: () => null },
+  useFocusEffect: () => {},
 }))
 jest.mock('expo-clipboard', () => ({ setStringAsync: jest.fn() }))
 jest.mock('../api', () => ({
@@ -230,6 +231,19 @@ describe('PushSetupCard - 한 번짜리 안내 카드', () => {
     expect(JSON.stringify(screen.toJSON())).not.toContain('SECRET')
     expect(screen.getByRole('button', { name: '알림 켜기' })).toBeTruthy()
     expect(await AsyncStorage.getItem('dw-push-card-dismissed')).toBeNull()
+  })
+
+  test('서버 푸시 설정 저장이 실패: 성공이라 하지 않고 서버 메시지를 카드에 보이며, 닫은 것으로 기억하지 않고 다시 누를 수 있다', async () => {
+    notificationApi.patchSettings.mockRejectedValueOnce(new Error('알림 설정을 저장하지 못했습니다'))
+    await render(<PushSetupCard active />)
+    await fireEvent.press(await screen.findByRole('button', { name: '알림 켜기' }))
+    expect(await screen.findByText('알림 설정을 저장하지 못했습니다')).toBeTruthy()
+    expect(screen.getByRole('button', { name: '알림 켜기' })).toBeTruthy()
+    expect(await AsyncStorage.getItem('dw-push-card-dismissed')).toBeNull()
+    await fireEvent.press(screen.getByRole('button', { name: '알림 켜기' }))
+    await waitFor(() => expect(screen.toJSON()).toBeNull())
+    expect(notificationApi.patchSettings).toHaveBeenCalledTimes(2)
+    expect(await AsyncStorage.getItem('dw-push-card-dismissed')).toBe('1')
   })
 
   test('토큰은 그려진 화면 어디에도 없다 (성공 전·후)', async () => {

@@ -222,6 +222,26 @@ describe('알림 설정 - 메일·종류 스위치', () => {
     await act(async () => { pending.resolve({}) })
   })
 
+  test('한 스위치의 저장 안내 타이머가 다른 스위치의 오류를 지우지 않는다 (B 가 느리게 실패)', async () => {
+    await open()
+    const slow = deferred()
+    notificationApi.patchSettings.mockReturnValueOnce(slow.promise)
+    await fireEvent.press(row('배포 성공 알림'))
+    await fireEvent.press(row('메일 받기'))
+    await flush()
+    expect(screen.getByText('저장했습니다')).toBeTruthy()
+    await act(async () => { jest.advanceTimersByTime(1000) })
+    await act(async () => { slow.reject(new Error('모르는 종류입니다')) })
+    expect(screen.getByText('모르는 종류입니다')).toBeTruthy()
+    await act(async () => { jest.advanceTimersByTime(5000) })
+    expect(screen.getByText('모르는 종류입니다')).toBeTruthy()
+  })
+
+  test('종류 섹션에 끈 종류는 앱 안 알림 목록에도 남지 않는다는 안내가 있다', async () => {
+    await open()
+    expect(screen.getByText('끈 종류는 앱 안 알림 목록에도 남지 않습니다')).toBeTruthy()
+  })
+
   test('스위치는 이름·상태·설명이 접근성 요소에 있고 눌림 높이 44 이상', async () => {
     await open()
     const mail = row('메일 받기')

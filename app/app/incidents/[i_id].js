@@ -46,7 +46,8 @@ function IncidentDetail({ i_id }) {
   const [notice, setNotice] = useState('')
   const [acted, setActed] = useState(false)
   const [pulling, setPulling] = useState(false)
-  const [checks, setChecks] = useState([])
+  // 헬스 이력 - undefined 면 아직 받는 중(막대를 그리지 않음), null 이면 한 번도 받지 못함, 배열이면 받은 이력
+  const [checks, setChecks] = useState(undefined)
 
   useEffect(() => {
     alive.current = true
@@ -64,7 +65,7 @@ function IncidentDetail({ i_id }) {
   // 지금 바로 새로 받는다 (수동 새로고침·포커스 복귀·동작 뒤) - 헬스 이력도 60초를 기다리지 않는다
   const refresh = useCallback(() => { forceHistoryRef.current = true; return poll() }, [poll])
 
-  // 헬스 이력 - 첫 응답, 상태 변경, 수동 새로고침, 60초 경과 때만. 실패하면 지난 이력을 그대로 둔다 (조용히)
+  // 헬스 이력 - 첫 응답, 상태 변경, 수동 새로고침, 60초 경과 때만. 실패하면 지난 이력은 그대로 두고, 받은 적이 없으면 못 받았다고 알린다
   useEffect(() => {
     if (!incident) return
     const changed = statusRef.current !== incident.status
@@ -76,7 +77,7 @@ function IncidentDetail({ i_id }) {
     const mine = ++historySeq.current
     healthApi.getHistory(incident.d_id, HEALTH_HOURS)
       .then((result) => { if (alive.current && mine === historySeq.current) setChecks(result) })
-      .catch(() => {})
+      .catch(() => { if (alive.current && mine === historySeq.current) setChecks((prev) => (Array.isArray(prev) ? prev : null)) })
   }, [incident])
 
   // 다른 화면에서 돌아오면 한 번 새로 받는다 (처음 열 때는 usePolling 이 이미 받는다)
@@ -180,7 +181,7 @@ function IncidentDetail({ i_id }) {
 
         <IncidentExplain explain={incident.explain} onError={setActionError} />
         <Card><IncidentTimeline incident={incident} /></Card>
-        <Card><HealthBar checks={checks} hours={HEALTH_HOURS} /></Card>
+        {checks !== undefined && <Card><HealthBar checks={checks} hours={HEALTH_HOURS} /></Card>}
 
         {needsAction ? (
           <View style={styles.stack}>

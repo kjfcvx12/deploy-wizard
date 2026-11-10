@@ -4,7 +4,7 @@ import {
   RECOVERY_ACTION_LABEL, RECOVERY_RESULT_LABEL, RECOVERY_RESULT_TONE, HEALTH_STATE_LABEL,
 } from '../ops/constants'
 import { parseAppLink } from '../ops/links'
-import { formatTime, durationText, incidentTimeline } from '../ops/format'
+import { formatTime, durationText, incidentTimeline, toMs } from '../ops/format'
 
 // docs/api-spec.md 에 적힌 서버 값 (여기서 따로 적어 두고 앱의 표와 맞춘다)
 const SERVER = {
@@ -143,6 +143,14 @@ describe('formatTime / durationText', () => {
 
   test('소수점 초가 있어도 읽는다', () => {
     expect(formatTime('2026-11-09T03:12:30.123456')).toBe(local(Date.UTC(2026, 10, 9, 3, 12, 30)))
+  })
+
+  test('6자리 소수점 초는 밀리초 3자리로 잘라 읽는다 (시간대가 있어도 같다)', () => {
+    const ms = Date.UTC(2026, 10, 9, 3, 12, 30, 123)
+    expect(toMs('2026-11-09T03:12:30.123456')).toBe(ms)
+    expect(toMs('2026-11-09T03:12:30.123999Z')).toBe(ms)
+    expect(toMs('2026-11-09T12:12:30.1234567+09:00')).toBe(ms)
+    expect(toMs('2026-11-09T03:12:30.5')).toBe(Date.UTC(2026, 10, 9, 3, 12, 30, 500))
   })
 
   test.each([[null], [undefined], [''], ['어제'], [42]])('%j 는 빈 글자', (v) => {
