@@ -143,7 +143,12 @@ export default function DeployDetailPage() {
 
   return (
     <>
-      <p className="small back-link"><Link to="/">← 목록</Link></p>
+      <div className="row spread detail-top">
+        <p className="small back-link"><Link to="/">← 목록</Link></p>
+        {deploy.status !== 'deleting' && deploy.status !== 'deleted' && (
+          <Link className="link-button" to={`/deploys/${d_id}/settings`}>설정</Link>
+        )}
+      </div>
 
       {deploy.status === 'needs_input' && (
         <div className="notice info" style={{ marginTop: 0, marginBottom: 16 }}>

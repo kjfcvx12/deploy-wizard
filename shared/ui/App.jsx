@@ -2,6 +2,7 @@ import { Routes, Route, Link } from 'react-router-dom'
 
 import DeployListPage from '@features/deploys/ui/DeployListPage.jsx'
 import DeployDetailPage from '@features/deploys/ui/DeployDetailPage.jsx'
+import DeploySettingsPage from '@features/deploys/ui/DeploySettingsPage.jsx'
 import IncidentDetailPage from '@features/incidents/ui/IncidentDetailPage.jsx'
 import AccountsPage from '@features/accounts/ui/AccountsPage.jsx'
 import ConnectGuidePage from '@features/accounts/ui/ConnectGuidePage.jsx'
@@ -24,6 +25,7 @@ function Shell() {
         <Routes>
           <Route path="/" element={<DeployListPage />} />
           <Route path="/deploys/:d_id" element={<DeployDetailPage />} />
+          <Route path="/deploys/:d_id/settings" element={<DeploySettingsPage />} />
           <Route path="/incidents/:i_id" element={<IncidentDetailPage />} />
           <Route path="/accounts" element={<AccountsPage />} />
           <Route path="*" element={<p className="muted">없는 페이지입니다.</p>} />
