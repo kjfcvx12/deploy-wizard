@@ -87,6 +87,12 @@ export default function NotificationsPage() {
     }
   }
 
+  // 오류를 맨 위 알림으로 올리고, 긴 목록 아래에서 눌렀어도 보이게 화면을 맨 위로 올린다
+  const fail = (message) => {
+    setActionError(message)
+    window.scrollTo({ top: 0, behavior: 'smooth' })
+  }
+
   // 표시한 읽음 값을 되돌린다 - 그사이 다른 값으로 바뀐 줄은 건드리지 않는다
   const rollback = (marker, ids) => {
     put(itemsRef.current.map((item) => (ids.includes(item.n_id) && item.read_at === marker ? { ...item, read_at: null } : item)))
@@ -114,7 +120,7 @@ export default function NotificationsPage() {
         .catch((e) => {
           if (!alive.current) return
           rollback(marker, [item.n_id])
-          setActionError(`읽음으로 표시하지 못했습니다 :${e.message}`)
+          fail(`읽음으로 표시하지 못했습니다 :${e.message}`)
         })
         .finally(() => { pendingReads.current.delete(item.n_id) })
     }
@@ -140,7 +146,7 @@ export default function NotificationsPage() {
     } catch (e) {
       if (!alive.current) return
       rollback(marker, ids)
-      setActionError(`모두 읽음으로 표시하지 못했습니다 :${e.message}`)
+      fail(`모두 읽음으로 표시하지 못했습니다 :${e.message}`)
     } finally {
       readAllRef.current = false
       if (alive.current) setReadAllBusy(false)
