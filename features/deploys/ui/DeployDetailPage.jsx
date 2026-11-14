@@ -3,6 +3,7 @@ import { Link, useNavigate, useParams } from 'react-router-dom'
 
 import ExplainCard from '@features/explains/ui/ExplainCard.jsx'
 import EnvVarsCard from '@features/envvars/ui/EnvVarsCard.jsx'
+import IncidentCard from '@features/incidents/ui/IncidentCard.jsx'
 
 import { deployApi } from './api.js'
 import { HEALTH_STATE_LABEL, isProgress, repoName, showsEnvCard } from './constants.js'
@@ -11,6 +12,9 @@ import StopDialog from './StopDialog.jsx'
 import StepProgress from './StepProgress.jsx'
 import LogTerminal from './LogTerminal.jsx'
 import IssueHistory from './IssueHistory.jsx'
+
+// 떠 있는 배포를 다시 보는 간격(ms)
+const RUNNING_POLL_MS = 15000
 
 // 단계별 진행률, 터미널형 로그, 완료 시 클릭 가능한 링크 (M4) + 실패 해설과 선택지 (M5)
 export default function DeployDetailPage() {
@@ -32,6 +36,7 @@ export default function DeployDetailPage() {
     let alive = true
     let timer = null
     let after = 0
+    let running = false
     setLogs([])
 
     const load = async () => {
@@ -46,9 +51,14 @@ export default function DeployDetailPage() {
           setLogs((prev) => [...prev, ...nextLogs])
         }
 
+        // 진행 중이거나 로그가 더 올 때는 자주, 떠 있는 동안은 새로 생기는 문제를 알아채도록 천천히 계속 본다
+        running = nextDeploy.status === 'running'
         if (isProgress(nextDeploy.status) || nextLogs.length > 0) timer = setTimeout(load, 1500)
+        else if (running) timer = setTimeout(load, RUNNING_POLL_MS)
       } catch (e) {
-        if (alive) setError(e.message)
+        if (!alive) return
+        setError(e.message)
+        if (running) timer = setTimeout(load, RUNNING_POLL_MS)
       }
     }
 
@@ -167,11 +177,15 @@ export default function DeployDetailPage() {
         <EnvVarsCard deploy={deploy} onContinued={() => setRound((n) => n + 1)} onRedeploy={redeploy} />
       )}
 
+      {deploy.open_incident_id && (
+        <IncidentCard d_id={deploy.d_id} i_id={deploy.open_incident_id} refreshKey={`${deploy.open_incident_id}:${deploy.open_incident_status}`} />
+      )}
+
       {deploy.status === 'running' && deploy.endpoint && (
         <section className="card">
           <div className="row spread">
             <a className="endpoint" href={deploy.endpoint} target="_blank" rel="noreferrer">{deploy.endpoint}</a>
-            {health && <span className={`badge ${health.health === 'healthy' ? 'ok' : 'err'}`}>{HEALTH_STATE_LABEL[health.health]}</span>}
+            {health && <span className={`badge ${health.health === 'healthy' ? 'ok' : 'err'}`}>{HEALTH_STATE_LABEL[health.health] || health.health}</span>}
           </div>
           <p className="muted small" style={{ margin: '8px 0 0' }}>
             떠 있는 동안 로드밸런서와 컨테이너 요금이 계속 나옵니다. 잠시 안 쓸 거면 아래에서 [멈춤], 완전히 지울 거면 [삭제]를 누르세요.

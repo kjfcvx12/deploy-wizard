@@ -373,8 +373,33 @@ details.env-group > summary { font-size: 14px; }
 .hb-cell.failed { background: var(--err); }
 .health-axis { display: flex; justify-content: space-between; gap: 8px; margin-top: 6px; color: var(--muted); font-size: 12px; }
 
+/* 문제 배너 - 목록 위, 문제가 있는 배포마다 한 줄 */
+.problem-banner {
+  display: flex; align-items: center; min-height: 44px; margin-bottom: 12px; padding: 8px 14px;
+  border: 1px solid var(--warn); border-radius: 8px; background: var(--warn-bg); color: var(--warn);
+  font-size: 14px; font-weight: 700; line-height: 1.4; text-decoration: none; overflow-wrap: anywhere;
+}
+.problem-banner:hover { background: var(--surface-2); }
+
+/* 헬스 점 - 목록의 실행 중 줄, 상태 배지 옆 */
+.deploy-status { display: flex; align-items: center; gap: 8px; flex: none; }
+.health-dot { flex: none; width: 10px; height: 10px; border-radius: 50%; background: var(--muted); }
+.health-dot.ok { background: var(--ok); }
+.health-dot.err { background: var(--err); }
+.health-dot.muted { background: var(--muted); }
+
+/* 인시던트 카드 - 배포 상세 위쪽, 통째로 링크 */
+.incident-card { display: block; border-left: 4px solid var(--warn); color: inherit; text-decoration: none; min-height: 44px; }
+.incident-card:hover { background: var(--surface-2); }
+.incident-card-head { flex-wrap: nowrap; margin-bottom: 6px; }
+.incident-card-title { color: var(--warn); min-width: 0; }
+.incident-card-head .badge { flex: none; }
+.incident-card-more { display: inline-block; margin-top: 6px; color: var(--accent); font-size: 13px; font-weight: 700; }
+
 /* 운영 화면 폰 폭 - 버튼은 한 줄씩, 터치 크기는 40px 이상 */
 @media (max-width: 640px) {
+  .deploy-status { margin-top: 2px; }
+  .deploy-item .deploy-status .badge { margin-top: 0; }
   .incident-title { font-size: 17px; }
   .incident-actions .row > button { flex: 1 1 100%; }
   .link-button { min-height: 40px; justify-content: center; width: 100%; }
