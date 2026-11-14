@@ -5,13 +5,11 @@ import ExplainCard from '@features/explains/ui/ExplainCard.jsx'
 import EnvVarsCard from '@features/envvars/ui/EnvVarsCard.jsx'
 
 import { deployApi } from './api.js'
-import { isProgress, repoName, showsEnvCard } from './constants.js'
+import { HEALTH_STATE_LABEL, isProgress, repoName, showsEnvCard } from './constants.js'
 import StatusBadge from './StatusBadge.jsx'
 import StepProgress from './StepProgress.jsx'
 import LogTerminal from './LogTerminal.jsx'
 import IssueHistory from './IssueHistory.jsx'
-
-const HEALTH_LABEL = { healthy: '응답 정상', unhealthy: '응답 없음', unknown: '확인 전' }
 
 // 단계별 진행률, 터미널형 로그, 완료 시 클릭 가능한 링크 (M4) + 실패 해설과 선택지 (M5)
 export default function DeployDetailPage() {
@@ -172,7 +170,7 @@ export default function DeployDetailPage() {
         <section className="card">
           <div className="row spread">
             <a className="endpoint" href={deploy.endpoint} target="_blank" rel="noreferrer">{deploy.endpoint}</a>
-            {health && <span className={`badge ${health.health === 'healthy' ? 'ok' : 'err'}`}>{HEALTH_LABEL[health.health]}</span>}
+            {health && <span className={`badge ${health.health === 'healthy' ? 'ok' : 'err'}`}>{HEALTH_STATE_LABEL[health.health]}</span>}
           </div>
           <p className="muted small" style={{ margin: '8px 0 0' }}>
             떠 있는 동안 로드밸런서와 컨테이너 요금이 계속 나옵니다. 잠시 안 쓸 거면 아래에서 [멈춤], 완전히 지울 거면 [삭제]를 누르세요.

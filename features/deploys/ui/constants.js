@@ -25,7 +25,10 @@ export const STATUS_LABEL = {
   deleted: '삭제됨',
 }
 
-export const PROGRESS = ['queued', 'cloning', 'analyzing', 'generating', 'building', 'pushing', 'deploying', 'deleting']
+// 마지막 헬스체크 요약 글 (features/deploys 의 health_state 값과 같다)
+export const HEALTH_STATE_LABEL = { healthy: '응답 정상', unhealthy: '응답 없음', unknown: '확인 전' }
+
+export const PROGRESS =['queued', 'cloning', 'analyzing', 'generating', 'building', 'pushing', 'deploying', 'deleting']
 
 export const isProgress = (status) => PROGRESS.includes(status)
 
