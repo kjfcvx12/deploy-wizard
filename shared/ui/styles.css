@@ -324,3 +324,59 @@ details.env-group > summary { font-size: 14px; }
   .shot-input { display: flex; align-items: center; min-height: 40px; }
   .guide-step a { display: inline-block; padding-block: 10px; }
 }
+
+/* 운영 화면 - 인시던트 상세 (타임라인·헬스 막대·고칠 곳). 색은 위의 토큰만 쓴다 */
+.incident-head { align-items: flex-start; flex-wrap: nowrap; gap: 12px; }
+.incident-title { margin: 0; font-size: 18px; line-height: 1.4; min-width: 0; overflow-wrap: anywhere; }
+.incident-head .badge { flex: none; margin-top: 3px; }
+.incident-meta { margin: 8px 0 0; overflow-wrap: anywhere; }
+.body-text { margin: 0; overflow-wrap: anywhere; }
+.todo-list { margin: 0; padding-left: 22px; }
+.todo-list li { margin-top: 4px; overflow-wrap: anywhere; }
+.link-button {
+  display: inline-flex; align-items: center; font-weight: 600; text-decoration: none;
+  border: 1px solid var(--border); border-radius: 8px; padding: 9px 16px;
+  background: var(--surface); color: var(--text);
+}
+.link-button:hover { background: var(--surface-2); }
+.incident-actions { margin-top: 16px; }
+.incident-actions p { margin: 10px 0 0; }
+
+/* 고칠 곳 - 고정폭, 길어도 줄바꿈 (선택·복사 가능) */
+.fix-where {
+  margin: 0 0 10px; padding: 10px 12px; border-radius: 8px; background: var(--surface-2);
+  font-size: 13px; line-height: 1.5; white-space: pre-wrap; overflow-wrap: anywhere; word-break: break-all;
+}
+
+/* 마법사가 한 일 - 세로 줄 */
+.timeline { list-style: none; margin: 0; padding: 0; }
+.tl-item { position: relative; display: flex; gap: 12px; padding-bottom: 14px; }
+.tl-item:not(:last-child)::before {
+  content: ''; position: absolute; left: 4px; top: 16px; bottom: 0; width: 2px; background: var(--border);
+}
+.tl-item:last-child { padding-bottom: 0; }
+.tl-dot { flex: none; width: 10px; height: 10px; margin-top: 7px; border-radius: 50%; background: var(--muted); }
+.tl-dot.warn { background: var(--warn); }
+.tl-dot.accent { background: var(--accent); }
+.tl-dot.ok { background: var(--ok); }
+.tl-dot.err { background: var(--err); }
+.tl-dot.muted { background: var(--muted); }
+.tl-body { min-width: 0; }
+.tl-title { font-weight: 600; overflow-wrap: anywhere; }
+.tl-time { color: var(--muted); font-size: 12px; }
+.tl-detail { color: var(--muted); font-size: 13px; margin-top: 2px; overflow-wrap: anywhere; }
+
+/* 헬스체크 막대 - 15분 칸 */
+.health-bar { display: flex; gap: 1px; height: 28px; }
+.hb-cell { flex: 1; min-width: 0; border-radius: 2px; background: var(--border); }
+.hb-cell.ok { background: var(--ok); }
+.hb-cell.failed { background: var(--err); }
+.health-axis { display: flex; justify-content: space-between; gap: 8px; margin-top: 6px; color: var(--muted); font-size: 12px; }
+
+/* 운영 화면 폰 폭 - 버튼은 한 줄씩, 터치 크기는 40px 이상 */
+@media (max-width: 640px) {
+  .incident-title { font-size: 17px; }
+  .incident-actions .row > button { flex: 1 1 100%; }
+  .link-button { min-height: 40px; justify-content: center; width: 100%; }
+  button.copy { min-height: 40px; padding: 5px 16px; }
+}

@@ -7,6 +7,7 @@ import EnvVarsCard from '@features/envvars/ui/EnvVarsCard.jsx'
 import { deployApi } from './api.js'
 import { HEALTH_STATE_LABEL, isProgress, repoName, showsEnvCard } from './constants.js'
 import StatusBadge from './StatusBadge.jsx'
+import StopDialog from './StopDialog.jsx'
 import StepProgress from './StepProgress.jsx'
 import LogTerminal from './LogTerminal.jsx'
 import IssueHistory from './IssueHistory.jsx'
@@ -229,14 +230,7 @@ export default function DeployDetailPage() {
         </div>
       )}
 
-      <dialog ref={stopDialog}>
-        <h2 style={{ marginTop: 0 }}>이 배포를 멈출까요?</h2>
-        <p>ECS 서비스를 내려서 컨테이너 요금이 멈춥니다. 주소는 접속되지 않게 됩니다. 이미지와 설정은 남겨 두므로 [다시 켜기] 한 번으로 다시 띄울 수 있습니다.</p>
-        <div className="row" style={{ justifyContent: 'flex-end' }}>
-          <button onClick={() => stopDialog.current?.close()}>그대로 두기</button>
-          <button className="danger" onClick={stop}>멈춤</button>
-        </div>
-      </dialog>
+      <StopDialog dialogRef={stopDialog} onStop={stop} />
 
       <dialog ref={dialog}>
         <h2 style={{ marginTop: 0 }}>이 배포를 삭제할까요?</h2>
