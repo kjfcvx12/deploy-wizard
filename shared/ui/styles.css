@@ -403,6 +403,7 @@ details.env-group > summary { font-size: 14px; }
 
 /* 배포 설정 화면 - 스위치 줄. 줄 전체가 눌리는 칸이고, 스위치 모양은 입력 옆의 칸으로 그린다 */
 .settings-heading { margin: 0 0 16px; font-size: 18px; line-height: 1.4; overflow-wrap: anywhere; }
+.settings-group-title { margin: 20px 0 10px; font-size: 15px; line-height: 1.4; }
 .settings-list { display: grid; gap: 12px; margin-bottom: 12px; }
 .setting-row {
   display: flex; align-items: center; gap: 16px; min-height: 56px; padding: 14px 16px; cursor: pointer;

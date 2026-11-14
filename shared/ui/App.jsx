@@ -6,6 +6,7 @@ import DeploySettingsPage from '@features/deploys/ui/DeploySettingsPage.jsx'
 import IncidentDetailPage from '@features/incidents/ui/IncidentDetailPage.jsx'
 import BellLink from '@features/notifications/ui/BellLink.jsx'
 import NotificationsPage from '@features/notifications/ui/NotificationsPage.jsx'
+import NotificationSettingsPage from '@features/notifications/ui/NotificationSettingsPage.jsx'
 import AccountsPage from '@features/accounts/ui/AccountsPage.jsx'
 import ConnectGuidePage from '@features/accounts/ui/ConnectGuidePage.jsx'
 
@@ -31,6 +32,7 @@ function Shell() {
           <Route path="/deploys/:d_id/settings" element={<DeploySettingsPage />} />
           <Route path="/incidents/:i_id" element={<IncidentDetailPage />} />
           <Route path="/notifications" element={<NotificationsPage />} />
+          <Route path="/notification-settings" element={<NotificationSettingsPage />} />
           <Route path="/accounts" element={<AccountsPage />} />
           <Route path="*" element={<p className="muted">없는 페이지입니다.</p>} />
         </Routes>
