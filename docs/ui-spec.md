@@ -7,6 +7,12 @@ React 19 + Vite + react-router. 화면 코드는 각 기능의 `ui/`에 있고, 
 | `/` | 새 배포 + 내 배포 목록 | `features/deploys/ui/DeployListPage.jsx` |
 | `/deploys/:d_id` | 배포 상세 | `features/deploys/ui/DeployDetailPage.jsx` |
 | `/accounts` | 계정 연결 (M6, AWS 절반만) | `features/accounts/ui/AccountsPage.jsx` |
+| `/incidents/:i_id` | 인시던트 상세 (S-13, 계획 E) | `features/incidents/ui/IncidentDetailPage.jsx` |
+| `/deploys/:d_id/settings` | 배포 설정 (S-14, 계획 E) | `features/deploys/ui/DeploySettingsPage.jsx` |
+| `/notifications` | 알림 목록 (S-12, 계획 E) | `features/notifications/ui/NotificationsPage.jsx` |
+| `/notification-settings` | 알림 설정 (S-15 알림 부분, 계획 E) | `features/notifications/ui/NotificationSettingsPage.jsx` |
+
+운영 화면 네 개(아래 "4. 운영 화면")는 계획 E 에서 더했다. 상단 바에는 `알림`(안 읽은 수 알약) 링크가 `계정 연결` 앞에 붙는다 (`features/notifications/ui/BellLink.jsx`).
 
 ## 1. 목록 (`/`)
 
@@ -17,7 +23,9 @@ React 19 + Vite + react-router. 화면 코드는 각 기능의 `ui/`에 있고, 
 - (M6) 연결된 계정이 있으면 주소 입력창 위에 `AccountPicker`(블록 드롭다운, 기본은 "연결 안 함")가 나온다. GitHub 연결을 고르면 private 레포도 배포 가능. 연결이 하나도 없으면 이 영역 자체가 안 보인다.
 - 배포가 만들어지면 상세 화면으로 이동. 분석이나 배포가 실패하면 서버의 `detail`을 보여 준다(분석 실패는 폼 카드 안, 패널이 떠 있는 채 배포가 실패하면 패널 아래).
 
-**내 배포** — 레포 이름, `#d_id · 브랜치 · 언어 · 주소`, 상태 배지.
+**문제 배너** (계획 E) — `내 배포` 카드 위, 끝나지 않은 인시던트(`open_incident_id`)가 있는 배포마다 한 줄 `{레포}에 문제가 있습니다 · 자동 복구 중` (인시던트가 `needs_action`이거나 그 배포의 `auto_recover`가 꺼져 있으면 `... · 확인이 필요합니다`). 누르면 `/incidents/{id}`. 글은 `problemLabel`(`features/incidents/ui/constants.js`).
+
+**내 배포** — 레포 이름, `#d_id · 브랜치 · 언어 · 주소`, 상태 배지. `running`이면 배지 왼쪽에 헬스 점(`HealthDot`: 초록 응답 정상 · 빨강 응답 없음 · 회색 확인 전, 접근성 라벨 `헬스체크: ...`, 모르는 값이나 값이 없는 옛 서버면 그리지 않는다).
 - 진행 중인 배포가 있으면 3초, 없으면 15초마다 새로 읽는다.
 - `env_pending > 0`이면 `#d_id · 브랜치 · 언어 · 주소` 줄 끝에 ` · 환경변수 N개 입력 필요`를 붙인다 (예: `환경변수 2개 입력 필요`). 좁은 화면에서는 줄이 바뀐다. 상태가 `needs_input`이면 배지는 "입력 필요"(주황, 실험 지원 배지와 같은 톤)이고, 진행 중이 아니므로 15초 간격으로 읽는다.
 
@@ -36,6 +44,12 @@ React 19 + Vite + react-router. 화면 코드는 각 기능의 `ui/`에 있고, 
 6. **Dockerfile** — 접힌 상태. 출처와 포트 표시
 7. **문제 이력** (지난 실패가 있을 때) — 접힌 상태. 단계·시각·해설 한 줄씩, 최신순. `features/deploys/ui/IssueHistory.jsx`
 8. **동작 버튼** (`running`일 때) — [다시 배포] [삭제]. `needs_input`일 때는 [삭제]만 둔다([다시 배포]·[멈춤]은 숨김 - 이어가는 길은 카드의 [이어서 배포] 하나뿐).
+
+**계획 E 에서 더한 것**: 맨 윗줄에 `← 목록` 링크와 오른쪽 `설정` 링크(`deleting`·`deleted`가 아니면 보임, `/deploys/{d_id}/settings`)가 있다. `open_incident_id`가 있으면 머리 카드 다음에 **인시던트 카드**("문제가 있습니다" + 상태 배지 + 한 줄 요약 + `자세히 보기 ›`, 카드 전체가 `/incidents/{id}` 링크, `features/incidents/ui/IncidentCard.jsx`)가 뜬다. 요약을 못 받아도 카드는 남는다. 주소 카드의 헬스 배지 글은 `HEALTH_STATE_LABEL`(`응답 정상`·`응답 없음`·`확인 전`).
+
+**폴링**: 진행 중이거나 로그가 더 올 때는 1.5초, `running`이면 15초마다 계속 다시 읽는다(새로 생기는 인시던트 카드를 알아채도록). 읽기가 실패해도 `running`이면 15초 뒤 다시 시도한다. 그 밖의 상태에서는 멈춘다.
+
+멈춤 확인 대화상자는 `features/deploys/ui/StopDialog.jsx`로 뺐다 (상세와 인시던트 상세가 같은 것을 쓴다).
 
 `needs_input`이면 머리 카드 위(번호 목록 맨 위)에 파란 안내 한 줄 "환경변수 입력이 필요합니다. 아래에서 값을 입력하거나 건너뛴 뒤 [이어서 배포]를 누르세요."가 뜨고, 환경변수 카드는 머리 카드(단계 진행 막대가 들어 있다) 바로 밑에 붙는다.
 
@@ -124,6 +138,82 @@ S-20 와이어프레임의 "수준 선택 3칸"(사용자가 가벼움/보통/�
 
 두 카드 모두 삭제는 확인 대화상자 — "이 연결을 쓰던 배포들의 연결이 끊깁니다. 앱 설치나 CFN 스택 자체는 지워지지 않습니다" 안내(연결만 끊는다는 뜻, 실제 회수는 각자 콘솔/github.com에서 하라는 것을 명확히).
 
+## 4. 운영 화면 (계획 E)
+
+웹에서 인시던트·알림·배포 설정을 본다. 서버가 하는 재시작·되돌리기는 **읽기 전용 기록**으로만 보여 주고, 웹은 자동 조치를 하지 않는다 (CLAUDE.md 규칙 3). 상태를 바꾸는 것은 전부 사용자가 누른 버튼이다. API 와 상태 값은 바뀐 것이 없다 (`docs/api-spec.md`).
+
+- 서버 필드 이름(`i_id`, `d_id`, `open_incident_id`, `open_incident_status`, `health_state`, `auto_recover`, `explain.fix_where` ...)과 상태·종류 값은 백엔드와 같고 각 기능의 `ui/constants.js`에 한 번만 적는다 (`features/incidents/ui/constants.js`, `features/notifications/ui/constants.js`, `features/deploys/ui/constants.js`의 `HEALTH_STATE_LABEL`). 모르는 값은 서버 글자 그대로 보여 주고 화면이 죽지 않는다.
+- 서버 시각은 UTC 이고 `Z`가 없다. 모든 시각은 `shared/ui/time.js`의 `toMs`/`formatTime`/`durationText`로 읽는다.
+- `explain`·`summary`·조치 `detail`은 글자로만 그린다 (React 이스케이프, `dangerouslySetInnerHTML` 없음). `evidence`는 받아도 화면에 그리지 않는다. 토큰은 주소·`localStorage`·콘솔에 두지 않는다 (규칙 6).
+
+### 인시던트 상세 (`/incidents/:i_id`, S-13) — `features/incidents/ui/IncidentDetailPage.jsx`
+
+위에서부터:
+
+1. **머리 카드** — 한 줄 요약(`summary` → `explain.summary` → "문제가 감지되었습니다") + 상태 배지(감지됨 · 복구 중 · 해결됨 · 확인 필요), `배포 #d_id · 종류 · 감지 시각`(해결되면 ` · 해결 시각 (걸린 시간)`), 처리 중(`open`·`recovering`)이면 "마법사가 복구를 시도하고 있습니다. 이 화면은 5초마다 새로 고쳐집니다.", [새로 고침].
+2. **원인 · 고칠 곳 · 해야 할 일** (`IncidentExplain.jsx`) — `explain`이 `null`이거나 일부만 있어도 그린다 (원인이 없으면 "아직 원인을 확인하지 못했습니다"). 고칠 곳은 고정폭 `pre`라서 선택·복사되고 긴 ARN 도 줄바꿈하며 [복사] 버튼이 있다 (클립보드를 못 쓰면 "고칠 곳을 복사하지 못했습니다"). 해야 할 일은 번호 목록.
+3. **마법사가 한 일** (`IncidentTimeline.jsx`, 순서는 `incidentTimeline`) — 세로 타임라인: 문제를 감지했습니다 → 조치마다 `{재시작 | 이전 버전으로 되돌리기} 시도`와 `... 성공 | 실패`(+서버가 마스킹한 `detail`) → `정상으로 돌아왔습니다` 또는 `확인이 필요합니다`. 읽기 전용 기록이다.
+4. **헬스체크 이력** (`HealthBar.jsx`, 칸 계산은 `health.js`의 `healthBuckets`) — 최근 24시간을 15분 칸 막대로(정상 / 실패 / 기록 없음) 그리고 요약 `최근 24시간 정상 N%`를 읽어 준다. 이력을 한 번도 못 받았으면 "헬스 이력을 불러오지 못했습니다"(인시던트는 그대로 보인다), 받는 중에는 막대를 그리지 않는다.
+5. **버튼** — `needs_action`일 때만 [다시 배포] [멈춤] [그대로 두기]와 "아무것도 누르지 않으면 그대로 둡니다. 마법사가 자동으로 지우거나 바꾸지 않습니다." [멈춤]은 `StopDialog`(기본 포커스 [그대로 두기]) 뒤에서만 실행된다. 동작이 성공하면 안내 + 새로 받고, 버튼 대신 [배포 보기]만 남는다. 실패하면 빨간 알림을 맨 위로 올려 보인다. 다른 상태에서는 [배포 보기]만 있다. 삭제 버튼은 없다.
+- 없는 인시던트(404)·지워진 배포: "문제를 찾을 수 없습니다. 이미 삭제된 배포이거나 지워진 기록일 수 있습니다." + [돌아가기](바로 연 화면이면 목록, 아니면 뒤로). 첫 불러오기 실패는 오류 + [다시 시도] [돌아가기].
+- **갱신**: `open`·`recovering`인 동안 5초마다, `resolved`·`needs_action`이 되면 멈춘다. 실패하면 5 → 10 → 20 → 30초로 늘려 다시 시도하고 404 는 다시 부르지 않는다. 숨겨진 탭에서는 멈췄다가 보이면 한 번 바로 부른다. 헬스 이력은 인시던트 갱신과 따로 받는다: 첫 응답, 상태가 바뀔 때, [새로 고침], 60초가 지났을 때만. 이력 요청이 실패해도 지난 이력은 그대로 둔다. 주소의 `i_id`가 바뀌면 화면을 새로 만든다.
+
+### 배포 설정 (`/deploys/:d_id/settings`, S-14) — `features/deploys/ui/DeploySettingsPage.jsx`
+
+- 머리 `{레포} · 배포 #d_id`, 맨 위 `← 배포로`. 스위치 둘(`shared/ui/SettingSwitch.jsx`, 줄 전체가 하나의 스위치): `새 커밋이 오면 자동 재배포`(`auto_redeploy`), `문제가 생기면 자동 복구`(`auto_recover`). 자동 복구 설명에 "자동 복구는 재시작과 이전 버전으로 되돌리기만 합니다. 삭제나 사양 변경은 직접 확인한 뒤에만 합니다."가 들어 있다. 값이 없는 옛 응답은 서버 기본값(자동 복구 켜짐, 자동 재배포 꺼짐)으로 본다.
+- 누르면 저장 버튼 없이 바로 `PATCH /api/deploys/{d_id}/settings`(바꾼 항목 하나만). 먼저 새 값으로 보이고 같은 스위치는 응답이 올 때까지 잠근다(더블 클릭 방지, 끝나면 키보드 포커스를 되돌려 준다). 성공하면 "저장했습니다"(3초), 실패하면 그 스위치만 되돌리고 서버 문구를 빨간 알림(`role="alert"`)으로 보인다. 안내는 스위치 목록 **아래**에 띄워 더블 클릭 때 줄이 밀리지 않게 하고, 화면 밖이면 보이는 곳까지만 스크롤한다. 그 사이 배포가 지워져 404 가 오면 없는 배포 안내로 바꾼다. 폴링은 없다 (처음 한 번만 읽는다).
+- 들어가는 길은 배포 상세 맨 윗줄의 `설정` 링크 하나다.
+
+### 알림 목록 (`/notifications`, S-12) — `features/notifications/ui/NotificationsPage.jsx`
+
+- 맨 위 `알림` 제목과 [알림 설정] 링크 · [새로 고침] · [모두 읽음].
+- 줄(`NotificationItem.jsx`): 종류 아이콘(글자 모양 선택자를 붙여 색깔 이모지가 안 되게 한다), 제목, 두 줄까지 본문, 시각. 읽지 않은 것은 굵은 제목 + 점, 접근성 라벨 `읽지 않음 · {종류}: {제목}`.
+- 줄을 누르면 먼저 읽음으로 보이고(요청은 뒤에서) 이동한다: `incident_*`는 `/incidents/{i_id}`, 그 밖은 `/deploys/{d_id}`. id 가 없거나 믿을 수 없으면(`d_id`가 `null`인 `new_commit` 등) 이동 없이 읽음만 한다. 600ms 안의 같은 줄 두 번째 누름과 요청 중인 줄은 무시한다. 읽음 요청이 실패하면 되돌리고 맨 위에 빨간 안내를 올린다.
+- [모두 읽음] — 읽지 않던 줄만 먼저 읽음으로 보이고, 실패하면 그 줄들만 되돌린다. 읽을 것이 없으면 비활성.
+- 한 쪽은 100건이다. 100건을 받았으면 [더 보기](가장 오래된 `n_id`를 `after`로 보내고, 이미 있는 `n_id`는 건너뛰므로 겹치는 응답도 중복되지 않는다). 비었으면 `새 알림이 없습니다`, 첫 불러오기 실패는 오류 + [다시 시도], 새로 고침이 실패하면 목록 위에 안내.
+- **상단 바 `알림` 알약** (`BellLink.jsx`, `useUnreadCount.js`): 읽지 않은 수(99 를 넘으면 `99+`, 라벨 `알림, 읽지 않은 N개`). 30초마다 `GET /api/notifications/unread-count`를 읽고(실패하면 늘려 가며, 숨겨진 탭에서는 멈춤), 알림 화면에서 읽음 처리가 되면 창 이벤트 `dw:unread-changed`로 바로 다시 받는다. 실패하면 0 으로 보이고 안내는 없다.
+
+### 알림 설정 (`/notification-settings`, S-15 알림 부분) — `features/notifications/ui/NotificationSettingsPage.jsx`
+
+- `받는 방법`: `메일 받기`(`notify_email`, "서버에 메일 설정이 있을 때만 보내집니다"), `푸시 받기`(`notify_push`). 푸시는 **서버 전체 설정**이고 안내문에 "푸시는 앱에서 이 기기를 등록해야 도착합니다. 웹 브라우저로는 받지 않습니다. 이 설정은 모든 기기에 적용됩니다."라고 적었다. 웹은 푸시 권한을 묻거나 기기를 등록하지 않는다 (S-17 은 앱 전용).
+- `알림 종류` 여섯 개(문제 감지 · 복구 완료 · 확인 필요 · 배포 성공 · 배포 실패 · 새 커밋, 서버 순서), 줄마다 설명 한 줄. 종류 스위치는 눌린 줄이 아니라 지금 값에서 목록 전체를 서버 순서로 다시 만들어 `kinds`로 보내므로 한 묶음으로 잠근다.
+- 맨 아래 "끈 종류는 알림 목록에도 남지 않습니다. 변경은 누르는 즉시 저장됩니다."
+- 저장 방식은 배포 설정과 같다 (즉시 `PATCH`, 성공 "저장했습니다", 실패하면 이 요청이 바꾼 값만 되돌리고 서버 문구, 예: 422). 실패 안내가 떠 있으면 저장 안내가 덮어쓰지 않는다. 폴링은 없다. 바로 연 화면에서 [돌아가기]는 알림 목록으로 간다.
+
+### 갱신(폴링) 규칙
+
+| 화면 | 간격 | 멈추는 때 |
+|---|---|---|
+| 인시던트 상세 | 5초 (실패 시 5→10→20→30초) | `resolved`·`needs_action`, 404, 화면을 떠남 |
+| 인시던트 헬스 이력 | 첫 응답·상태 변경·[새로 고침]·60초 경과 | 화면을 떠남 |
+| 상단 바 읽지 않은 수 | 30초 (실패 시 늘려 감) + 읽음 처리 때 바로 | 숨겨진 탭 |
+| 배포 상세 | 진행 중 1.5초, `running` 15초 (실패해도 `running`이면 15초 뒤 재시도) | `running`·진행 중이 아닌 상태, 화면을 떠남 |
+| 목록 | 진행 중 3초, 없으면 15초 | 화면을 떠남 |
+| 알림 목록·알림 설정·배포 설정 | 없음 (처음 한 번 + 누를 때) | — |
+
+공통: 간격은 `shared/ui/polling.js`의 `backoffDelay`, 반복은 `shared/ui/usePolling.js`(인시던트·읽지 않은 수)나 기존 `setTimeout` 루프(배포 목록·상세). 모든 반복은 `alive` 표시와 번호(`seq`)로 늦게 온 응답을 버리고 `clearTimeout`으로 정리한다.
+
+### 앱과 다른 점
+
+- **아래로 당겨 새로고침 대신 [새로 고침] 버튼** (인시던트 상세, 알림 목록).
+- **푸시·기기 등록 없음.** 알림 설정의 푸시 스위치는 서버 전체 설정이고 웹은 기기를 등록하지 않는다는 안내가 붙는다. 앱의 권한 안내 카드·푸시 준비 상태 표시도 없다.
+- 상단 바 `알림` 링크가 앱의 종 버튼이다 (앱은 머리줄, 웹은 상단 바 `알림` → `계정 연결` 순서). 뒤로 가기는 브라우저, 확인 창은 `<dialog>`.
+- 터치 크기는 640px 이하에서 40px 이상(웹 기존 규칙), 앱은 44pt 이상. 640px 를 넘는 너비에는 40px 규칙이 없어 상단 바 링크 약 21px, `← 목록`류 약 19px 이다 (기존 화면과 같다).
+- 읽지 않은 수는 30초 폴링이고, 앱처럼 푸시로 바로 알려 주지 않는다.
+
+### 확인한 것 (2026-11-15)
+
+**전부 모의(`page.route('**/api/**')`)로만 했다. 실제 백엔드·AWS·SMTP·기기는 쓰지 않았다.** `npm run dev`(Vite)를 띄우고 Playwright 로 390×844 다크·라이트, 1280×800 라이트에서 목록(문제 배너·헬스 점·알림 알약) → 인시던트 `open → recovering → resolved` → `needs_action`(고친 곳 300자 이상 무공백 ARN, 재시작·되돌리기 실패 두 건) → `explain: null`·조치 없음 → 404 → 헬스 이력 정상/없음/500 → 알림 목록(읽음 한 건, 모두 읽음 실패→성공, 100건 쪽 + 겹치는 `after` 쪽) → 알림 설정(PATCH 성공·422) → 배포 상세 `설정` → 배포 설정(PATCH 성공·500) → 목록으로 돌렸다.
+
+- 가로 스크롤 없음(`scrollWidth ≤ innerWidth`)을 위 모든 화면에서 확인했고 `main` 안에 화면 오른쪽 밖으로 나간 요소도 없었다. 390px 에서 측정한 조작 요소(링크·버튼·스위치 줄·`<summary>`)의 가장 작은 높이는 40px 이다. 1280px 에서는 40px 규칙이 없어 상단 바 링크 20.8px, 뒤로 링크 19px 로 나왔다(위 "앱과 다른 점").
+- 폴링: 인시던트 7 은 `open → recovering → resolved`를 화면에서 모두 봤고 `resolved` 뒤 11~12초 동안 요청이 늘지 않았다. `needs_action`(8)과 404(99)도 처음 요청 이후 늘지 않았다. 개발 서버는 React StrictMode 라 마운트 때 첫 요청이 두 번 나간다(요청 수에 그만큼 더해져 있다). `running` 배포 상세는 15초 간격으로 계속 읽고(16초에 3, 31초에 4) 다른 화면으로 가면 멈췄다. 읽지 않은 수는 31초에 한 번 더 읽었다. 목록은 16초에 한 번.
+- 콘솔 오류는 모의하지 않은 엔드포인트(`/api/accounts/*`)의 404, 의도한 404(인시던트 99)와 500(헬스 이력·설정·모두 읽음 실패 변형)뿐이었다.
+- **상단 바 `계정 연결` 링크가 잘려 보인다는 의심**(Task 5 구현자 보고): 390·375·360·340·320px 에서 재 봤다. 글자는 잘리지도 줄이 바뀌지도 않고(링크 높이 40px, 글자 줄 하나, 문서 가로 스크롤 없음) 스크린샷으로도 확인했다. 링크 상자 오른쪽 끝(390px 에서 x=382)이 `nav`보다 8px 삐져나오는 것은 알림 링크를 더하기 전부터 있던 `.topbar-link { padding: 0 8px; margin-right: -8px }` 규칙 때문이고(알림 링크를 숨겨도 똑같다), 글자는 16px 여백 선(x=374)에 맞는다. 이 CSS 는 Task 5 가 건드리지 않았다. **Task 5 가 바꾼 것은 한 가지**: 알림 링크 때문에 줄이 길어져서 안 읽은 알림 알약이 있을 때 약 331px 미만(`99+`이면 약 343px 미만)에서 상단 바가 두 줄(높이 53 → 93px)로 바뀐다. 잘리는 것은 아니고 360px 이상에서는 한 줄이다.
+
+**확인 못 한 것**: 실제 백엔드(응답 모양은 `docs/api-spec.md` 기준으로 만든 모의), 실제 휴대폰·태블릿, 가로로 눕힌 화면, 750~1279px 중간 너비, 키보드·스크린 리더로 직접 돌려 본 것(접근성 속성만 코드로 확인), 자동 시각 회귀 테스트. 순수 로직(`time`·`health`·`timeline`·알림 로직·`backoffDelay`·`api.js`)은 `npm run test:web`(Node 22 `node:test`, 38개)로 돈다. 화면 컴포넌트 자체의 자동 테스트는 없다.
+
+**알려진 빈틈** (고치지 않고 남김): ① 배포 설정에서 한 스위치의 늦은 성공 응답이 다른 스위치의 실패 안내를 덮을 수 있다. ② 인시던트 상세에서 끝난 인시던트의 수동 새로 고침이 실패하면 갱신이 다시 예약된다. ③ 알림 설정·배포 설정의 안내가 바뀔 때마다 `scrollIntoView`가 불리고, 안내(`role="status"`)가 채워진 채로 나타나서 일부 스크린 리더가 읽지 않을 수 있다.
+
 ## 앱 (Expo, `app/`, C1·C2·D2)
 
 웹 화면을 그대로 옮긴 휴대폰 앱이다. 문구, 상태 이름, 환경변수 종류, 분석 라벨은 웹과 같고, 서버 필드 이름도 그대로다. 설명과 실행법은 `app/README.md`.
@@ -133,10 +223,10 @@ S-20 와이어프레임의 "수준 선택 3칸"(사용자가 가벼움/보통/�
 | `/` 목록 | `app/app/index.js` | `features/deploys/ui/DeployListPage.jsx` (목록) |
 | `/new` 새 배포 | `app/app/new.js`, `app/src/components/AdvicePanel.js`, `ConnectionPicker.js` | `DeployForm.jsx`, `features/advice/ui/AdvicePanel.jsx` (S-20) |
 | `/deploys/[d_id]` 상세 | `app/app/deploys/[d_id].js`, `StepProgress` `LogTerminal` `ExplainCard` `IssueHistory` `EndpointCard` `EnvVarsCard` `EnvRow` | `DeployDetailPage.jsx`, `StepProgress.jsx` `LogTerminal.jsx` `IssueHistory.jsx`, `features/envvars/ui/EnvVarsCard.jsx` (S-19) |
-| `/incidents/[i_id]` 인시던트 (D2) | `app/app/incidents/[i_id].js`, `app/src/components/ops/` (`HealthBar` `IncidentCard` `IncidentTimeline` `ProblemBanner` `HealthDot`), `app/src/ops/` | 없음 (웹은 다음 계획) (S-13, D-07·D-08) |
-| `/deploy-settings/[d_id]` 배포 설정 (D2) | `app/app/deploy-settings/[d_id].js`, `app/src/components/SettingSwitch.js` | 없음 (S-14, D-09) |
-| `/notifications` 알림 (D2) | `app/app/notifications.js`, `app/src/components/ops/NotificationItem.js` `BellButton.js` | 없음 (S-12) |
-| `/notification-settings` 알림 설정 (D2) | `app/app/notification-settings.js`, `app/src/ops/push.js` `notificationSettings.js`, `PushPermissionGuide` `PushSetupCard` | 없음 (S-15 알림 부분, S-17) |
+| `/incidents/[i_id]` 인시던트 (D2) | `app/app/incidents/[i_id].js`, `app/src/components/ops/` (`HealthBar` `IncidentCard` `IncidentTimeline` `ProblemBanner` `HealthDot`), `app/src/ops/` `features/incidents/ui/IncidentDetailPage.jsx`, `IncidentCard` `IncidentTimeline` `HealthBar` `ProblemBanner`, `features/deploys/ui/HealthDot.jsx` (S-13, D-07·D-08, 계획 E) |
+| `/deploy-settings/[d_id]` 배포 설정 (D2) | `app/app/deploy-settings/[d_id].js`, `app/src/components/SettingSwitch.js` `features/deploys/ui/DeploySettingsPage.jsx`, `shared/ui/SettingSwitch.jsx` (S-14, D-09, 계획 E) |
+| `/notifications` 알림 (D2) | `app/app/notifications.js`, `app/src/components/ops/NotificationItem.js` `BellButton.js` `features/notifications/ui/NotificationsPage.jsx` `NotificationItem.jsx` `BellLink.jsx` (S-12, 계획 E) |
+| `/notification-settings` 알림 설정 (D2) | `app/app/notification-settings.js`, `app/src/ops/push.js` `notificationSettings.js`, `PushPermissionGuide` `PushSetupCard` `features/notifications/ui/NotificationSettingsPage.jsx` (S-15 알림 부분. S-17 푸시 등록은 앱 전용, 계획 E) |
 | `/accounts` 계정 연결 (C2) | `app/app/accounts.js`, `app/src/components/accounts/` (`BlockCard` `AddBlockForm` `AwsBox` `AwsGuide` `AwsUpdateGuide` `GithubBox` `ExistingPicker` `GuideParts`), `app/src/accounts/` | `features/accounts/ui/AccountsPage.jsx` `AccountBox.jsx` `AwsStackGuide.jsx` `AwsStackUpdateGuide.jsx` (B-01~B-07, S-08~S-11) |
 
 **양쪽을 같이 고친다**: 웹의 위 파일이나 `constants.js`(`features/deploys/ui/`, `features/envvars/ui/`, `features/advice/ui/`)의 문구·상태·규칙을 바꾸면 `app/src/`의 같은 곳도 바꾼다 (앱은 웹 파일을 가져오지 않고 옮겨 적었다). 상태 값을 바꿀 때는 `CLAUDE.md`의 세 곳에 앱 `src/constants.js`가 더해진다.
@@ -163,7 +253,7 @@ S-20 와이어프레임의 "수준 선택 3칸"(사용자가 가벼움/보통/�
 
 ### 인시던트·알림·설정 (D2)
 
-**웹에는 아직 없음 - 웹 대응은 다음 계획이다.** 아래 화면은 앱에만 있다. 서버 필드 이름(`i_id`, `open_incident_id`, `open_incident_status`, `health_state`, `auto_recover`, `explain.fix_where` ...)과 상태·종류 값은 백엔드와 같고 `app/src/ops/constants.js` 한 곳에 있다 (`incident.status`: `open|recovering|resolved|needs_action`).
+**웹 대응은 계획 E 에서 만들었다** (위 "4. 운영 화면", 웹과 다른 점 포함). 아래는 앱 쪽 설명이다. 서버 필드 이름(`i_id`, `open_incident_id`, `open_incident_status`, `health_state`, `auto_recover`, `explain.fix_where` ...)과 상태·종류 값은 백엔드와 같고 `app/src/ops/constants.js` 한 곳에 있다 (`incident.status`: `open|recovering|resolved|needs_action`).
 
 - **목록 머리줄 (웹과 다름)**: 머리에는 알림 종 + `＋ 새 배포` 만 둔다. 종은 44×44, 안 읽은 알림이 있으면 숫자 배지(99 넘으면 `99+`), 접근성 라벨 `알림 {n}개 읽지 않음`/`알림`. `계정 연결`·`알림 설정` 은 머리 밑 줄의 칩(44pt 이상)이다 (머리에 다 담기지 않아서 옮겼다). 종을 누르면 `/notifications`.
 - **문제 배너**: 끝나지 않은 인시던트(`open_incident_id` 가 있는)가 있는 배포마다 목록 위에 한 줄 `{레포}에 문제가 있습니다 · 자동 복구 중`. 인시던트가 `needs_action` 이거나 그 배포의 `auto_recover` 가 꺼져 있으면 `... · 확인이 필요합니다` (`open_incident_status` 를 모르는 옛 서버는 `auto_recover` 만 본다). 누르면 `/incidents/{id}`. `running` 카드의 오른쪽에 헬스 점(초록·빨강·회색, `health_state`). 배포 상세에는 인시던트 카드(한 줄 요약 + `자세히 보기`).
@@ -205,5 +295,6 @@ S-20 와이어프레임의 "수준 선택 3칸"(사용자가 가벼움/보통/�
 
 - 사양 수준 선택 UI와 `size_tier` (결정 D10, 위 "수준 선택 3칸은 아직 없다")
 - 시크릿 종류 변수의 값 입력 (결정 D8)
-- 자동 재배포 설정, 대상 브랜치 변경 (M6)
+- 자동 재배포 설정, 대상 브랜치 변경 (M6) — 배포별 `자동 재배포` 스위치는 계획 E 에서 생겼지만 대상 브랜치 변경은 아직 없다
+- 웹의 푸시·기기 등록(S-17은 앱 전용), 인시던트 목록 화면, 로그인·"내 정보", 운영 에이전트, 오프라인 저장 (계획 E 범위 밖)
 - 학습 모드 토글 (M10), 갤러리 (M11)
