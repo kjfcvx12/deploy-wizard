@@ -4,6 +4,8 @@ import DeployListPage from '@features/deploys/ui/DeployListPage.jsx'
 import DeployDetailPage from '@features/deploys/ui/DeployDetailPage.jsx'
 import DeploySettingsPage from '@features/deploys/ui/DeploySettingsPage.jsx'
 import IncidentDetailPage from '@features/incidents/ui/IncidentDetailPage.jsx'
+import BellLink from '@features/notifications/ui/BellLink.jsx'
+import NotificationsPage from '@features/notifications/ui/NotificationsPage.jsx'
 import AccountsPage from '@features/accounts/ui/AccountsPage.jsx'
 import ConnectGuidePage from '@features/accounts/ui/ConnectGuidePage.jsx'
 
@@ -16,6 +18,7 @@ function Shell() {
           <span className="brand-mark">▲</span> AWS 자동 배포 마법사
         </Link>
         <nav className="row">
+          <BellLink />
           <Link to="/accounts" className="topbar-link">계정 연결</Link>
           <span className="topbar-note">GitHub 주소 하나로 HTTPS 주소까지</span>
         </nav>
@@ -27,6 +30,7 @@ function Shell() {
           <Route path="/deploys/:d_id" element={<DeployDetailPage />} />
           <Route path="/deploys/:d_id/settings" element={<DeploySettingsPage />} />
           <Route path="/incidents/:i_id" element={<IncidentDetailPage />} />
+          <Route path="/notifications" element={<NotificationsPage />} />
           <Route path="/accounts" element={<AccountsPage />} />
           <Route path="*" element={<p className="muted">없는 페이지입니다.</p>} />
         </Routes>
