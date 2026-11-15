@@ -158,3 +158,81 @@ tests/test_mcp.py
 5. 서버 자동 기동은 하지 않는다.
 6. 사용자 정보 암호화(G4)는 2단계에서 구현하고, 키는 지금 `.env` Fernet(회전 지원) → 호스팅 때 KMS로 간다. 1단계 MCP는 사용자 식별 정보를 줄여서만 돌려준다.
 7. 계획 규모: 작업 6개 안팎 (클라이언트, 서비스, 서버·등록, 테스트, 문서, 실제 확인), 서브에이전트 방식.
+
+## 9. SDK 확인 결과
+
+2026-11-16, 설치된 소스(`.venv/Lib/site-packages/mcp`, `mcp_types`)를 읽고 작은 실험으로 확인했다. `requirements.txt`에 `mcp==2.3.0`으로 고정. 이 절에 없는 이름은 쓰지 않는다. 고정 테스트: `tests/test_mcp_sdk.py`.
+
+**주의: mcp 2.x 는 v1 과 다르다.** `FastMCP`(`mcp.server.fastmcp`)는 없다 — import 하면 `ModuleNotFoundError`. 이름이 `MCPServer`로 바뀌었고, 도구 주석 타입은 `mcp_types` 패키지에 있다. 인터넷의 v1 예제를 그대로 쓰지 않는다.
+
+### 9.1 서버 클래스·도구 등록·stdio 실행
+
+| 항목 | 확인된 사실 |
+|---|---|
+| 서버 클래스 | `from mcp.server.mcpserver import MCPServer, Context` (`mcp.server.MCPServer`도 같은 클래스) |
+| 생성 | `MCPServer("deploy-wizard", instructions="...")` — 첫 인자 `name`, 그 외 `title`, `description`, `instructions`, `version` 등 |
+| 도구 등록 | 데코레이터 `@srv.tool(name=None, title=None, description=None, annotations=None, icons=None, meta=None, structured_output=None)` — 반드시 괄호로 부른다 (`@srv.tool` 은 `TypeError`). 함수형 `srv.add_tool(fn, name=..., ...)`도 있다 |
+| 도구 설명 | `description` 인자, 없으면 함수 docstring. **이 프로젝트는 docstring 금지이므로 `description=`을 꼭 쓴다** |
+| 인자 스키마 | 함수 시그니처(타입 힌트)에서 자동 생성. 인자 검증 실패는 `ToolError`로 클라이언트에 `is_error` 결과로 간다 |
+| 동기·비동기 | 둘 다 가능. 동기 함수는 워커 스레드에서 돈다. `httpx.AsyncClient`를 쓰려면 `async def` |
+| Context 주입 | 매개변수 타입을 `Context`로 쓰면 자동 주입 (이름은 자유) |
+| stdio 실행 | `srv.run()` (기본 `transport="stdio"`, 동기 함수). 비동기에서는 `await srv.run_stdio_async()`. `streamable-http`도 `srv.run("streamable-http", host=..., port=...)`로 지원 (3단계용) |
+| 테스트용 직접 호출 | `await srv.list_tools()`, `await srv.call_tool(name, args)` → `CallToolResult` |
+
+도구가 던진 예외: `ToolError`(`mcp.server.mcpserver.exceptions`)는 메시지가 `Error executing tool <이름>: <메시지>`로 클라이언트에 간다. **그 밖의 예외는 일반 문구(`Error executing tool <이름>`)만 가고 내용은 서버에만 남는다** (시크릿 노출 방지에 유리). 사용자에게 한국어 안내를 보이려면 예외 대신 문자열/모델을 반환하거나 `ToolError("한국어 메시지")`를 던진다. 어느 경우든 `is_error=True`.
+
+### 9.2 도구 주석
+
+`from mcp_types import ToolAnnotations` (`mcp.types.ToolAnnotations`도 같은 클래스). 필드 5개, 모두 선택, 파이썬 이름은 snake_case이고 전송 때 camelCase(`readOnlyHint`)가 된다:
+
+| 필드 | 뜻 |
+|---|---|
+| `title` | 사람이 읽는 이름 |
+| `read_only_hint` | True 면 환경을 바꾸지 않음 (기본 false) |
+| `destructive_hint` | True 면 파괴적 변경 가능, False 면 추가만 (`read_only_hint=False`일 때만 의미, 기본 true) |
+| `idempotent_hint` | 같은 인자로 반복해도 추가 효과 없음 (`read_only_hint=False`일 때만 의미, 기본 false) |
+| `open_world_hint` | 외부 세계와 상호작용 (기본 true) |
+
+사용: `@srv.tool(annotations=ToolAnnotations(read_only_hint=True))`. 소스 주석대로 **모두 힌트일 뿐이며 호스트가 지키는 보장이 없다.** 그래서 5.3의 토큰 확인을 대체하지 못한다. 계획: 읽기 도구 `read_only_hint=True`, `deploy`·`redeploy`·`start_deploy` `read_only_hint=False, destructive_hint=False`, `stop_deploy`는 `destructive_hint=True`, `delete_deploy`는 `destructive_hint=True`.
+
+### 9.3 구조화 출력
+
+반환 타입 힌트로 결정된다 (`structured_output=None`일 때 자동):
+
+| 반환 힌트 | 결과 |
+|---|---|
+| `BaseModel` 서브클래스 | 그 모델이 `output_schema`, `structured_content`는 모델 필드 dict. **지원** |
+| `dict[str, T]` | `type: object` 스키마, `structured_content`는 그 dict. **지원** |
+| `TypedDict`, dataclass | 지원 |
+| `str`/`int` 등 원시형, `list[...]`, `Optional[...]` | `{"result": 값}`으로 감싸서 구조화 |
+| 값 타입 없는 `dict` (맨 `dict`) | **구조화 출력 없음** (`output_schema=None`, 텍스트만) |
+| 어느 경우든 | `content`에는 JSON 텍스트(또는 문자열 그대로)도 같이 들어간다 |
+
+→ 결과는 **`BaseModel`(scheme.py의 Pydantic 모델)을 반환 타입으로 쓴다.** 필드 허용 목록(5.4)과 맞고 스키마가 자동 공개된다. 반환한 값이 모델에 안 맞으면 변환 단계에서 오류가 난다.
+
+### 9.4 elicitation (서버가 사용자에게 묻기)
+
+- 호출: 도구 안에서 `r = await ctx.elicit(message, SchemaModel)` (`ctx`는 `Context` 타입 매개변수). `SchemaModel`은 **원시 필드만** 가진 `BaseModel` (`bool`, `str`, 숫자, enum 등. 중첩 객체 불가 — 스펙 제한, 어기면 `TypeError`).
+- 결과: `r.action` 이 `"accept"` / `"decline"` / `"cancel"`. `accept`일 때만 `r.data`(검증된 `SchemaModel` 인스턴스). 타입은 `AcceptedElicitation` / `DeclinedElicitation` / `CancelledElicitation` (`mcp.server.mcpserver`).
+- URL 방식(`ctx.elicit_url(message, url, elicitation_id)`)도 있다. 시크릿 입력용이지만 1단계 범위 밖.
+- **클라이언트가 지원하지 않을 때: `mcp.shared.exceptions.MCPError`**.
+  - 초기화 방식(`initialize`) 연결(`Client(..., mode="legacy")`): `MCPError("Elicitation not supported")`.
+  - 최신 방식(2026-07-28, `mode="auto"` 기본) 연결: `NoBackChannelError`(`MCPError`의 서브클래스) — "this transport context has no back-channel for server-initiated requests".
+  - 둘 다 `MCPError`로 잡힌다. **`except MCPError:`로 잡아 토큰 확인 방식으로 되돌아간다.** 어떤 방식으로 연결될지는 호스트(Claude Code 등)가 정하므로 실제 등록 때(Task 7) 확인한다.
+- 최신 방식에는 도구 매개변수를 `Annotated[T, Resolve(fn)]`로 선언하고 `resolve`가 `Elicit(message, schema)`를 돌려주는 방식이 따로 있다(`mcp.server.mcpserver`의 `Resolve`, `Elicit`). **1단계는 `ctx.elicit`만 쓴다** (두 연결 방식에서 같은 호출).
+- 호스트가 elicitation 을 지원하는지(Claude Code·Desktop)는 이 확인으로는 알 수 없다. 코드는 지원 여부와 무관하게 동작해야 하고(미지원 시 토큰 확인), elicitation 은 덧붙는 안전장치다.
+
+### 9.5 테스트용 인메모리 연결
+
+- `from mcp import Client` — `Client(srv, mode="legacy", elicitation_callback=fn)`을 `async with`로 열고 `await c.list_tools()`, `await c.call_tool(name, args)`. `srv`에 `MCPServer` 인스턴스를 직접 넘기면 프로세스 안에서 연결된다 (소켓·서브프로세스 없음). 내부 이름은 `mcp.client._memory.InMemoryTransport`.
+- **`mode="legacy"`로 쓴다.** 기본 `mode="auto"`는 인메모리에서 핸드셰이크 없는 직접 호출 경로를 타서 `ctx.elicit`이 `NoBackChannelError`로 실패한다. `legacy`는 stdio 호스트의 `initialize` 방식과 같고, elicitation 응답 콜백이 동작한다.
+- `elicitation_callback` 시그니처: `async def cb(context, params) -> mcp_types.ElicitResult | ErrorData`. 응답: `ElicitResult(action="accept", content={"ok": True})`. 콜백을 안 주면 서버에서는 "지원 안 함"이 된다.
+- 결과 객체 `CallToolResult`: `.is_error`, `.content[i].text`, `.structured_content`.
+- pytest: 이 저장소는 `asyncio_mode = strict`이므로 비동기 테스트에 `@pytest.mark.asyncio`를 붙인다.
+- stdio 서브프로세스 연결도 확인: `Client(StdioServerParameters(command=python, args=[서버.py]))`. `srv.run()`으로 뜬 서버에 `legacy`와 `auto` 둘 다 붙었다.
+
+### 9.6 Task 6 이 알아야 할 것
+
+- import: `from mcp.server.mcpserver import MCPServer, Context`, `from mcp_types import ToolAnnotations`, `from mcp.shared.exceptions import MCPError`.
+- 도구 설명은 `description=`(docstring 금지). 반환은 모델. 한국어 안내용 오류는 `ToolError("...")` 또는 모델에 `message` 필드.
+- 도구가 예기치 않게 예외를 던지면 클라이언트는 일반 문구만 받는다 — 서비스 계층에서 잡아 한국어 한 줄로 바꿔 돌려준다 (5.4).
