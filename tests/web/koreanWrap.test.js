@@ -26,3 +26,10 @@ test('코드·로그·endpoint 상자는 break-all 유지', () => {
     assert.match(b, /word-break:\s*break-all/, sel)
   }
 })
+
+test('분석 결과 첫 줄의 칸은 긴 앱 폴더 경로에도 줄을 넘지 않는다 (min-width 0 + anywhere)', () => {
+  const b = ruleBody('.advice > .row > *')
+  assert.ok(b, 'rule exists')
+  assert.match(b, /min-width:\s*0/)
+  assert.match(b, /overflow-wrap:\s*anywhere/)
+})
