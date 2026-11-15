@@ -186,7 +186,10 @@ function DeploySettings({ d_id }) {
         ))}
       </div>
 
-      {!!message && <div ref={noticeRef} className={`notice ${message.tone}`} style={{ marginTop: 0, marginBottom: 12 }} role={message.tone === 'err' ? 'alert' : 'status'}>{message.text}</div>}
+      {/* 읽어 주는 영역은 항상 떠 있게 두고 안에 안내만 넣고 뺀다 - 비어 있다가 채워질 때 스크린 리더가 읽는다 */}
+      <div role="status" aria-live="polite" aria-atomic="true">
+        {!!message && <div ref={noticeRef} className={`notice ${message.tone}`} style={{ marginTop: 0, marginBottom: 12 }}>{message.text}</div>}
+      </div>
 
       <p className="muted small">변경은 누르는 즉시 저장됩니다. 이미 진행 중인 배포에는 영향이 없습니다.</p>
     </>
