@@ -8,6 +8,12 @@ import { IncidentBadge } from './IncidentCard'
 // 읽을 수 없는 값을 대신하는 글
 const UNKNOWN = '확인 불가'
 
+// 원인 종류를 글로 바꾼다 - 라벨 표에 자기 속성으로 있는 것만 라벨, 아니면 받은 글 그대로, 없으면 확인 불가
+function kindText(kind) {
+  if (!kind) return UNKNOWN
+  return Object.hasOwn(INCIDENT_KIND_LABEL, kind) ? INCIDENT_KIND_LABEL[kind] : String(kind)
+}
+
 // 인시던트의 사실을 줄마다 "이름 | 값" 한 줄로 보여 준다 - 배포 · 문제 · 날짜 · 시간 · 원인 (해결되면 해결 줄 하나 더)
 export default function IncidentFacts({ incident }) {
   const colors = useColors()
@@ -21,7 +27,7 @@ export default function IncidentFacts({ incident }) {
     { name: '문제', node: <IncidentBadge status={incident.status} /> },
     { name: '날짜', value: formatDate(incident.detected_at) || UNKNOWN },
     { name: '시간', value: formatClock(incident.detected_at) || UNKNOWN },
-    { name: '원인', value: INCIDENT_KIND_LABEL[incident.kind] || incident.kind || UNKNOWN },
+    { name: '원인', value: kindText(incident.kind) },
   ]
   if (resolvedAt) {
     const when = resolvedDate && resolvedClock ? `${resolvedDate} ${resolvedClock}` : UNKNOWN

@@ -99,7 +99,7 @@ src/components/FooterSlot.js     설정 화면 맨 아래 안내 자리 (아래 
 | 인시던트: `다시 배포` 를 누른 뒤 (버튼이 `배포 보기` 하나, 안내 띠 생김; 보통·아주 긴 경우) | 맞음 (780/780), 가운데 상자 414 → 380 으로 줄고 안쪽 상자 스크롤, 버튼 아래 끝 828/844 | 맞음 (676/676), 상자 286 → 252, 버튼 아래 끝 724/740 |
 | 인시던트: 짧은 내용 (원인 한 줄, 타임라인 1건), 복구 중 / `needs_action` | 맞음 (780/780), 안쪽 상자 445·561 / 380 으로 아직 스크롤 | 맞음 (676/676), 445·561 / 252 |
 
-(위 표의 인시던트 칸은 계획 F 의 맨 위 요약 카드 배치로 잰 값이다. 탭으로 바꾼 뒤의 값은 `docs/worklog/2026-11-15.md` "Plan G measurement".) 안 맞은 두 칸은 안전망 스크롤이 받아 전부 보인다 (계획이 허용한 범위). 아주 긴 인시던트에서도 맨 아래 버튼의 아래쪽 끝이 화면 안이었다 (390 에서 828/844·778/844, 360 에서 724/740·674/740). 가로 넘침 없음(`scrollWidth ≤ innerWidth`), 44pt 미만 터치 대상 없음(헤더 뒤로 가기 제외), 콘솔 경고·오류는 의도한 모의 400 뿐. `npx jest` 33 파일 1027 테스트 통과. 자세한 숫자는 `docs/worklog/2026-11-15.md` "Plan F measurement".
+(위 표의 인시던트 칸은 계획 F 의 맨 위 요약 카드 배치로 잰 값이다. 탭으로 바꾼 뒤의 값은 `docs/worklog/2026-11-15.md` "Plan G measurement".) 안 맞은 두 칸은 안전망 스크롤이 받아 전부 보인다 (계획이 허용한 범위). 아주 긴 인시던트에서도 맨 아래 버튼의 아래쪽 끝이 화면 안이었다 (390 에서 828/844·778/844, 360 에서 724/740·674/740). 가로 넘침 없음(`scrollWidth ≤ innerWidth`), 44pt 미만 터치 대상 없음(헤더 뒤로 가기 제외), 콘솔 경고·오류는 의도한 모의 400 뿐. (계획 F 때는 `npx jest` 33 파일 1027 테스트였다. 이후 계획 G 에서 구현자가 보고한 값은 앱 jest 35 파일 1057 테스트, 웹 44 이다.) 자세한 숫자는 `docs/worklog/2026-11-15.md` "Plan F measurement".
 
 **확인 못 한 것**: 실제 iOS·안드로이드 기기와 에뮬레이터의 네이티브 레이아웃(웹 번들만 쟀다. 인시던트 상세의 `onLayout` → `maxHeight` 방식은 yoga-layout@3 스크래치 스크립트로만 확인했다), 글꼴 배율 1 초과, 가로 방향, 태블릿. 웹에서는 푸시 미지원 안내 상자가 알림 설정에 늘 있어서 위 숫자는 상자가 있는 쪽(더 엄격한 쪽)이다. 상자가 없는 네이티브 상태는 재지 않았다. 맞았을 때 `scrollHeight == clientHeight` 라서 남는 높이가 얼마인지는 이 숫자로 알 수 없다 (남는 칸은 `flexGrow` 가 채운다).
 
@@ -164,7 +164,9 @@ src/components/FooterSlot.js     설정 화면 맨 아래 안내 자리 (아래 
 - **앱**: `src/components/Text.js` 의 `Text` 래퍼. 웹 번들(`Platform.OS === 'web'`)에서는 기본 스타일 `wordBreak: 'keep-all'`, `overflowWrap: 'break-word'` 를 깔고(호출자 `style` 이 이긴다), 모든 플랫폼에서 `lineBreakStrategyIOS="hangul-word"` 를 기본 prop 으로 준다 (호출자가 덮어쓸 수 있다). react-native-web 의 `Text` 는 `lineBreakStrategyIOS` 를 조용히 버린다 (웹 번들에서 경고도 없었다).
 - **규칙**: 모든 화면·컴포넌트는 `react-native` 가 아니라 이 래퍼에서 `Text` 를 가져온다. `src/__tests__/Text.test.js` 의 가드 테스트가 `app/` 과 `src/` 의 `.js` 파일에서 `import { ..., Text, ... } from 'react-native'` 를 찾아 하나라도 있으면 실패시킨다.
 - **안드로이드는 처리하지 않았고 확인하지 못했다.** 한글 어절 줄바꿈을 켜는 RN 공식 prop 이 없어 이 계획은 안드로이드에 아무것도 하지 않았다 (보이지 않는 연결 문자를 글자 사이에 넣는 방법은 문자열을 바꾸고 긴 글에서 넘칠 위험이 있어 기기에서 확인하기 전에는 쓰지 않기로 했다). 안드로이드에서는 글자 중간에서 줄이 바뀔 수 있다고 보아야 한다.
-- **확인한 것**: 웹 번들(Chromium, react-native-web)에서만 쟀다. 모의 API, 390×844 라이트·다크와 360×740 라이트. 공백으로 나눈 낱말 66-139개씩을 `Range.getClientRects` 로 보니 한 낱말이 두 줄에 걸친 경우가 0 이었고, 90자 ARN 은 상자 안에서 세 줄로 끊겨 넘치지 않았다. 숫자는 `docs/worklog/2026-11-15.md` "Plan G measurement".
+- **확인한 것**: 웹 번들(Chromium, react-native-web)에서만, 그리고 인시던트 상세 화면만 쟀다 (나머지 앱 화면은 `Text` 래퍼만 받았고 다시 재지 않았다). 모의 API, 390×844 라이트·다크와 360×740 라이트. 공백으로 나눈 낱말 66-139개씩을 `Range.getClientRects` 로 보니 한 낱말이 두 줄에 걸친 경우가 0 이었고, 90자 ARN 은 상자 안에서 세 줄로 끊겨 넘치지 않았다. 숫자는 `docs/worklog/2026-11-15.md` "Plan G measurement".
+- **래퍼를 거치지 않는 것**: `TextInput` 과 내비게이션 헤더 제목은 `Text` 래퍼를 쓰지 않는다.
+- **웹 쪽 확인 범위**: Vite 개발 서버 + 모의 `/api` 로 `/notifications`·`/incidents/7` 을 320·390px 에서만 쟀다. 데스크톱 너비와 계정·안내 쪽은 재지 않았고, `min-width: 0` 이 없는 flex·grid 칸의 띄어쓰기 없는 긴 한글 낱말은 끊기지 않고 넘칠 수 있다. `main` 에 합치기 전에 나머지 화면·경로의 가로 넘침을 훑어야 한다.
 - **확인 못 한 것**: 실제 iOS·안드로이드 기기와 에뮬레이터 (iOS `hangul-word` 는 설정만 했고 기기에서 동작을 보지 않았다), 안드로이드 줄바꿈, OS 글꼴 배율 2배 (CSS zoom 은 대신할 수 없어 재지 않았다), 가로 방향. jest 는 레이아웃을 볼 수 없어 래퍼의 prop·style 과 가드만 확인한다.
 
 ## 확인한 것과 못 한 것
@@ -203,7 +205,7 @@ src/components/FooterSlot.js     설정 화면 맨 아래 안내 자리 (아래 
 
 계획 G (탭·줄바꿈) - 안 고친 것:
 - **안드로이드 한글 어절 줄바꿈은 처리하지 않았고 확인하지 못했다.** iOS `hangul-word` 도 기기에서 확인하지 못했다 (위 "줄바꿈 (계획 G)").
-- `IncidentFacts` 의 `INCIDENT_KIND_LABEL[incident.kind]` 는 객체의 상속된 속성(`constructor` 같은 이름)도 읽는다. 서버가 그런 `kind` 를 보내면 라벨 대신 함수 글이 나올 수 있다 (서버는 정해진 종류만 보낸다).
+- `INCIDENT_KIND_LABEL[kind]` 의 상속 속성 조회(`constructor` 같은 이름)는 `IncidentFacts` 에서만 고쳤다 (`Object.hasOwn`, 테스트 있음).
 - `Text` 가드 테스트의 정규식은 `import { Text } from 'react-native'` 한 모양만 잡는다. `import RN, { Text }`, `RN.Text`, `Animated.Text`, `require` 는 못 잡는다 (지금 그런 코드는 없다).
 - `IncidentFacts` 의 이름 칸 너비가 44 로 고정이다. 글꼴 배율을 키운 기기에서는 `배포` 같은 라벨이 줄을 넘길 수 있다 (웹 번들 기본 배율에서만 한 줄로 쟀다).
 - `src/ops/format.js` 의 `formatTime`·`formatDate`·`formatClock` 은 시각 읽는 코드가 세 번 반복된다.

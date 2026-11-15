@@ -84,6 +84,11 @@ describe('IncidentFacts', () => {
     expect(facts()[4]).toHaveTextContent('원인brand_new_kind')
   })
 
+  test.each(['constructor', '__proto__'])('kind %s 는 상속 속성이 아니라 받은 글 그대로', async (kind) => {
+    await render(<IncidentFacts incident={{ ...incident, kind }} />)
+    expect(facts()[4]).toHaveTextContent(`원인${kind}`)
+  })
+
   test('detected_at 이 읽을 수 없으면 날짜·시간 값이 확인 불가', async () => {
     await render(<IncidentFacts incident={{ ...incident, detected_at: 'garbage' }} />)
     const rows = facts()
