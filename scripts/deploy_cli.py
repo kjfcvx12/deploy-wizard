@@ -5,9 +5,15 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from shared.database import Base, async_engine, AsyncSessionLocal
+from shared.database import async_engine, AsyncSessionLocal, bootstrap_schema
 
+# 모델을 import 해야 create_all 이 표를 안다
 from features.deploys import models as deploy_models
+from features.accounts import models as account_models
+from features.envvars import models as envvar_models
+from features.health import models as health_models
+from features.incidents import models as incident_models
+from features.notifications import models as notification_models
 from features.deploys.crud import Deploy_Crud
 from features.deploys.scheme import Deploy_Create
 from features.deploys.pipeline import Deploy_Pipeline
@@ -40,8 +46,8 @@ async def main():
     parser.add_argument("--branch", default=None)
     args=parser.parse_args()
 
-    async with async_engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
+    # 표를 만들고 옛 DB 에 모자란 열을 더한다 (서버 시작과 같은 보정)
+    await bootstrap_schema()
 
     repo_url=Repo_Service.services_repo_check_url(args.repo_url)
     branch=Repo_Service.services_repo_check_branch(args.branch)

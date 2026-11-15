@@ -5,9 +5,17 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from shared.database import AsyncSessionLocal
+from shared.database import AsyncSessionLocal, bootstrap_schema
 from shared.masking import mask_text
 from shared.settings import settings
+
+# 모델을 import 해야 create_all 이 표를 안다
+from features.deploys import models as deploy_models
+from features.accounts import models as account_models
+from features.envvars import models as envvar_models
+from features.health import models as health_models
+from features.incidents import models as incident_models
+from features.notifications import models as notification_models
 
 from features.deploys.services import Deploy_Service
 from features.accounts.services import Aws_Account_Service
@@ -61,6 +69,9 @@ async def sweep_accounts(db, dry_run:bool) -> list[str]:
 
 
 async def run(dry_run:bool, keep_images:bool) -> int:
+    # 옛 DB 에는 새 열이 없을 수 있다 - 서버 시작과 같은 보정을 먼저 한다 (없으면 "no such column" 으로 죽는다)
+    await bootstrap_schema()
+
     async with AsyncSessionLocal() as db:
         report=await Deploy_Service.services_deploy_session_end(db, keep_images=keep_images, dry_run=dry_run)
         sweep=await sweep_accounts(db, dry_run)

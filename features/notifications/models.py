@@ -12,6 +12,10 @@ from typing import Optional
 NOTIFICATION_KINDS=('incident_opened', 'incident_recovered', 'incident_needs_action', 'deploy_succeeded', 'deploy_failed', 'new_commit', 'plan_exceeded')
 
 
+# 알림 종류 목록의 판 - 설정의 kinds_version 이 비어 있으면(NULL) plan_exceeded 가 생기기 전에 저장된 옛 설정이고, 이 값이면 사용자가 정한 목록이라 그대로 둔다
+NOTIFICATION_KINDS_VERSION=2
+
+
 class Notification(Base):
     __tablename__ = "notifications"
     __table_args__ = (Index("ix_notifications_u_id_read_at", "u_id", "read_at"),)
@@ -69,3 +73,5 @@ class Notification_Setting(Base):
     notify_push: Mapped[bool] = mapped_column(nullable=False, default=True)
     # 받을 알림 종류 - json 배열 문자열
     kinds: Mapped[str] = mapped_column(Text, nullable=False, default=lambda: json.dumps(list(NOTIFICATION_KINDS)))
+    # kinds 의 판 - NULL 은 옛 설정 (열을 더할 때 기존 줄이 NULL 로 남아야 하므로 기본값을 두지 않고, 새 줄은 crud 가 채운다)
+    kinds_version: Mapped[Optional[int]] = mapped_column()

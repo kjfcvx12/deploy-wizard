@@ -3,7 +3,7 @@ from sqlalchemy.future import select
 from sqlalchemy import update, delete, func
 from datetime import datetime
 
-from features.notifications.models import Notification, Notification_Setting, Push_Device
+from features.notifications.models import Notification, Notification_Setting, Push_Device, NOTIFICATION_KINDS_VERSION
 
 
 class Notification_Crud:
@@ -24,7 +24,7 @@ class Notification_Crud:
         db_setting=result.scalars().first()
 
         if db_setting is None:
-            db_setting=Notification_Setting(id=1)
+            db_setting=Notification_Setting(id=1, kinds_version=NOTIFICATION_KINDS_VERSION)
             db.add(db_setting)
             await db.flush()
 

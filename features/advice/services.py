@@ -1,6 +1,7 @@
 import re
 import ast
 import json
+import logging
 import fnmatch
 import asyncio
 import tomllib
@@ -19,6 +20,8 @@ from features.repos.scheme import Repo_App
 from features.repos.services import Repo_Service, EXCLUDE_DIRS
 from shared.masking import mask_text
 from shared.settings import settings
+
+logger=logging.getLogger(__name__)
 
 
 # 무거운 라이브러리 -> 수준 large (기획서 I절)
@@ -305,10 +308,11 @@ class Advice_Service:
             if table is None:
                 return result
             estimate=Pricing_Service.services_pricing_estimate(table)
-        except Exception:
+            monthly=next(period.usd for period in estimate.periods if period.hours == 730)
+        except Exception as e:
+            logger.warning("비용 계산 실패 : %s", mask_text(str(e))[:200])
             return result
 
-        monthly=next(period.usd for period in estimate.periods if period.hours == 730)
         result.cost=Advice_Cost(monthly_min=monthly, monthly_max=monthly, basis_date=estimate.basis_date,
                                 hourly_usd=estimate.hourly_usd,
                                 components=[component.model_dump() for component in estimate.components],

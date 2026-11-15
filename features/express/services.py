@@ -1,9 +1,11 @@
 import time
+import logging
 import boto3
 from botocore.exceptions import ClientError
 from typing import Callable
 
 from shared.settings import settings
+from shared.specs import specs_env_pair, specs_env_set
 
 from features.express.scheme import Express_Status, Express_Resource
 
@@ -11,6 +13,8 @@ from features.express.scheme import Express_Status, Express_Resource
 # 파라미터는 설치된 botocore 서비스 모델(1.43.98)과 공식 시작 안내서로 대조했다 (기획서 06장 "AI의 허구 API")
 #   create_express_gateway_service / describe_... / update_... / delete_...
 # 모든 함수는 session을 첫 인자로 받는다 (기획서 03장 설계 제약)
+
+logger=logging.getLogger(__name__)
 
 DEPLOY_DONE={"SUCCESSFUL"}
 DEPLOY_FAILED={"STOPPED", "ROLLBACK_SUCCESSFUL", "ROLLBACK_FAILED"}
@@ -36,7 +40,7 @@ class Express_Service:
 
 
     # 서비스 생성 - role_arns 는 연결된 사용자 계정(M6)에 배포할 때만 넘긴다. 없으면 .env 의 개발 계정 역할
-    # cpu·memory 는 인자 > .env 값 > 보내지 않음. scaling 은 SCALING_KEYS 4개가 모두 있을 때만 scalingTarget 으로 보낸다 (처음 만들 때만 - 갱신은 사양을 바꾸지 않는다)
+    # cpu·memory 는 인자 > .env 값(둘 다 있고 프리셋 쌍일 때만) > 보내지 않음. scaling 은 SCALING_KEYS 4개가 모두 있을 때만 scalingTarget 으로 보낸다 (처음 만들 때만 - 갱신은 사양을 바꾸지 않는다)
     @staticmethod
     def services_express_create(session:boto3.Session, service_name:str, image_uri:str, port:int,
                                 health_check_path:str="/", environment:dict[str, str]|None=None,
@@ -59,8 +63,13 @@ class Express_Service:
             "tags": settings.managed_tags,
         }
 
-        cpu=cpu or settings.ecs_cpu
-        memory=memory or settings.ecs_memory
+        # 배포별 사양이 없을 때만 .env 를 본다 - 비용 추정(Pricing_Service.services_pricing_default_spec)과 같은 규칙. 쌍이 틀렸으면 무시하고 경고
+        if not cpu and not memory:
+            env_pair=specs_env_pair()
+            if env_pair is not None:
+                cpu, memory=env_pair
+            elif specs_env_set():
+                logger.warning(".env 의 ECS_CPU/ECS_MEMORY 가 둘 다 있고 정해진 사양 조합이어야 쓸 수 있어 무시합니다 (AWS 기본 사양으로 만듭니다)")
 
         if cpu:
             params["cpu"]=cpu

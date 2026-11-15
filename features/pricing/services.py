@@ -1,3 +1,4 @@
+import asyncio
 import json
 import logging
 import math
@@ -8,6 +9,7 @@ from typing import Awaitable, Callable
 import httpx
 
 from shared.settings import settings
+from shared.specs import SPEC_PAIRS, specs_pair_valid, specs_env_pair
 
 from features.pricing.scheme import Cost_Component, Cost_Estimate, Cost_Period, Price_Table, Pricing_Plan, Spec_Option
 
@@ -17,22 +19,37 @@ from features.pricing.scheme import Cost_Component, Cost_Estimate, Cost_Period, 
 logger=logging.getLogger(__name__)
 
 PRICE_URL="https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/{service}/current/{region}/index.json"
-FETCH_TIMEOUT_SECONDS=30
+# 가격 파일은 인증 없는 공개 파일이라 오래 기다릴 이유가 없다 - 연결 5초·읽기 10초, 둘을 합친 한 번의 갱신은 20초까지만
+FETCH_TIMEOUT=httpx.Timeout(10, connect=5)
+REFRESH_DEADLINE_SECONDS=20
+# 내려받는 크기 상한 - ECS 파일이 약 0.8MB 라 5MB 면 넉넉하다 (압축을 푼 뒤 크기로 센다)
+MAX_DOWNLOAD_BYTES=5 * 1024 * 1024
+# 갱신에 실패한 리전은 이 시간 동안 다시 가져오지 않는다 (낡은 캐시 또는 None 을 바로 돌려준다)
+REFRESH_BACKOFF=timedelta(minutes=10)
+# 리전별 마지막 갱신 실패 시각과 갱신 잠금 (서버 프로세스 안에서만 - 잠금은 만든 이벤트 루프에 묶여 있다)
+REFRESH_FAILED_AT:dict[str, datetime]={}
+REFRESH_LOCKS:dict[str, tuple[asyncio.AbstractEventLoop, asyncio.Lock]]={}
 
 # 리전 접두사(APN2, USE1, EUW1 ...)는 리전마다 달라 접미사로 고른다 - 접두사는 '영문 대문자 2~4자 + 숫자' 모양만 허용하고(접두사 없는 us-east-1 모양도 허용),
 # Outposts-·TS-·Reserved 같은 변형 행은 이 모양이 아니라서 걸러진다
 ALB_USAGE_PATTERN=re.compile(r"^(?:[A-Z]{2,4}\d-)?LoadBalancerUsage$")
 LCU_USAGE_PATTERN=re.compile(r"^(?:[A-Z]{2,4}\d-)?LCUUsage$")
+FARGATE_VCPU_PATTERN=re.compile(r"^(?:[A-Z]{2,4}\d-)?Fargate-vCPU-Hours:perCPU$")
+FARGATE_GB_PATTERN=re.compile(r"^(?:[A-Z]{2,4}\d-)?Fargate-GB-Hours$")
+FARGATE_ARM_VCPU_PATTERN=re.compile(r"^(?:[A-Z]{2,4}\d-)?Fargate-ARM-vCPU-Hours:perCPU$")
+FARGATE_ARM_GB_PATTERN=re.compile(r"^(?:[A-Z]{2,4}\d-)?Fargate-ARM-GB-Hours$")
 # 리전 이름 모양 (ap-northeast-2, us-east-1 ...) - 캐시 파일 이름과 URL 에 그대로 들어가므로 이 모양만 받는다
 REGION_PATTERN=re.compile(r"^[a-z]{2}(-[a-z]+)+-\d$")
 ALB_FAMILY="Load Balancer-Application"
 # 사양 프리셋 (CPU 단위, MiB, 라벨) - 기본 사양은 AWS 문서의 Express 기본값 256/512 (실제 배포에서는 아직 확인 전)
-SPEC_PRESETS=[
-    ("256", "512", "0.25 vCPU / 0.5 GB"),
-    ("512", "1024", "0.5 vCPU / 1 GB"),
-    ("1024", "2048", "1 vCPU / 2 GB"),
-    ("2048", "4096", "2 vCPU / 4 GB"),
-]
+# 조합 목록은 shared/specs.py 의 SPEC_PAIRS 가 기준이고 여기서는 표시 이름만 붙인다
+SPEC_LABELS={
+    ("256", "512"): "0.25 vCPU / 0.5 GB",
+    ("512", "1024"): "0.5 vCPU / 1 GB",
+    ("1024", "2048"): "1 vCPU / 2 GB",
+    ("2048", "4096"): "2 vCPU / 4 GB",
+}
+SPEC_PRESETS=[(cpu, memory, SPEC_LABELS[(cpu, memory)]) for cpu, memory in SPEC_PAIRS]
 DEFAULT_CPU="256"
 DEFAULT_MEMORY="512"
 # 기간별 금액 계산에 쓰는 (이름, 시간) - 한 달은 730시간
@@ -47,13 +64,25 @@ SCALING_METRICS=("AVERAGE_CPU", "AVERAGE_MEMORY", "REQUEST_COUNT_PER_TARGET")
 
 class Pricing_Service:
 
-    # 기본 fetch - 가격 파일 URL 의 JSON 을 가져온다 (타임아웃 30초)
+    # 기본 fetch - 가격 파일 URL 의 JSON 을 가져온다 (연결 5초·읽기 10초, 크기 상한을 넘으면 중간에 끊고 실패)
     @staticmethod
     async def services_pricing_fetch(url:str) -> dict:
-        async with httpx.AsyncClient(timeout=FETCH_TIMEOUT_SECONDS) as client:
-            response=await client.get(url)
-            response.raise_for_status()
-            return response.json()
+        body=bytearray()
+
+        async with httpx.AsyncClient(timeout=FETCH_TIMEOUT) as client:
+            async with client.stream("GET", url) as response:
+                response.raise_for_status()
+
+                length=response.headers.get("content-length")
+                if length is not None and length.isdigit() and int(length) > MAX_DOWNLOAD_BYTES:
+                    raise ValueError("가격 파일이 너무 큽니다")
+
+                async for chunk in response.aiter_bytes():
+                    body.extend(chunk)
+                    if len(body) > MAX_DOWNLOAD_BYTES:
+                        raise ValueError("가격 파일이 너무 큽니다")
+
+        return json.loads(bytes(body))
 
 
     # 가격 파일에서 조건에 맞는 첫 상품의 시간당 USD 단가 찾기 - 없거나 깨졌으면 None
@@ -87,12 +116,12 @@ class Pricing_Service:
     def services_pricing_parse(ecs:dict, elb:dict, region:str) -> Price_Table | None:
         try:
             find=Pricing_Service.services_pricing_find
-            vcpu=find(ecs, lambda usage, attrs: usage.endswith("Fargate-vCPU-Hours:perCPU"), region)
-            gb=find(ecs, lambda usage, attrs: usage.endswith("Fargate-GB-Hours") and "ARM" not in usage and "Ephemeral" not in usage, region)
-            arm_vcpu=find(ecs, lambda usage, attrs: usage.endswith("Fargate-ARM-vCPU-Hours:perCPU"), region)
-            arm_gb=find(ecs, lambda usage, attrs: usage.endswith("Fargate-ARM-GB-Hours"), region)
-            alb=find(elb, lambda usage, attrs: ALB_USAGE_PATTERN.match(usage) is not None, region, ALB_FAMILY)
-            lcu=find(elb, lambda usage, attrs: LCU_USAGE_PATTERN.match(usage) is not None, region, ALB_FAMILY)
+            vcpu=find(ecs, lambda usage, attrs: FARGATE_VCPU_PATTERN.fullmatch(usage) is not None, region)
+            gb=find(ecs, lambda usage, attrs: FARGATE_GB_PATTERN.fullmatch(usage) is not None, region)
+            arm_vcpu=find(ecs, lambda usage, attrs: FARGATE_ARM_VCPU_PATTERN.fullmatch(usage) is not None, region)
+            arm_gb=find(ecs, lambda usage, attrs: FARGATE_ARM_GB_PATTERN.fullmatch(usage) is not None, region)
+            alb=find(elb, lambda usage, attrs: ALB_USAGE_PATTERN.fullmatch(usage) is not None, region, ALB_FAMILY)
+            lcu=find(elb, lambda usage, attrs: LCU_USAGE_PATTERN.fullmatch(usage) is not None, region, ALB_FAMILY)
             if vcpu is None or gb is None or alb is None:
                 return None
             basis_date=str(ecs["publicationDate"])[:10]
@@ -107,7 +136,7 @@ class Pricing_Service:
             return None
 
 
-    # 캐시 파일에서 (저장 시각, 단가 표) 읽기 - 없거나 깨졌으면 None
+    # 캐시 파일에서 (저장 시각, 단가 표) 읽기 - 없거나 깨졌으면 None. 리전이 다르거나 단가가 유한한 양수가 아니어도 깨진 것으로 본다
     @staticmethod
     def services_pricing_cache_read(region:str) -> tuple[datetime, Price_Table] | None:
         try:
@@ -115,7 +144,14 @@ class Pricing_Service:
             fetched_at=datetime.fromisoformat(raw["fetched_at"])
             if fetched_at.tzinfo is None:
                 fetched_at=fetched_at.replace(tzinfo=timezone.utc)
-            return fetched_at, Price_Table(**raw["table"])
+            table=Price_Table(**raw["table"])
+            if table.region != region:
+                return None
+            prices=[table.fargate_vcpu_hour, table.fargate_gb_hour, table.alb_hour]
+            prices+=[price for price in (table.fargate_arm_vcpu_hour, table.fargate_arm_gb_hour, table.lcu_hour) if price is not None]
+            if not all(math.isfinite(price) and price > 0 for price in prices):
+                return None
+            return fetched_at, table
         except Exception:
             return None
 
@@ -131,34 +167,96 @@ class Pricing_Service:
             logger.warning("가격 캐시를 저장하지 못했습니다")
 
 
+    # 리전별 갱신 잠금 - 같은 리전의 첫 호출들이 가격 파일을 한 번만 가져오게 한다 (이벤트 루프가 바뀌면 새로 만든다)
+    @staticmethod
+    def services_pricing_lock(region:str) -> asyncio.Lock:
+        loop=asyncio.get_running_loop()
+        held=REFRESH_LOCKS.get(region)
+
+        if held is None or held[0] is not loop:
+            held=(loop, asyncio.Lock())
+            REFRESH_LOCKS[region]=held
+
+        return held[1]
+
+
+    # 갱신 실패 뒤 쉬는 중인지 - 마지막 실패로부터 10분이 안 지났으면 True
+    @staticmethod
+    def services_pricing_backoff_active(region:str, now:datetime) -> bool:
+        failed_at=REFRESH_FAILED_AT.get(region)
+        return failed_at is not None and timedelta(0) <= now - failed_at < REFRESH_BACKOFF
+
+
+    # 가격 파일 두 개(ECS·ELB)를 동시에 가져와 단가 표로 바꾸기 - 실패하면 예외 (전체 20초 제한)
+    @staticmethod
+    async def services_pricing_refresh(region:str, fetch:Callable[[str], Awaitable[dict]]) -> Price_Table | None:
+        results=await asyncio.wait_for(
+            asyncio.gather(fetch(PRICE_URL.format(service="AmazonECS", region=region)),
+                           fetch(PRICE_URL.format(service="AWSELB", region=region)), return_exceptions=True),
+            timeout=REFRESH_DEADLINE_SECONDS)
+
+        failed=[result for result in results if isinstance(result, BaseException)]
+        if failed:
+            raise RuntimeError(type(failed[0]).__name__)
+
+        return Pricing_Service.services_pricing_parse(results[0], results[1], region)
+
+
     # 단가 표 가져오기 - 캐시가 신선하면 그대로, 아니면 가격 파일을 읽어 갱신. 읽기 실패 시 낡은 캐시, 그것도 없으면 None
+    # 실패한 리전은 10분 동안 다시 가져오지 않고(낡은 캐시 또는 None), 같은 리전의 동시 호출은 한 번만 가져온다. 어떤 경우에도 예외를 내보내지 않는다
     @staticmethod
     async def services_pricing_table(region:str|None=None, fetch:Callable[[str], Awaitable[dict]]|None=None, now:datetime|None=None) -> Price_Table | None:
         region=settings.aws_region if region is None else region
-        if REGION_PATTERN.match(region) is None:
+        if not isinstance(region, str) or REGION_PATTERN.fullmatch(region) is None:
             return None
         fetch=fetch or Pricing_Service.services_pricing_fetch
         now=now or datetime.now(timezone.utc)
+        if now.tzinfo is None:
+            now=now.replace(tzinfo=timezone.utc)
+        ttl=timedelta(hours=settings.pricing_cache_hours)
+
         cached=Pricing_Service.services_pricing_cache_read(region)
-        if cached is not None and timedelta(0) <= now - cached[0] < timedelta(hours=settings.pricing_cache_hours):
+        if cached is not None and timedelta(0) <= now - cached[0] < ttl:
             return cached[1]
-        try:
-            ecs=await fetch(PRICE_URL.format(service="AmazonECS", region=region))
-            elb=await fetch(PRICE_URL.format(service="AWSELB", region=region))
-            table=Pricing_Service.services_pricing_parse(ecs, elb, region)
-        except Exception:
-            logger.warning("가격 파일을 가져오지 못했습니다")
-            table=None
-        if table is None:
+        if Pricing_Service.services_pricing_backoff_active(region, now):
             return cached[1] if cached is not None else None
-        Pricing_Service.services_pricing_cache_write(table, now)
-        return table
+
+        async with Pricing_Service.services_pricing_lock(region):
+            # 기다리는 사이 다른 호출이 이미 갱신했거나 실패했을 수 있다
+            cached=Pricing_Service.services_pricing_cache_read(region)
+            if cached is not None and timedelta(0) <= now - cached[0] < ttl:
+                return cached[1]
+            if Pricing_Service.services_pricing_backoff_active(region, now):
+                return cached[1] if cached is not None else None
+
+            try:
+                table=await Pricing_Service.services_pricing_refresh(region, fetch)
+            except Exception as e:
+                logger.warning("가격 파일을 가져오지 못했습니다 (%s)", type(e).__name__)
+                table=None
+
+            if table is None:
+                REFRESH_FAILED_AT[region]=now
+                return cached[1] if cached is not None else None
+
+            REFRESH_FAILED_AT.pop(region, None)
+            Pricing_Service.services_pricing_cache_write(table, now)
+            return table
 
 
     # 사양 프리셋 4개 - Fargate 표준 작업 크기 중 안전한 조합만 (첫 실제 배포에서 Express 수용 여부 확인 전)
     @staticmethod
     def services_pricing_spec_options() -> list[Spec_Option]:
         return [Spec_Option(label=label, cpu=cpu, memory=memory, vcpu=int(cpu) / 1024, memory_gb=int(memory) / 1024) for cpu, memory, label in SPEC_PRESETS]
+
+
+    # 사양을 정하지 않았을 때의 기본 사양 - (cpu, memory, .env 에서 왔는지). .env 의 ECS_CPU·ECS_MEMORY 가 둘 다 있고 프리셋 조합이면 그 값, 아니면 AWS 문서의 256/512
+    @staticmethod
+    def services_pricing_default_spec() -> tuple[str, str, bool]:
+        pair=specs_env_pair()
+        if pair is not None:
+            return pair[0], pair[1], True
+        return DEFAULT_CPU, DEFAULT_MEMORY, False
 
 
     # 사양이 프리셋 조합인지 확인 - 둘 다 비면 기본 사양이라 통과, 한쪽만 있거나 프리셋이 아니면 False
@@ -168,7 +266,7 @@ class Pricing_Service:
             return True
         if cpu is None or memory is None:
             return False
-        return any(cpu == preset_cpu and memory == preset_memory for preset_cpu, preset_memory, _ in SPEC_PRESETS)
+        return specs_pair_valid(cpu, memory)
 
 
     # 자동 증설 설정 검사 - 문제가 있으면 한국어 안내 문구, 없으면 None (cap 은 최대 작업 수 상한)
@@ -193,12 +291,13 @@ class Pricing_Service:
         return None
 
 
-    # 사양과 단가 표로 비용 추정 만들기 (순수 함수) - 사양이 None 이면 기본 사양(256/512), 프리셋이 아니면 ValueError
+    # 사양과 단가 표로 비용 추정 만들기 (순수 함수) - 사양이 None 이면 기본 사양(.env 의 유효한 쌍, 없으면 256/512), 프리셋이 아니면 ValueError
     @staticmethod
     def services_pricing_estimate(table:Price_Table, cpu:str|None=None, memory:str|None=None, planned_hours:float|None=None, max_tasks:int|None=None) -> Cost_Estimate:
         is_default=cpu is None and memory is None
+        from_env=False
         if is_default:
-            cpu, memory=DEFAULT_CPU, DEFAULT_MEMORY
+            cpu, memory, from_env=Pricing_Service.services_pricing_default_spec()
         if not Pricing_Service.services_pricing_spec_valid(cpu, memory):
             raise ValueError("지원하지 않는 사양입니다. 정해진 사양 중에서 골라 주세요")
         option=next(o for o in Pricing_Service.services_pricing_spec_options() if o.cpu == cpu and o.memory == memory)
@@ -217,12 +316,16 @@ class Pricing_Service:
             max_hourly=round(max_raw, 4)
             max_monthly=round(max_raw * PERIODS[-1][1], 2)
         assumptions=[]
-        if is_default:
+        if is_default and from_env:
+            assumptions.append(f"사양을 고르지 않으면 이 서버의 .env 설정(ECS_CPU/ECS_MEMORY)인 {option.label}로 만들어져 그 사양으로 계산했습니다")
+        elif is_default:
             assumptions.append("기본 사양(AWS 문서 기준 256 CPU 단위 / 512 MiB)으로 계산했습니다. 실제 배포에서 아직 확인하지 않은 값입니다")
         assumptions.append(f"금액은 AWS 가격 목록({table.basis_date} 기준)의 온디맨드 USD 추정치입니다")
         assumptions.append("서비스마다 ALB 가 하나씩 생긴다고 보고 계산한 값입니다 (공유 여부는 확인 전이라 가장 비싼 경우)")
         if max_tasks is not None:
             assumptions.append("최대치는 트래픽이 늘어 작업이 최대 수까지 계속 유지될 때의 금액입니다")
+        else:
+            assumptions.append("증설을 고르지 않으면 AWS 기본 오토스케일이 작업 수를 늘릴 수 있습니다 (최대 수는 확인 전) — 작업 1개 기준으로 계산했습니다")
         return Cost_Estimate(
             basis_date=table.basis_date, region=table.region,
             cpu=option.cpu, memory=option.memory, spec_label=option.label, spec_is_default=is_default,

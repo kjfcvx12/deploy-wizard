@@ -87,3 +87,56 @@ def test_ensure_columns_adds_new_deploy_columns(tmp_path):
         assert ensure_columns(conn) == []
 
     engine.dispose()
+
+
+# 알림 설정 표에 kinds_version 이 더해지고 기존 행은 null(옛 설정)로 남는다
+def test_ensure_columns_adds_notification_kinds_version(tmp_path):
+    from features.notifications import models as notification_models  # noqa: F401 - Base.metadata 가 notification_settings 를 알게 한다
+
+    path=tmp_path / "old4.db"
+    conn=sqlite3.connect(path)
+    conn.execute("CREATE TABLE notification_settings (id INTEGER PRIMARY KEY, notify_email BOOLEAN NOT NULL, notify_push BOOLEAN NOT NULL, kinds TEXT NOT NULL)")
+    conn.execute("INSERT INTO notification_settings (id, notify_email, notify_push, kinds) VALUES (1, 1, 1, '[\"deploy_failed\"]')")
+    conn.commit()
+    conn.close()
+
+    engine=create_engine(f"sqlite:///{path.as_posix()}")
+
+    with engine.begin() as conn:
+        assert "kinds_version" not in {c["name"] for c in inspect(conn).get_columns("notification_settings")}
+        added=ensure_columns(conn)
+
+        assert "notification_settings.kinds_version" in added
+        assert conn.execute(text("SELECT kinds_version FROM notification_settings")).scalar() is None
+        assert ensure_columns(conn) == []
+
+    engine.dispose()
+
+
+# 스크립트가 서버처럼 쓰는 시작 도우미 - 옛 DB 에서도 모자란 열을 채운다
+def test_bootstrap_schema_upgrades_old_db(tmp_path):
+    import asyncio
+    from sqlalchemy.ext.asyncio import create_async_engine
+    from shared.database import bootstrap_schema
+
+    path=tmp_path / "old5.db"
+    make_old_db(path)
+
+    async def run():
+        engine=create_async_engine(f"sqlite+aiosqlite:///{path.as_posix()}")
+        try:
+            first=await bootstrap_schema(engine)
+            second=await bootstrap_schema(engine)
+        finally:
+            await engine.dispose()
+        return first, second
+
+    first, second=asyncio.run(run())
+
+    assert "deploys.cpu" in first
+    assert second == []
+
+    conn=sqlite3.connect(path)
+    assert conn.execute("SELECT cpu, planned_hours FROM deploys").fetchall() == [(None, None)]
+    assert conn.execute("SELECT name FROM sqlite_master WHERE name='notification_settings'").fetchone() is not None
+    conn.close()

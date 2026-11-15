@@ -1,12 +1,15 @@
+import asyncio
 import json
 from datetime import datetime, timedelta, timezone
 
+import httpx
 import pytest
 import pytest_asyncio
 from httpx import AsyncClient, ASGITransport
 
 from shared.settings import settings
 
+from features.pricing import services as pricing_services
 from features.pricing.scheme import Price_Table
 from features.pricing.services import Pricing_Service
 
@@ -432,3 +435,298 @@ async def test_pricing_estimate_endpoint_503_without_prices(client, monkeypatch)
 
     assert response.status_code == 503
     assert response.json()["detail"] == "가격 정보를 가져오지 못했습니다. 잠시 뒤 다시 시도하세요"
+
+
+# ---- 최종 리뷰 반영: 오프라인 백오프·잠금·시간 제한·크기 제한, 캐시 검증, 기본 사양 ----
+
+# 캐시 파일을 직접 쓴다 - table 값을 덮어써서 깨진 캐시를 만든다
+def write_cache(cache_tmp, fetched_at, **overrides):
+    table=Pricing_Service.services_pricing_parse(make_price_file(ECS_ROWS), make_price_file(ELB_ROWS), REGION).model_dump()
+    table.update(overrides)
+    body={"fetched_at": fetched_at.isoformat(), "table": table}
+    (cache_tmp / f"pricing-{REGION}.json").write_text(json.dumps(body), encoding="utf-8")
+
+
+# 시작을 알리고 둘이 다 시작해야 끝나는 fetch - 순서대로 부르면 기다리다 시간 초과로 실패한다
+class Barrier_Fetch(Fake_Fetch):
+
+    def __init__(self, parties=2):
+        super().__init__()
+        self.parties=parties
+        self.gate=asyncio.Event()
+
+    async def __call__(self, url):
+        self.urls.append(url)
+        if len(self.urls) >= self.parties:
+            self.gate.set()
+        await asyncio.wait_for(self.gate.wait(), timeout=2)
+        region=url.split("/current/")[1].split("/")[0]
+        return make_price_file(ECS_ROWS, region=region) if "AmazonECS" in url else make_price_file(ELB_ROWS, region=region)
+
+
+# 한참 걸리는 fetch - 동시에 부른 호출이 한 번만 가져오는지 본다
+class Slow_Fetch(Fake_Fetch):
+
+    async def __call__(self, url):
+        await asyncio.sleep(0.05)
+        return await super().__call__(url)
+
+
+@pytest.mark.asyncio
+async def test_pricing_fetches_ecs_and_elb_concurrently(cache_tmp):
+    fetch=Barrier_Fetch()
+    table=await Pricing_Service.services_pricing_table(fetch=fetch, now=datetime(2026, 11, 16, 12, 0, tzinfo=timezone.utc))
+    assert table is not None
+    assert len(fetch.urls) == 2
+
+
+@pytest.mark.asyncio
+async def test_pricing_failed_refresh_backs_off_for_ten_minutes(cache_tmp):
+    now=datetime(2026, 11, 16, 12, 0, tzinfo=timezone.utc)
+    failing=Fake_Fetch(error=RuntimeError("network down"))
+    assert await Pricing_Service.services_pricing_table(fetch=failing, now=now) is None
+    assert len(failing.urls) == 2
+
+    # 10분 안에는 다시 가져오지 않는다
+    assert await Pricing_Service.services_pricing_table(fetch=failing, now=now + timedelta(minutes=9, seconds=59)) is None
+    assert len(failing.urls) == 2
+
+    # 10분이 지나면 다시 시도하고, 성공하면 백오프가 풀린다
+    ok=Fake_Fetch()
+    table=await Pricing_Service.services_pricing_table(fetch=ok, now=now + timedelta(minutes=10))
+    assert table is not None and len(ok.urls) == 2
+    assert pricing_services.REFRESH_FAILED_AT == {}
+
+
+@pytest.mark.asyncio
+async def test_pricing_backoff_serves_stale_cache_without_fetching(cache_tmp):
+    now=datetime(2026, 11, 16, 12, 0, tzinfo=timezone.utc)
+    first=await Pricing_Service.services_pricing_table(fetch=Fake_Fetch(), now=now)
+
+    failing=Fake_Fetch(error=RuntimeError("network down"))
+    later=now + timedelta(hours=30)
+    assert (await Pricing_Service.services_pricing_table(fetch=failing, now=later)) == first
+    assert len(failing.urls) == 2
+
+    again=await Pricing_Service.services_pricing_table(fetch=failing, now=later + timedelta(minutes=5))
+    assert again == first
+    assert len(failing.urls) == 2
+
+
+@pytest.mark.asyncio
+async def test_pricing_backoff_is_per_region(cache_tmp):
+    now=datetime(2026, 11, 16, 12, 0, tzinfo=timezone.utc)
+    failing=Fake_Fetch(error=RuntimeError("down"))
+    assert await Pricing_Service.services_pricing_table(region=REGION, fetch=failing, now=now) is None
+
+    ok=Fake_Fetch()
+    assert await Pricing_Service.services_pricing_table(region="us-east-1", fetch=ok, now=now) is not None
+    assert len(ok.urls) == 2
+
+
+@pytest.mark.asyncio
+async def test_pricing_concurrent_first_calls_fetch_once(cache_tmp):
+    fetch=Slow_Fetch()
+    now=datetime(2026, 11, 16, 12, 0, tzinfo=timezone.utc)
+    tables=await asyncio.gather(*[Pricing_Service.services_pricing_table(fetch=fetch, now=now) for _ in range(5)])
+    assert all(table is not None and table == tables[0] for table in tables)
+    assert len(fetch.urls) == 2
+
+
+@pytest.mark.asyncio
+async def test_pricing_concurrent_failures_fetch_once(cache_tmp):
+    fetch=Slow_Fetch(error=RuntimeError("down"))
+    now=datetime(2026, 11, 16, 12, 0, tzinfo=timezone.utc)
+    tables=await asyncio.gather(*[Pricing_Service.services_pricing_table(fetch=fetch, now=now) for _ in range(5)])
+    assert tables == [None] * 5
+    assert len(fetch.urls) == 2
+
+
+@pytest.mark.asyncio
+async def test_pricing_table_never_raises_on_garbage_fetch(cache_tmp):
+    async def garbage(url):
+        return "깨진 응답"
+
+    assert await Pricing_Service.services_pricing_table(fetch=garbage) is None
+
+
+def test_pricing_fetch_timeout_is_short():
+    assert pricing_services.FETCH_TIMEOUT.read == 10
+    assert pricing_services.FETCH_TIMEOUT.connect == 5
+
+
+# 진짜 fetch 에 가짜 전송을 끼운다 - 네트워크 없음
+def patch_transport(monkeypatch, handler):
+    real=httpx.AsyncClient
+    seen={}
+
+    def factory(*args, **kwargs):
+        seen.update(kwargs)
+        kwargs["transport"]=httpx.MockTransport(handler)
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(pricing_services.httpx, "AsyncClient", factory)
+    return seen
+
+
+@pytest.mark.asyncio
+async def test_pricing_fetch_uses_timeout_and_reads_json(monkeypatch):
+    seen=patch_transport(monkeypatch, lambda request: httpx.Response(200, json={"ok": 1}))
+    assert await Pricing_Service.services_pricing_fetch("https://price.test/x.json") == {"ok": 1}
+    assert seen["timeout"] == pricing_services.FETCH_TIMEOUT
+
+
+@pytest.mark.asyncio
+async def test_pricing_fetch_rejects_oversized_download(monkeypatch):
+    monkeypatch.setattr(pricing_services, "MAX_DOWNLOAD_BYTES", 1000)
+
+    # 길이를 미리 알려 주는 응답
+    patch_transport(monkeypatch, lambda request: httpx.Response(200, content=b"{" + b" " * 2000 + b"}"))
+    with pytest.raises(Exception):
+        await Pricing_Service.services_pricing_fetch("https://price.test/big.json")
+
+
+@pytest.mark.asyncio
+async def test_pricing_fetch_rejects_oversized_chunked_download(monkeypatch):
+    monkeypatch.setattr(pricing_services, "MAX_DOWNLOAD_BYTES", 1000)
+
+    def chunks():
+        yield b"{"
+        for _ in range(20):
+            yield b" " * 100
+        yield b"}"
+
+    # 길이를 알리지 않고 조금씩 보내는 응답
+    patch_transport(monkeypatch, lambda request: httpx.Response(200, content=chunks()))
+    with pytest.raises(Exception):
+        await Pricing_Service.services_pricing_fetch("https://price.test/chunked.json")
+
+
+@pytest.mark.asyncio
+async def test_pricing_fetch_oversized_gives_none_from_table(cache_tmp, monkeypatch):
+    monkeypatch.setattr(pricing_services, "MAX_DOWNLOAD_BYTES", 1000)
+    patch_transport(monkeypatch, lambda request: httpx.Response(200, content=b"{" + b" " * 2000 + b"}"))
+    assert await Pricing_Service.services_pricing_table() is None
+
+
+def test_pricing_parse_fargate_matchers_are_anchored():
+    noise=[
+        ("APN2-Bogus-Fargate-vCPU-Hours:perCPU", "Compute", 9.0, None),
+        ("APN2-Bogus-Fargate-GB-Hours", "Compute", 9.0, None),
+        ("APN2-Bogus-Fargate-ARM-vCPU-Hours:perCPU", "Compute", 9.0, None),
+        ("APN2-Bogus-Fargate-ARM-GB-Hours", "Compute", 9.0, None),
+    ]
+    table=Pricing_Service.services_pricing_parse(make_price_file(noise + ECS_ROWS), make_price_file(ELB_ROWS), REGION)
+    assert (table.fargate_vcpu_hour, table.fargate_gb_hour) == (0.04656, 0.00511)
+    assert (table.fargate_arm_vcpu_hour, table.fargate_arm_gb_hour) == (0.03725, 0.00409)
+
+    # 접두사가 없는 모양(us-east-1)도 읽힌다
+    plain=[("Fargate-vCPU-Hours:perCPU", "Compute", 0.04048, None), ("Fargate-GB-Hours", "Compute", 0.004445, None)]
+    table=Pricing_Service.services_pricing_parse(make_price_file(plain, region="us-east-1"), make_price_file(make_elb_rows(""), region="us-east-1"), "us-east-1")
+    assert (table.fargate_vcpu_hour, table.fargate_gb_hour) == (0.04048, 0.004445)
+
+
+@pytest.mark.asyncio
+async def test_pricing_table_rejects_region_with_trailing_newline(cache_tmp):
+    fetch=Fake_Fetch()
+    assert await Pricing_Service.services_pricing_table(region="ap-northeast-2\n", fetch=fetch) is None
+    assert fetch.urls == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("overrides", [
+    {"fargate_vcpu_hour": float("nan")},
+    {"alb_hour": float("inf")},
+    {"fargate_gb_hour": -0.01},
+    {"alb_hour": 0},
+    {"fargate_arm_vcpu_hour": float("nan")},
+    {"region": "us-east-1"},
+])
+async def test_pricing_cache_with_bad_values_is_treated_as_missing(cache_tmp, overrides):
+    now=datetime(2026, 11, 16, 12, 0, tzinfo=timezone.utc)
+    write_cache(cache_tmp, now, **overrides)
+    assert Pricing_Service.services_pricing_cache_read(REGION) is None
+
+    # 신선한 시각이어도 쓰지 않고 새로 가져온다
+    fetch=Fake_Fetch()
+    table=await Pricing_Service.services_pricing_table(fetch=fetch, now=now)
+    assert table is not None and table.alb_hour == 0.0225 and table.region == REGION
+    assert len(fetch.urls) == 2
+
+
+@pytest.mark.asyncio
+async def test_pricing_cache_ttl_boundary_is_exclusive(cache_tmp, monkeypatch):
+    monkeypatch.setattr(settings, "pricing_cache_hours", 24)
+    fetched_at=datetime(2026, 11, 16, 12, 0, tzinfo=timezone.utc)
+    write_cache(cache_tmp, fetched_at)
+
+    fresh=Fake_Fetch()
+    assert await Pricing_Service.services_pricing_table(fetch=fresh, now=fetched_at + timedelta(hours=24) - timedelta(seconds=1)) is not None
+    assert fresh.urls == []
+
+    # 정확히 24시간이면 낡은 것으로 보고 다시 가져온다
+    stale=Fake_Fetch()
+    assert await Pricing_Service.services_pricing_table(fetch=stale, now=fetched_at + timedelta(hours=24)) is not None
+    assert len(stale.urls) == 2
+
+
+def test_pricing_default_spec_without_env(monkeypatch):
+    monkeypatch.setattr(settings, "ecs_cpu", None)
+    monkeypatch.setattr(settings, "ecs_memory", None)
+    assert Pricing_Service.services_pricing_default_spec() == ("256", "512", False)
+
+
+def test_pricing_default_spec_uses_valid_env_pair(monkeypatch):
+    monkeypatch.setattr(settings, "ecs_cpu", "1024")
+    monkeypatch.setattr(settings, "ecs_memory", "2048")
+    assert Pricing_Service.services_pricing_default_spec() == ("1024", "2048", True)
+
+
+@pytest.mark.parametrize("cpu, memory", [("1024", None), (None, "2048"), ("1024", "4096"), ("300", "512"), ("", "")])
+def test_pricing_default_spec_ignores_invalid_env_pair(monkeypatch, cpu, memory):
+    monkeypatch.setattr(settings, "ecs_cpu", cpu)
+    monkeypatch.setattr(settings, "ecs_memory", memory)
+    assert Pricing_Service.services_pricing_default_spec() == ("256", "512", False)
+
+
+def test_pricing_estimate_default_uses_env_pair(monkeypatch):
+    monkeypatch.setattr(settings, "ecs_cpu", "1024")
+    monkeypatch.setattr(settings, "ecs_memory", "2048")
+    estimate=Pricing_Service.services_pricing_estimate(make_table())
+    assert (estimate.cpu, estimate.memory, estimate.spec_label) == ("1024", "2048", "1 vCPU / 2 GB")
+    assert estimate.spec_is_default is True
+    assert estimate.hourly_usd == Pricing_Service.services_pricing_estimate(make_table(), "1024", "2048").hourly_usd
+    assert any("ECS_CPU" in a and "ECS_MEMORY" in a for a in estimate.assumptions)
+    assert not any("AWS 문서" in a for a in estimate.assumptions)
+
+
+def test_pricing_estimate_default_with_invalid_env_keeps_aws_default(monkeypatch):
+    monkeypatch.setattr(settings, "ecs_cpu", "1024")
+    monkeypatch.setattr(settings, "ecs_memory", None)
+    estimate=Pricing_Service.services_pricing_estimate(make_table())
+    assert (estimate.cpu, estimate.memory) == ("256", "512")
+    assert any("AWS 문서" in a for a in estimate.assumptions)
+    assert not any("ECS_CPU" in a for a in estimate.assumptions)
+
+
+def test_pricing_estimate_explicit_spec_ignores_env(monkeypatch):
+    monkeypatch.setattr(settings, "ecs_cpu", "1024")
+    monkeypatch.setattr(settings, "ecs_memory", "2048")
+    estimate=Pricing_Service.services_pricing_estimate(make_table(), "512", "1024")
+    assert (estimate.cpu, estimate.memory, estimate.spec_is_default) == ("512", "1024", False)
+    assert not any("ECS_CPU" in a for a in estimate.assumptions)
+
+
+def test_pricing_estimate_default_autoscale_caveat():
+    estimate=Pricing_Service.services_pricing_estimate(make_table())
+    assert any("기본 오토스케일" in a and "작업 1개 기준" in a for a in estimate.assumptions)
+
+    # 증설을 골랐으면 최대 작업 수가 정해져 있어 이 문구는 없다
+    chosen=Pricing_Service.services_pricing_estimate(make_table(), max_tasks=3)
+    assert not any("기본 오토스케일" in a for a in chosen.assumptions)
+
+
+def test_pricing_preset_pairs_are_shared_with_specs_module():
+    from shared.specs import SPEC_PAIRS
+
+    assert [(cpu, memory) for cpu, memory, _ in pricing_services.SPEC_PRESETS] == list(SPEC_PAIRS)

@@ -457,3 +457,45 @@ async def test_advice_cost_not_stale_from_advice_cache(client, monkeypatch):
     patch_price_table(monkeypatch, None)
     third=await client.post("/api/deploys/advice", json={"repo_url": "https://github.com/o/r"})
     assert third.json()["cost"]["hourly_usd"] is None
+
+
+# 가격 계산이 예외로 실패하면 비용은 비운 채 분석은 돌려주고, 이유는 마스킹해서 경고로 남긴다
+@pytest.mark.asyncio
+async def test_advice_with_cost_logs_masked_warning_on_failure(tmp_path, monkeypatch, caplog):
+    import logging
+
+    async def boom(region=None, fetch=None, now=None):
+        raise RuntimeError("가격 조회 실패 token=ghp_abcdefghijklmnopqrstuvwxyz0123456789")
+
+    monkeypatch.setattr(Pricing_Service, "services_pricing_table", staticmethod(boom))
+    base=advise(make_repo(tmp_path, {"requirements.txt": "flask\n", "app.py": "print('hi')\n"}))
+
+    with caplog.at_level(logging.WARNING, logger="features.advice.services"):
+        result=await Advice_Service.services_advice_with_cost(base)
+
+    assert result.cost.monthly_min is None
+    assert any("비용" in record.getMessage() for record in caplog.records)
+    assert not any("ghp_abcdefghijklmnopqrstuvwxyz0123456789" in record.getMessage() for record in caplog.records)
+
+
+# 한 달(730시간) 기간을 못 찾는 경우도 같은 보호 안에서 처리한다 - 예외를 밖으로 내보내지 않는다
+@pytest.mark.asyncio
+async def test_advice_with_cost_guards_missing_month_period(tmp_path, monkeypatch, caplog):
+    import logging
+
+    patch_price_table(monkeypatch, make_price_table())
+    real=Pricing_Service.services_pricing_estimate
+
+    def no_month(*args, **kwargs):
+        estimate=real(*args, **kwargs)
+        estimate.periods=[period for period in estimate.periods if period.hours != 730]
+        return estimate
+
+    monkeypatch.setattr(Pricing_Service, "services_pricing_estimate", staticmethod(no_month))
+    base=advise(make_repo(tmp_path, {"requirements.txt": "flask\n", "app.py": "print('hi')\n"}))
+
+    with caplog.at_level(logging.WARNING, logger="features.advice.services"):
+        result=await Advice_Service.services_advice_with_cost(base)
+
+    assert result.cost.monthly_min is None
+    assert any("비용" in record.getMessage() for record in caplog.records)

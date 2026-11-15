@@ -10,7 +10,7 @@ from shared.settings import settings
 from shared.database import AsyncSessionLocal
 
 from features.notifications.crud import Notification_Crud
-from features.notifications.models import Notification_Setting, NOTIFICATION_KINDS
+from features.notifications.models import Notification_Setting, NOTIFICATION_KINDS, NOTIFICATION_KINDS_VERSION
 from features.notifications.compose import Composed, compose_incident, compose_deploy, compose_service_name
 from features.notifications.dispatch import dispatch_scrub, dispatch_oneline, dispatch_mail_send, dispatch_mail_configured, dispatch_push_send
 
@@ -34,11 +34,15 @@ class Notification_Service:
         return datetime.now(timezone.utc).replace(tzinfo=None)
 
 
-    # 알림 설정 가져오기 - 한 줄뿐인 표라 처음이면 기본값으로 만들어 저장한다
+    # 알림 설정 가져오기 - 한 줄뿐인 표라 처음이면 기본값으로 만들어 저장한다. 옛 설정(kinds_version 없음)은 한 번 보정한다
     @staticmethod
     async def services_notification_setting_get(db:AsyncSession) -> Notification_Setting:
         try:
             db_setting=await Notification_Crud.crud_notification_setting_get(db)
+
+            if db_setting.kinds_version is None:
+                Notification_Service.services_notification_kinds_migrate(db_setting)
+
             await db.commit()
             return db_setting
 
@@ -46,6 +50,19 @@ class Notification_Service:
             await db.rollback()
             raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                                 detail=f"알림 설정 조회 실패 :{dispatch_scrub(str(e))}")
+
+
+    # 옛 설정 보정 - plan_exceeded 가 생기기 전 기본값(그것만 빠진 여섯 가지)이면 plan_exceeded 를 더하고, 일부를 일부러 꺼 둔 목록은 그대로 둔다
+    # 어느 쪽이든 판(kinds_version)을 올려서 다시 건드리지 않는다. 이후 사용자가 여섯 가지로 저장하면 꺼 둔 것으로 존중한다
+    @staticmethod
+    def services_notification_kinds_migrate(db_setting:Notification_Setting) -> None:
+        kinds=Notification_Service.services_notification_kinds(db_setting)
+        legacy_default={kind for kind in NOTIFICATION_KINDS if kind != 'plan_exceeded'}
+
+        if set(kinds) == legacy_default:
+            db_setting.kinds=json.dumps(kinds + ['plan_exceeded'])
+
+        db_setting.kinds_version=NOTIFICATION_KINDS_VERSION
 
 
     # 설정에 저장된 받을 알림 종류 - 읽을 수 없으면 전부

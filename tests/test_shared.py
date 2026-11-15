@@ -248,3 +248,75 @@ def test_express_update_params_unchanged():
     Express_Service.services_express_update(session, "arn:svc", "img:2", 8000, "/health", environment={"A": "1"})
 
     assert set(session.ecs.params) == {"serviceArn", "healthCheckPath", "primaryContainer"}
+
+
+# 사양을 정하지 않은 배포 - 비용 추정이 가정한 사양과 서비스 생성이 실제로 보내는 사양이 같다 (.env 의 유효한 프리셋 쌍)
+def test_express_create_matches_default_estimate_with_valid_env(monkeypatch):
+    from shared.settings import settings
+    from features.pricing.scheme import Price_Table
+    from features.pricing.services import Pricing_Service
+
+    table=Price_Table(region="ap-northeast-2", basis_date="2026-11-11", fargate_vcpu_hour=0.04656, fargate_gb_hour=0.00511, alb_hour=0.0225)
+    monkeypatch.setattr(settings, "ecs_cpu", "512")
+    monkeypatch.setattr(settings, "ecs_memory", "1024")
+
+    estimate=Pricing_Service.services_pricing_estimate(table)
+    session=Fake_Session()
+    Express_Service.services_express_create(session, "dw-x-1", "img:1", 8000, role_arns=("arn:e", "arn:i"))
+
+    assert (estimate.cpu, estimate.memory) == ("512", "1024")
+    assert (session.ecs.params["cpu"], session.ecs.params["memory"]) == (estimate.cpu, estimate.memory)
+
+
+# .env 쌍이 프리셋이 아니거나 한쪽뿐이면 둘 다 무시한다 - 추정은 256/512, 생성은 사양을 보내지 않고, 경고를 남긴다
+@pytest.mark.parametrize("cpu, memory", [("1024", "4096"), ("300", "512"), ("1024", None), (None, "2048")])
+def test_express_create_ignores_invalid_env_pair(monkeypatch, caplog, cpu, memory):
+    import logging
+    from shared.settings import settings
+    from features.pricing.scheme import Price_Table
+    from features.pricing.services import Pricing_Service
+
+    table=Price_Table(region="ap-northeast-2", basis_date="2026-11-11", fargate_vcpu_hour=0.04656, fargate_gb_hour=0.00511, alb_hour=0.0225)
+    monkeypatch.setattr(settings, "ecs_cpu", cpu)
+    monkeypatch.setattr(settings, "ecs_memory", memory)
+
+    estimate=Pricing_Service.services_pricing_estimate(table)
+    session=Fake_Session()
+    with caplog.at_level(logging.WARNING, logger="features.express.services"):
+        Express_Service.services_express_create(session, "dw-x-1", "img:1", 8000, role_arns=("arn:e", "arn:i"))
+
+    assert (estimate.cpu, estimate.memory) == ("256", "512")
+    assert "cpu" not in session.ecs.params and "memory" not in session.ecs.params
+    assert any("ECS_CPU" in record.getMessage() for record in caplog.records)
+
+
+# 배포별 사양이 있으면 .env 는 보지 않는다 (잘못된 .env 여도 경고도 없다)
+def test_express_create_explicit_spec_skips_env(monkeypatch, caplog):
+    import logging
+    from shared.settings import settings
+
+    monkeypatch.setattr(settings, "ecs_cpu", "1024")
+    monkeypatch.setattr(settings, "ecs_memory", "4096")
+
+    session=Fake_Session()
+    with caplog.at_level(logging.WARNING, logger="features.express.services"):
+        Express_Service.services_express_create(session, "dw-x-1", "img:1", 8000, role_arns=("arn:e", "arn:i"), cpu="256", memory="512")
+
+    assert (session.ecs.params["cpu"], session.ecs.params["memory"]) == ("256", "512")
+    assert not caplog.records
+
+
+# .env 가 비어 있으면(ECS_CPU= 처럼 빈 글자) 안 적은 것과 같고 경고도 없다
+def test_express_create_blank_env_is_silent(monkeypatch, caplog):
+    import logging
+    from shared.settings import settings
+
+    monkeypatch.setattr(settings, "ecs_cpu", "")
+    monkeypatch.setattr(settings, "ecs_memory", "")
+
+    session=Fake_Session()
+    with caplog.at_level(logging.WARNING, logger="features.express.services"):
+        Express_Service.services_express_create(session, "dw-x-1", "img:1", 8000, role_arns=("arn:e", "arn:i"))
+
+    assert "cpu" not in session.ecs.params and "memory" not in session.ecs.params
+    assert not caplog.records

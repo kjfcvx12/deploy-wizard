@@ -398,3 +398,57 @@ async def test_pipeline_failure_without_service_clears_running_since_on_create(c
 
     body=(await client.get(f"/api/deploys/{d_id}")).json()
     assert body["status"] == "failed" and body["running_since"] is None
+
+
+# 멈춘 배포를 다시 켜면(서비스 없음, 이어하기 deploying) 저장된 사양·증설이 그대로 새 서비스 생성에 넘어간다
+@pytest.mark.asyncio
+async def test_pipeline_start_after_stop_passes_stored_spec_and_scaling(client, monkeypatch):
+    d_id=(await client.post("/api/deploys", json={
+        "repo_url": "https://github.com/o/r", "cpu": "1024", "memory": "2048",
+        "min_tasks": 2, "max_tasks": 4, "scale_metric": "REQUEST_COUNT_PER_TARGET", "scale_target": 500,
+    })).json()["d_id"]
+    await stub_progress(d_id, **{**LIVE_FIELDS, "service_arn": None, "status": "queued"}, running_since=None)
+
+    seen={}
+
+    def fake_create(*args, **kwargs):
+        seen["kwargs"]=kwargs
+        return Express_Status(service_arn="arn:svc2", service_name="dw-r-1")
+
+    monkeypatch.setattr(pipeline_module.Dockerfile_Service, "services_dockerfile_write", staticmethod(lambda *a, **kw: None))
+    monkeypatch.setattr(pipeline_module.Aws_Account_Service, "services_aws_account_build_session", staticmethod(fake_build_session))
+    monkeypatch.setattr(pipeline_module.Express_Service, "services_express_create", staticmethod(fake_create))
+    monkeypatch.setattr(pipeline_module.Express_Service, "services_express_wait",
+                        staticmethod(lambda *a, **kw: Express_Status(service_arn="arn:svc2", endpoint="https://x.example")))
+    monkeypatch.setattr(pipeline_module.Build_Service, "services_build_remove_local", staticmethod(lambda *a, **kw: None))
+
+    await Deploy_Pipeline.pipeline_run(d_id, "deploying")
+
+    assert seen["kwargs"]["cpu"] == "1024" and seen["kwargs"]["memory"] == "2048"
+    assert seen["kwargs"]["scaling"] == {"minTaskCount": 2, "maxTaskCount": 4, "autoScalingMetric": "REQUEST_COUNT_PER_TARGET", "autoScalingTargetValue": 500}
+
+
+# 증설 값이 일부만 저장돼 있으면 다시 켤 때도 증설을 보내지 않는다 (사양은 그대로)
+@pytest.mark.asyncio
+async def test_pipeline_start_after_stop_with_partial_scaling_sends_none(client, monkeypatch):
+    d_id=(await client.post("/api/deploys", json={"repo_url": "https://github.com/o/r", "cpu": "512", "memory": "1024"})).json()["d_id"]
+    await stub_progress(d_id, **{**LIVE_FIELDS, "service_arn": None, "status": "queued"}, running_since=None,
+                        min_tasks=1, max_tasks=3, scale_metric="AVERAGE_CPU")
+
+    seen={}
+
+    def fake_create(*args, **kwargs):
+        seen["kwargs"]=kwargs
+        return Express_Status(service_arn="arn:svc2", service_name="dw-r-1")
+
+    monkeypatch.setattr(pipeline_module.Dockerfile_Service, "services_dockerfile_write", staticmethod(lambda *a, **kw: None))
+    monkeypatch.setattr(pipeline_module.Aws_Account_Service, "services_aws_account_build_session", staticmethod(fake_build_session))
+    monkeypatch.setattr(pipeline_module.Express_Service, "services_express_create", staticmethod(fake_create))
+    monkeypatch.setattr(pipeline_module.Express_Service, "services_express_wait",
+                        staticmethod(lambda *a, **kw: Express_Status(service_arn="arn:svc2", endpoint="https://x.example")))
+    monkeypatch.setattr(pipeline_module.Build_Service, "services_build_remove_local", staticmethod(lambda *a, **kw: None))
+
+    await Deploy_Pipeline.pipeline_run(d_id, "deploying")
+
+    assert seen["kwargs"]["scaling"] is None
+    assert seen["kwargs"]["cpu"] == "512" and seen["kwargs"]["memory"] == "1024"

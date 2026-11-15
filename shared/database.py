@@ -30,9 +30,18 @@ async def get_db():
 
 # 기존 표에 뒤늦게 늘어난 열 - create_all 은 이미 있는 표에 열을 더하지 않는다 (SQLite). 모델의 열 정의가 기준이다
 ENSURE_COLUMNS={
+    "notification_settings": ["kinds_version"],
     "deploys": ["auto_recover", "health_state", "last_health_at", "bad_commit_sha",
                 "cpu", "memory", "min_tasks", "max_tasks", "scale_metric", "scale_target", "planned_hours", "running_since", "plan_notified_at"],
 }
+
+
+# 서버 시작과 같은 DB 준비 - 없는 표를 만들고(create_all) 옛 표에 모자란 열을 더한다. 반환: 이번에 더한 "표.열" 목록
+# 모델은 부르는 쪽이 미리 import 해 둬야 create_all 이 표를 안다 (main.py · scripts/*.py 가 같이 쓴다)
+async def bootstrap_schema(engine=None) -> list[str]:
+    async with (engine or async_engine).begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+        return await conn.run_sync(ensure_columns)
 
 
 # 열 기본값을 DDL 상수로 - 모델의 파이썬 기본값(bool/숫자/문자열)만 다룬다
