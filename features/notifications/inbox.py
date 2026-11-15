@@ -4,7 +4,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from fastapi import HTTPException, status
 
 from features.notifications.crud import Notification_Crud
-from features.notifications.models import Notification, Push_Device
+from features.notifications.models import Notification, Push_Device, NOTIFICATION_KINDS_VERSION
 from features.notifications.scheme import Device_Create, Device_Read, Notification_Setting_Read, Notification_Setting_Update
 from features.notifications.services import Notification_Service
 from features.notifications.dispatch import dispatch_scrub
@@ -137,6 +137,7 @@ class Notification_Inbox_Service:
                 db_setting.notify_push=update.notify_push
             if update.kinds is not None:
                 db_setting.kinds=json.dumps(update.kinds)
+                db_setting.kinds_version=NOTIFICATION_KINDS_VERSION
 
             await db.commit()
             return await Notification_Inbox_Service.services_notification_setting_read(db)

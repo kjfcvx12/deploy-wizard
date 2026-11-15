@@ -1,6 +1,7 @@
 import re
 import ast
 import json
+import logging
 import fnmatch
 import asyncio
 import tomllib
@@ -14,10 +15,13 @@ from features.advice.scheme import Advice_Request, Advice_Need, Advice_Cost, Adv
 from features.accounts.services import Github_Service
 from features.envvars.scheme import Env_Found
 from features.envvars.services import Env_Service
+from features.pricing.services import Pricing_Service
 from features.repos.scheme import Repo_App
 from features.repos.services import Repo_Service, EXCLUDE_DIRS
 from shared.masking import mask_text
 from shared.settings import settings
+
+logger=logging.getLogger(__name__)
 
 
 # 무거운 라이브러리 -> 수준 large (기획서 I절)
@@ -294,6 +298,29 @@ class Advice_Service:
         return Advice_Service.services_advice_build(signals, detect, envs, commit_sha)
 
 
+    # 비용 채우기 - 캐시된 원본은 건드리지 않고 복사본에 매번 채운다 (가격은 바뀔 수 있어 캐시에 두지 않는다). 가격 표가 없으면 비용은 비운 채로
+    @staticmethod
+    async def services_advice_with_cost(advice:Deploy_Advice) -> Deploy_Advice:
+        result=advice.model_copy(deep=True)
+
+        try:
+            table=await Pricing_Service.services_pricing_table()
+            if table is None:
+                return result
+            estimate=Pricing_Service.services_pricing_estimate(table)
+            monthly=next(period.usd for period in estimate.periods if period.hours == 730)
+        except Exception as e:
+            logger.warning("비용 계산 실패 : %s", mask_text(str(e))[:200])
+            return result
+
+        result.cost=Advice_Cost(monthly_min=monthly, monthly_max=monthly, basis_date=estimate.basis_date,
+                                hourly_usd=estimate.hourly_usd,
+                                components=[component.model_dump() for component in estimate.components],
+                                not_included=list(estimate.not_included), arm64_hourly_usd=estimate.arm64_hourly_usd,
+                                spec_label=estimate.spec_label, spec_is_default=estimate.spec_is_default)
+        return result
+
+
     # 분석만 하기 - 임시 폴더에 클론해 읽고 항상 지운다. 배포 기록·AWS 호출 없음 (기획서 I절)
     @staticmethod
     async def services_advice_analyze(db:AsyncSession, req:Advice_Request) -> Deploy_Advice:
@@ -317,7 +344,7 @@ class Advice_Service:
         # 2. 같은 커밋이면 캐시를 돌려준다
         cache_key=(repo_url, commit_sha) if commit_sha else None
         if cache_key and cache_key in Advice_Service.ADVICE_CACHE:
-            return Advice_Service.ADVICE_CACHE[cache_key]
+            return await Advice_Service.services_advice_with_cost(Advice_Service.ADVICE_CACHE[cache_key])
 
         # 3. 임시 폴더에 클론하고 분석, 끝나면 무조건 지운다
         dest=settings.work_path / f"advice_{uuid4().hex}"
@@ -353,4 +380,4 @@ class Advice_Service:
                 Advice_Service.ADVICE_CACHE.pop(next(iter(Advice_Service.ADVICE_CACHE)))
             Advice_Service.ADVICE_CACHE[cache_key]=advice
 
-        return advice
+        return await Advice_Service.services_advice_with_cost(advice)

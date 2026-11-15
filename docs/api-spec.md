@@ -46,6 +46,11 @@ Base URL: `http://localhost:8081` · 전부 JSON · 인증 없음(로컬 전용)
 - `branch`: 생략하면 레포의 기본 브랜치.
 - `aws_account_id`(M6, 선택): 생략하면 개발 세션으로 배포(M1~M5 동작). `/api/accounts/aws`로 연결한 계정의 `a_id`.
 - `github_installation_id`(M6, 선택): 넣으면 클론·브랜치 조회에 그 설치의 토큰을 쓴다 (private 레포 가능). 생략하면 지금까지처럼 public 클론.
+- 비용 확인용 옵션(모두 선택, 생략하면 지금까지처럼 기본 사양·증설 없음·계획 없음). 타입은 엄격하다 - 정수 칸에 글자·불리언·소수를 넣으면 422:
+  - `cpu`·`memory`(문자열): `GET /api/pricing/options`의 사양 프리셋 조합이어야 한다. 둘 다 생략하거나 둘 다 보낸다 (한쪽만·프리셋이 아닌 조합은 400 `사양이 올바르지 않습니다 ...`).
+  - `planned_hours`(숫자): 0보다 크고 8760 이하의 유한한 수 (아니면 400 `예정 사용 시간은 ...`).
+  - `min_tasks`·`max_tasks`(정수)·`scale_metric`(`AVERAGE_CPU`|`AVERAGE_MEMORY`|`REQUEST_COUNT_PER_TARGET`)·`scale_target`(정수, CPU·메모리는 1~100, 요청 수는 1~100000): 자동 증설. 4개를 모두 보내거나 모두 생략한다. `1 ≤ min ≤ max ≤ MAX_TASKS_CAP`(기본 4). 위반하면 400 + 한국어 `detail`. 4개가 다 있을 때만 Express 서비스를 만들 때 `scalingTarget`으로 보낸다.
+  - 이 값들은 서비스를 **처음 만들 때** 적용된다. 이미 떠 있는 서비스를 다시 배포(`redeploy`)할 때는 사양·증설을 바꾸지 않는다.
 
 ### `Deploy_Read`
 
@@ -88,6 +93,15 @@ Base URL: `http://localhost:8081` · 전부 JSON · 인증 없음(로컬 전용)
   "last_health_at": null,
   "open_incident_id": null,
   "open_incident_status": null,
+  "cpu": null,
+  "memory": null,
+  "min_tasks": null,
+  "max_tasks": null,
+  "scale_metric": null,
+  "scale_target": null,
+  "planned_hours": null,
+  "running_since": null,
+  "plan_notified_at": null,
   "created_at": "2026-09-21T06:10:00",
   "updated_at": "2026-09-21T06:11:02"
 }
@@ -96,6 +110,8 @@ Base URL: `http://localhost:8081` · 전부 JSON · 인증 없음(로컬 전용)
 `env_pending`: 값이 비어 있는 필수 환경변수 수 (`required`이고 `status`가 `detected`인 것). DB 열이 아니라 조회할 때마다 센다. 환경변수가 없으면 0. `needs_input` 배포를 화면에 알리는 용도다.
 
 `auto_recover`: 배포별 자동 복구 스위치 (기본 `true`). `health_state`: `healthy` `unhealthy` `unknown` — 마지막 헬스체크 요약이며 아직 한 번도 확인하지 않았으면 `unknown`. `last_health_at`: 마지막 헬스체크 시각(없으면 null). `open_incident_id`: 아직 끝나지 않은(`open`·`recovering`·`needs_action`) 인시던트 번호, 없으면 null (배포마다 끝나지 않은 인시던트는 하나뿐). `open_incident_status`: 그 인시던트의 `status`(`open` `recovering` `needs_action`), 없으면 null. 둘 다 DB 열이 아니라 조회할 때마다 같은 조회로 채운다. 앞의 셋은 `deploys` 열이다 (옛 DB는 서버 시작 때 `ensure_columns`가 열을 더한다). 같은 때 더해지는 네 번째 열 `bad_commit_sha`(자동 되돌리기가 기억해 둔 나쁜 커밋, 감시가 같은 커밋을 다시 배포하지 않게 하는 내부용)는 응답에 싣지 않는다.
+
+`cpu` `memory` `min_tasks` `max_tasks` `scale_metric` `scale_target` `planned_hours`: 만들 때 고른 사양·자동 증설·예정 사용 시간 (고르지 않았으면 모두 null = 기본 사양). `running_since`: `running`이 된 시각(UTC, 시간대 표시 없음). `running`이 될 때 비어 있으면 지금 시각으로 채우고(이때 `plan_notified_at`도 비운다), 멈춤·삭제·서비스 없는 실패 때 비운다. 살아 있는 서비스의 재배포·재시작·복구는 시간을 이어서 센다. 멈춤 후 다시 켜면 처음부터 다시 센다. `plan_notified_at`: 예정 사용 시간을 넘겼다는 알림을 보낸 시각 (아직 안 보냈으면 null, `running_since`를 새로 채울 때와 `planned_hours`를 바꿀 때 비운다). 모두 `deploys` 열이며 옛 DB는 서버 시작 때 `ensure_columns`가 더한다.
 
 ### 값 목록
 
@@ -140,10 +156,12 @@ Base URL: `http://localhost:8081` · 전부 JSON · 인증 없음(로컬 전용)
 ### PATCH `/api/deploys/{d_id}/settings`
 
 ```json
-{ "auto_redeploy": false, "auto_recover": true }
+{ "auto_redeploy": false, "auto_recover": true, "planned_hours": 6 }
 ```
 
-- 두 항목 모두 선택. 보내지 않은(또는 `null`) 항목은 그대로 둔다. 하나도 없으면(빈 본문) 400 `변경할 설정을 하나 이상 보내 주세요`.
+- 세 항목 모두 선택. `auto_redeploy`·`auto_recover`는 보내지 않은(또는 `null`) 항목을 그대로 둔다. 하나도 없으면(빈 본문) 400 `변경할 설정을 하나 이상 보내 주세요`.
+- `planned_hours`(예정 사용 시간): 숫자를 보내면 바뀌고 **`null`을 보내면 계획을 지운다**. 보내지 않으면 그대로. 값은 생성 때와 같은 검사(0 초과 8760 이하, 아니면 400 한국어). 보낼 때마다 `plan_notified_at`을 null로 비워 시간 초과 알림을 다시 켠다.
+- 사양(`cpu`·`memory`)과 증설 값은 여기서 바꿀 수 없다 (422) - 확인을 거친 재배포 몫이다.
 - 모르는 항목은 422 (`extra=forbid`) - `status` 같은 값은 여기서 못 바꾼다.
 - 없는 `d_id`, 삭제된 배포는 404. 응답은 바뀐 `Deploy_Read`.
 
@@ -254,7 +272,16 @@ Base URL: `http://localhost:8081` · 전부 JSON · 인증 없음(로컬 전용)
   "confidence": "medium",
   "cpu": null,
   "memory": null,
-  "cost": { "monthly_min": null, "monthly_max": null, "currency": "USD", "basis_date": null, "note": "트래픽에 따라 늘어납니다" },
+  "cost": {
+    "monthly_min": 26.79, "monthly_max": 26.79, "currency": "USD", "basis_date": "2026-11-11", "note": "트래픽에 따라 늘어납니다",
+    "hourly_usd": 0.0367,
+    "components": [
+      { "name": "Fargate (vCPU·메모리)", "hourly_usd": 0.0142, "note": "0.25 vCPU / 0.5 GB" },
+      { "name": "ALB (고정 시간당)", "hourly_usd": 0.0225, "note": "트래픽에 따른 LCU 요금은 제외" }
+    ],
+    "not_included": ["트래픽에 따른 LCU 요금 (ALB 사용량)", "데이터 전송 요금 (인터넷으로 나가는 트래픽)", "로그 저장·조회 요금 (CloudWatch Logs)", "ECR 이미지 저장 요금"],
+    "arm64_hourly_usd": 0.0338, "spec_label": "0.25 vCPU / 0.5 GB", "spec_is_default": true
+  },
   "reasons": ["sqlalchemy, psycopg2-binary 라이브러리를 사용해 중간 사양으로 잡았습니다 (requirements.txt)"],
   "needs": [
     { "kind": "database", "supported": false, "message": "마법사가 아직 만들어 주지 못합니다", "count": null },
@@ -274,7 +301,7 @@ Base URL: `http://localhost:8081` · 전부 JSON · 인증 없음(로컬 전용)
 | `confidence` | `high` `medium` `low`. 의존성 파일을 못 읽었거나 종류를 모르는 환경변수가 2개 이상이면 low, 1개이거나 실험 지원 언어면 medium, 나머지 high |
 | `needs[].kind` | `database` `cache` `worker` `env_vars` `disk_write` `static_site`. `supported: false`는 마법사가 아직 만들어 주지 못하는 것 (`message`로 이유). `env_vars`는 `count`가 있고 1개 이상일 때만 나온다 |
 | `cpu` `memory` | **항상 `null`.** Express Mode가 허용하는 CPU·메모리 조합을 실제 배포로 확인하기 전이다 (결정 D10) |
-| `cost` | 숫자(`monthly_min` `monthly_max` `basis_date`)는 **항상 `null`**. 요금 구성을 검증하기 전에는 비운다. `note`만 채운다 |
+| `cost` | AWS 공개 가격 파일에서 읽은 단가로 **기본 사양(0.25 vCPU / 0.5 GB)** 의 온디맨드 추정치를 응답 직전에 채운다. 분석 결과 캐시에는 넣지 않고 매 요청마다 다시 계산한다(가격이 바뀌어도 낡은 값이 나가지 않게). `monthly_min` = `monthly_max` = 한 달(730시간) 금액, `hourly_usd` = 시간당, `components[]` = `{name, hourly_usd, note}`(Fargate·ALB), `not_included[]` = 빠진 요금(LCU·데이터 전송·로그·ECR), `arm64_hourly_usd` = ARM64일 때 시간당(가격이 없으면 `null`), `spec_label`·`spec_is_default` = 어떤 사양으로 계산했는지. **가격을 못 얻으면** 숫자와 `basis_date`·`hourly_usd`·`arm64_hourly_usd`·`spec_label`·`spec_is_default`는 `null`, `components`·`not_included`는 `[]`이고 `note`만 채운다 |
 
 ### 상태 코드와 `detail`
 
@@ -288,6 +315,67 @@ Base URL: `http://localhost:8081` · 전부 JSON · 인증 없음(로컬 전용)
 | 500 | 그 밖의 분석 실패 | `분석 실패 :<마스킹된 사유>` |
 
 `disk_write`는 소스에서 파일을 쓰는 코드 흔적(`open(..., "w")`, `write_text`, `fs.writeFile` 등)을 정규식·AST로 찾는 **추정**이다. 테스트 파일은 건너뛰며, 임시 파일·로그 쓰기를 잘못 잡을 수 있다.
+
+## Pricing (비용 확인 - 백엔드)
+
+AWS 공개 가격 파일(인증 없음)에서 Fargate·ALB 시간당 단가를 읽어 추정한다. 단가는 서버 파일 캐시(`PRICING_CACHE_HOURS`, 기본 24시간)에 두고, 읽기에 실패하면 낡은 캐시를 쓴다. 리전은 서버 설정(`AWS_REGION`)을 따른다. AWS 호출·DB 쓰기는 없다. 금액은 전부 USD 온디맨드 **추정치**다.
+
+| Method | Endpoint | 설명 | 응답 |
+|--------|----------|------|------|
+| GET | `/api/pricing/options` | 사양 프리셋 4개와 사용 기간 선택지 | 200 `Pricing_Options` |
+| POST | `/api/pricing/estimate` | 사양·사용 시간·최대 작업 수로 비용 추정 | 200 `Cost_Estimate` |
+
+### GET `/api/pricing/options`
+
+```json
+{
+  "specs": [{ "label": "0.25 vCPU / 0.5 GB", "cpu": "256", "memory": "512", "vcpu": 0.25, "memory_gb": 0.5 }],
+  "plans": [{ "label": "4시간", "hours": 4 }, { "label": "하루", "hours": 24 }, { "label": "일주일", "hours": 168 }, { "label": "계속", "hours": null }]
+}
+```
+
+`specs`는 항상 4개(0.25/0.5, 0.5/1, 1/2, 2/4 vCPU/GB). `plans`의 마지막 `hours: null`은 "계속"(기간을 정하지 않음).
+
+### POST `/api/pricing/estimate` 본문 `Estimate_Request`
+
+```json
+{ "cpu": "1024", "memory": "2048", "planned_hours": 24, "max_tasks": 3 }
+```
+
+| 필드 | 타입 | 설명 |
+|------|------|------|
+| `cpu` `memory` | 글자, 선택 | 둘 다 비우면(생략·`""`·공백만) 기본 사양 — 서버 `.env`의 `ECS_CPU`/`ECS_MEMORY`가 둘 다 있고 프리셋 쌍이면 그 값(`spec_is_default`는 true, `assumptions`에 `.env` 설정이라고 적는다), 아니면 256/512. 값을 주면 `options`의 프리셋 조합이어야 한다. 한쪽만 주면 400 |
+| `planned_hours` | 숫자, 선택 | 사용할 시간. 0보다 크고 8760 이하. 주면 `planned_usd`를 채운다 |
+| `max_tasks` | 정수, 선택 | 자동 증설 최대 작업 수. 1 이상 `MAX_TASKS_CAP`(기본 4) 이하. 주면 `max_hourly_usd`·`max_monthly_usd`를 채운다 |
+
+### `Cost_Estimate`
+
+```json
+{
+  "basis_date": "2026-11-11", "region": "ap-northeast-2", "currency": "USD",
+  "cpu": "1024", "memory": "2048", "spec_label": "1 vCPU / 2 GB", "spec_is_default": false,
+  "components": [{ "name": "Fargate (vCPU·메모리)", "hourly_usd": 0.0568, "note": "1 vCPU / 2 GB" }, { "name": "ALB (고정 시간당)", "hourly_usd": 0.0225, "note": "트래픽에 따른 LCU 요금은 제외" }],
+  "hourly_usd": 0.0793,
+  "periods": [{ "label": "1시간", "hours": 1, "usd": 0.08 }, { "label": "1일", "hours": 24, "usd": 1.9 }, { "label": "1주", "hours": 168, "usd": 13.32 }, { "label": "한 달", "hours": 730, "usd": 57.87 }],
+  "planned_hours": 24, "planned_usd": 1.9,
+  "max_tasks": 3, "max_hourly_usd": 0.1928, "max_monthly_usd": 140.77,
+  "arm64_hourly_usd": 0.0678, "arm64_saving_percent": 14.5,
+  "assumptions": ["금액은 AWS 가격 목록(2026-11-11 기준)의 온디맨드 USD 추정치입니다"],
+  "not_included": ["트래픽에 따른 LCU 요금 (ALB 사용량)"]
+}
+```
+
+`planned_*`·`max_*`는 해당 입력이 없으면 `null`. `arm64_*`는 ARM64 단가가 없으면 `null`. 한 달은 730시간. 서비스마다 ALB가 하나씩 생긴다고 보고 계산한다(가장 비싼 경우).
+
+### 상태 코드와 `detail`
+
+| 코드 | 언제 | `detail` |
+|------|------|----------|
+| 400 | 프리셋이 아니거나 한쪽만 줌 | `지원하지 않는 사양입니다. CPU와 메모리를 정해진 사양 중에서 함께 골라 주세요` |
+| 400 | `planned_hours`가 숫자가 아니거나(NaN·무한대) 0 이하 또는 8760 초과 | `사용 시간이 올바른 숫자가 아닙니다` / `사용 시간은 0보다 크고 8760시간(1년) 이하여야 합니다` |
+| 400 | `max_tasks`가 범위 밖 | `최대 작업 수는 1 이상 {상한} 이하여야 합니다 (요금이 크게 늘지 않도록 정한 상한)` |
+| 422 | JSON 타입이 틀림 (`max_tasks`가 불리언·소수·글자, `planned_hours`가 불리언·글자, `cpu`가 숫자 등) | FastAPI 기본 검증 오류 목록 |
+| 503 | 가격 파일을 못 읽고 쓸 캐시도 없음 | `가격 정보를 가져오지 못했습니다. 잠시 뒤 다시 시도하세요` |
 
 ## Accounts (M6 - 진행 중)
 
@@ -464,7 +552,7 @@ Hard rule 3 의 자동 조치는 두 가지뿐이다. **재시작**(서비스를
 
 - `after` 는 `n_id` 커서(1 이상, 아니면 422) - 그보다 오래된 것부터 최신순 100건. `unread=true` 면 읽지 않은 것만. 없는 `n_id`(또는 앱 안 알림이 아닌 줄)는 404 `해당 id의 알림이 없습니다`.
 - `expo_token` 은 `^(Exponent|Expo)PushToken\[.+\]$` 형식, `platform` 은 `ios` `android` (아니면 422). 없는 `p_d_id` 는 404 `해당 id의 기기가 없습니다`.
-- 설정은 한 줄뿐이고 처음 읽을 때 기본값(메일 켬, 푸시 켬, 여섯 종류 모두)으로 만든다. PATCH 본문에 모르는 항목이나 모르는 `kinds` 값이 있으면 422.
+- 설정은 한 줄뿐이고 처음 읽을 때 기본값(메일 켬, 푸시 켬, 일곱 종류 모두)으로 만든다. PATCH 본문에 모르는 항목이나 모르는 `kinds` 값이 있으면 422.
 
 ### `Notification_Read`
 ```json
@@ -479,9 +567,11 @@ Hard rule 3 의 자동 조치는 두 가지뿐이다. **재시작**(서비스를
 
 ### `Notification_Setting_Read` / PATCH 본문
 ```json
-{ "notify_email": true, "notify_push": false, "kinds": ["incident_opened", "incident_recovered", "incident_needs_action", "deploy_succeeded", "deploy_failed", "new_commit"] }
+{ "notify_email": true, "notify_push": false, "kinds": ["incident_opened", "incident_recovered", "incident_needs_action", "deploy_succeeded", "deploy_failed", "new_commit", "plan_exceeded"] }
 ```
-PATCH 는 보낸 항목만 바꾼다 (`notify_email`·`notify_push` 는 true/false, `kinds` 는 위 여섯 가지 중 일부).
+PATCH 는 보낸 항목만 바꾼다 (`notify_email`·`notify_push` 는 true/false, `kinds` 는 위 일곱 가지 중 일부).
+
+옛 설정 보정: `plan_exceeded` 가 생기기 전에 저장된 설정(내부 `kinds_version` 이 비어 있음)을 처음 읽을 때, 목록이 예전 기본 여섯 가지와 같으면 `plan_exceeded` 를 더해 일곱 가지로 바꾼다 (한 번만). 일부 종류를 일부러 끈 목록은 그대로 둔다. `kinds` 를 PATCH 하면 그 선택이 최종이라 이후 여섯 가지만 보내 `plan_exceeded` 를 끄면 다시 켜지지 않는다. `kinds_version` 은 응답에 나오지 않는다.
 
 ### 알림이 만들어지는 때 (서버 안 - API 아님)
 
@@ -493,6 +583,7 @@ PATCH 는 보낸 항목만 바꾼다 (`notify_email`·`notify_push` 는 true/fal
 | `deploy_succeeded` | 파이프라인이 `running` 에 닿았을 때 |
 | `deploy_failed` | 파이프라인이 `failed` 로 멈췄을 때 |
 | `new_commit` | 자동 재배포가 꺼진 배포에서 새 커밋을 처음 봤을 때 (커밋마다 한 번) |
+| `plan_exceeded` | `running` 배포가 예정한 사용 시간(`planned_hours`)을 `running_since` 부터 넘겼을 때 (감시 루프가 1분마다 점검, 알림만 - 멈추거나 지우지 않는다). 시작 기록이 새로 생기거나 예정 시간을 바꾸면 다시 알린다 |
 
 - 종류가 설정에서 꺼져 있으면 아무것도 만들지 않는다. 켜져 있으면 `inapp` 줄을 항상 남기고, `notify_email` 이 켜져 있고 `MAIL_HOST`·`MAIL_TO` 가 있으면 `email` 줄, `notify_push` 가 켜져 있고 등록된 기기가 있으면 `push` 줄을 남긴다 (`queued` -> `sent|failed`, 실패 이유는 마스킹한 `error`). 메일 설정이 없으면 줄도 남기지 않는다.
 - 인시던트 알림은 (인시던트, `kind`, 채널)마다 한 줄 - 같은 알림을 다시 보내려 해도 건너뛴다. `new_commit` 은 (배포, 커밋, 채널)마다 한 줄.

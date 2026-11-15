@@ -16,6 +16,7 @@ from features.health.crud import Health_Crud
 from features.health.models import Health_Check
 from features.deploys.services import Deploy_Service
 from features.incidents.services import Incident_Service
+from features.notifications.services import Notification_Service
 
 logger=logging.getLogger(__name__)
 
@@ -214,6 +215,18 @@ class Health_Service:
                                 detail=f"헬스체크 기록 정리 실패 :{mask_text(str(e))}")
 
 
+    # 예정 사용 시간 초과 알림 - 시간이 지난 배포를 찾아 알림만 보낸다 (멈추거나 지우지 않는다). 보낸 d_id 목록을 돌려준다
+    @staticmethod
+    async def services_health_plan_notify(now:datetime|None=None) -> list[int]:
+        async with AsyncSessionLocal() as db:
+            d_ids=await Deploy_Service.services_deploy_plan_check(db, now)
+
+        for d_id in d_ids:
+            Notification_Service.services_notification_deploy_fire(d_id, 'plan_exceeded')
+
+        return d_ids
+
+
     # 감시 루프 - 서버가 떠 있는 동안 계속 돈다. 한 번 실패해도 멈추지 않는다 (main.py lifespan 에서 시작)
     @staticmethod
     async def services_health_monitor_loop() -> None:
@@ -225,6 +238,12 @@ class Health_Service:
                     await Health_Service.services_health_check_once(db)
             except Exception as e:
                 logger.warning("헬스 감시 한 차례 실패 : %s", mask_text(str(e))[:200])
+
+            # 예정 사용 시간 초과 알림 - 헬스 점검과 따로 감싸서 어느 쪽이 실패해도 서로 막지 않는다
+            try:
+                await Health_Service.services_health_plan_notify()
+            except Exception as e:
+                logger.warning("예정 시간 점검 실패 : %s", mask_text(str(e))[:200])
 
             # 오래된 기록 정리는 가끔만 (첫 차례 포함)
             if passes % HEALTH_PRUNE_EVERY == 0:

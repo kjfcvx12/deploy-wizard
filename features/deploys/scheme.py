@@ -1,4 +1,4 @@
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, StrictFloat, StrictInt, StrictStr, field_validator
 from datetime import datetime
 from typing import Annotated
 import json
@@ -15,6 +15,15 @@ class Deploy_Create(Deploy_Base):
     # M6 - 연결된 계정. 없으면 개발 세션 + public 클론 (M1~M5 그대로)
     aws_account_id: int | None = None
     github_installation_id: int | None = None
+
+    # 비용 확인 - 모두 선택. 타입은 엄격하게 받고(글자 숫자·불리언 거절), 범위·조합은 서비스가 한국어 400 으로 검사한다
+    cpu: StrictStr | None = None
+    memory: StrictStr | None = None
+    min_tasks: StrictInt | None = None
+    max_tasks: StrictInt | None = None
+    scale_metric: StrictStr | None = None
+    scale_target: StrictInt | None = None
+    planned_hours: StrictInt | StrictFloat | None = None
 
 
 class Deploy_In_DB(Deploy_Base):
@@ -58,6 +67,17 @@ class Deploy_In_DB(Deploy_Base):
     last_health_at: datetime | None = None
     open_incident_id: int | None = None
     open_incident_status: str | None = None
+
+    # 비용 확인 - 고른 사양·자동 증설·예정 사용 시간, running 이 된 시각과 시간 초과 알림을 보낸 시각
+    cpu: str | None = None
+    memory: str | None = None
+    min_tasks: int | None = None
+    max_tasks: int | None = None
+    scale_metric: str | None = None
+    scale_target: int | None = None
+    planned_hours: float | None = None
+    running_since: datetime | None = None
+    plan_notified_at: datetime | None = None
 
     created_at: datetime
     updated_at: datetime
@@ -124,9 +144,10 @@ class Deploy_Health(BaseModel):
     detail: str | None = None
 
 
-# 배포별 설정 변경 - 보낸 항목만 바꾼다 (모르는 항목은 거부)
+# 배포별 설정 변경 - 보낸 항목만 바꾼다 (모르는 항목은 거부). planned_hours 는 null 을 보내면 계획을 지운다
 class Deploy_Settings_Update(BaseModel):
     auto_redeploy: bool | None = None
     auto_recover: bool | None = None
+    planned_hours: StrictInt | StrictFloat | None = None
 
     model_config = ConfigDict(extra='forbid')

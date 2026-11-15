@@ -1,12 +1,14 @@
 import asyncio
 import logging
+import math
 import httpx
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from sqlalchemy.ext.asyncio import AsyncSession
 from fastapi import HTTPException, status
 
 from shared.masking import mask_text
+from shared.settings import settings
 
 from features.deploys.crud import Deploy_Crud
 from features.deploys.scheme import Deploy_Create, Deploy_Health, Deploy_Settings_Update
@@ -18,6 +20,7 @@ from features.express.services import Express_Service
 from features.accounts.services import Aws_Account_Service, Github_Service
 from features.envvars.services import Env_Service
 from features.incidents.services import Incident_Service
+from features.pricing.services import Pricing_Service, MAX_PLANNED_HOURS
 
 logger=logging.getLogger(__name__)
 
@@ -118,16 +121,50 @@ class Deploy_Service:
                                 detail=f"레포를 조회할 수 없습니다 :{mask_text(str(e))}")
 
 
+    # 예정 사용 시간 검사 - 비어 있으면 통과, 유한한 수이고 0 보다 크고 1년(8760시간) 이하여야 한다. 아니면 400
+    @staticmethod
+    def services_deploy_check_planned_hours(planned_hours:float|None) -> None:
+        if planned_hours is None:
+            return
+
+        if isinstance(planned_hours, float) and not math.isfinite(planned_hours):
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST,
+                                detail='예정 사용 시간이 올바른 숫자가 아닙니다')
+
+        if not 0 < planned_hours <= MAX_PLANNED_HOURS:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST,
+                                detail=f"예정 사용 시간은 0보다 크고 {MAX_PLANNED_HOURS}시간(1년) 이하여야 합니다")
+
+
+    # 만들 때 받은 사양·증설·예정 시간 검사 - 가격 기능의 규칙을 그대로 쓴다. 문제가 있으면 한국어 400
+    @staticmethod
+    def services_deploy_check_options(deploy:Deploy_Create) -> None:
+        if not Pricing_Service.services_pricing_spec_valid(deploy.cpu, deploy.memory):
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST,
+                                detail='사양이 올바르지 않습니다. CPU와 메모리를 정해진 사양 중에서 함께 골라 주세요')
+
+        Deploy_Service.services_deploy_check_planned_hours(deploy.planned_hours)
+
+        message=Pricing_Service.services_pricing_scaling_valid(deploy.min_tasks, deploy.max_tasks, deploy.scale_metric,
+                                                               deploy.scale_target, settings.max_tasks_cap)
+        if message:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=message)
+
+
     # 배포 생성 - 기록을 만들고 파이프라인을 띄운다
     @staticmethod
     async def services_deploy_create(db:AsyncSession, deploy:Deploy_Create):
         try:
             repo_url=Repo_Service.services_repo_check_url(deploy.repo_url)
             branch=Repo_Service.services_repo_check_branch(deploy.branch)
+            Deploy_Service.services_deploy_check_options(deploy)
 
             new_deploy=await Deploy_Crud.crud_deploy_create(db, Deploy_Create(
                 repo_url=repo_url, branch=branch,
-                aws_account_id=deploy.aws_account_id, github_installation_id=deploy.github_installation_id))
+                aws_account_id=deploy.aws_account_id, github_installation_id=deploy.github_installation_id,
+                cpu=deploy.cpu, memory=deploy.memory, min_tasks=deploy.min_tasks, max_tasks=deploy.max_tasks,
+                scale_metric=deploy.scale_metric, scale_target=deploy.scale_target,
+                planned_hours=None if deploy.planned_hours is None else float(deploy.planned_hours)))
 
             await db.commit()
             await db.refresh(new_deploy)
@@ -229,7 +266,7 @@ class Deploy_Service:
             session=await Aws_Account_Service.services_aws_account_build_session(db, deploy.aws_account_id)
             await asyncio.to_thread(Express_Service.services_express_delete, session, deploy.service_arn)
 
-            update_deploy=await Deploy_Crud.crud_deploy_update(db, d_id, {"status": "stopped", "service_arn": None, "endpoint": None})
+            update_deploy=await Deploy_Crud.crud_deploy_update(db, d_id, {"status": "stopped", "service_arn": None, "endpoint": None, "running_since": None})
 
             await db.commit()
             await db.refresh(update_deploy)
@@ -304,7 +341,7 @@ class Deploy_Service:
                     if not dry_run:
                         await asyncio.to_thread(Express_Service.services_express_delete, session, deploy.service_arn)
 
-                    update_data.update({"service_arn": None, "endpoint": None})
+                    update_data.update({"service_arn": None, "endpoint": None, "running_since": None})
                     if deploy.status == 'running':
                         update_data["status"]='stopped'
                     report["stopped"].append(name)
@@ -356,7 +393,7 @@ class Deploy_Service:
                     await asyncio.to_thread(Express_Service.services_express_delete_repository, session, repository_name)
                     deleted.append(repository_name)
 
-            await Deploy_Crud.crud_deploy_update(db, d_id, {"status": "deleted", "endpoint": None})
+            await Deploy_Crud.crud_deploy_update(db, d_id, {"status": "deleted", "endpoint": None, "running_since": None})
 
             # 저장소를 지웠으면 직전 버전(previous)의 이미지도 없다 - 되돌리기 대상에서 뺀다
             if repository_name:
@@ -526,13 +563,19 @@ class Deploy_Service:
         return False
 
 
-    # 배포별 설정 변경 - 보낸 항목만 바꾼다 (자동 재배포, 자동 복구)
+    # 배포별 설정 변경 - 보낸 항목만 바꾼다 (자동 재배포, 자동 복구, 예정 사용 시간)
+    # 예정 사용 시간은 null 을 보내면 계획을 지운다. 보낼 때마다 시간 초과 알림 기록(plan_notified_at)을 비워 알림을 다시 켠다
     @staticmethod
     async def services_deploy_settings_update(db: AsyncSession, d_id: int, body: Deploy_Settings_Update):
         try:
             await Deploy_Service.services_deploy_get_d_id(db, d_id)
 
-            changes=body.model_dump(exclude_none=True)
+            changes=body.model_dump(exclude_none=True, exclude={"planned_hours"})
+
+            if "planned_hours" in body.model_fields_set:
+                Deploy_Service.services_deploy_check_planned_hours(body.planned_hours)
+                changes["planned_hours"]=None if body.planned_hours is None else float(body.planned_hours)
+                changes["plan_notified_at"]=None
 
             if not changes:
                 raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST,
@@ -550,6 +593,28 @@ class Deploy_Service:
             await db.rollback()
             raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                                 detail=f"설정 변경 실패 :{mask_text(str(e))}")
+
+
+    # 예정 사용 시간 초과 점검 - 알림만 한다 (멈추거나 지우지 않는다). 시간이 지난 배포에 알림 기록(plan_notified_at)을 남기고 d_id 를 돌려준다
+    # 정확히 경계(지난 시간 == 예정 시간)에서도 포함한다. 알림 기록이 있으면 다시 돌려주지 않는다 (멈췄다 켜거나 예정 시간을 바꾸면 비워진다)
+    @staticmethod
+    async def services_deploy_plan_check(db: AsyncSession, now: datetime | None = None) -> list[int]:
+        try:
+            now=now or datetime.now(timezone.utc).replace(tzinfo=None)
+
+            due=[d for d in await Deploy_Crud.crud_deploy_get_plan_candidates(db)
+                 if now - d.running_since >= timedelta(hours=d.planned_hours)]
+
+            for deploy in due:
+                await Deploy_Crud.crud_deploy_update(db, deploy.d_id, {"plan_notified_at": now})
+
+            await db.commit()
+            return [d.d_id for d in due]
+
+        except Exception as e:
+            await db.rollback()
+            raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                                detail=f"예정 시간 점검 실패 :{mask_text(str(e))}")
 
 
     # 헬스체크 결과 반영 - running 인 배포만. health_state·last_health_at 을 갱신하고, 정상이면 current 릴리스의 healthy_since 를 처음 한 번 채운다

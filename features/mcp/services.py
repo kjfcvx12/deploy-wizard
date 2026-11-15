@@ -21,6 +21,11 @@ LIVE_STATUSES=frozenset({
 TERMINAL_STATUSES=frozenset({"running", "failed", "needs_input", "stopped", "deleted"})
 
 ADVICE_FIELDS=("tier", "confidence", "cpu", "memory", "cost", "reasons", "needs", "unknowns", "language", "support_level", "app_dir")
+# 한 달 금액으로 보는 기간 이름 (가격 응답의 periods 라벨)
+MONTH_LABEL="한 달"
+NO_PRICE_LINE="가격을 가져오지 못했습니다 — 요금이 계속 나옵니다"
+DEFAULT_SPEC_NOTE="기본 사양(AWS 문서 기준, 실제 확인 전)"
+SCALING_ERROR="자동 증설은 min_tasks, max_tasks, scale_metric, scale_target 네 값을 모두 주거나 모두 빼 주세요."
 WAIT_MAX_SECONDS=120
 LOG_TAIL_MAX=200
 TOKEN_ERROR="확인 토큰이 없거나 만료됐거나 이미 썼습니다. 미리보기부터 다시 하세요"
@@ -213,6 +218,79 @@ class Mcp_Service:
             "instruction":CONFIRM_INSTRUCTION,
         }
 
+    # 새 배포의 사양·계획·증설 인자 중 값이 있는 것만 (미리보기·토큰·실행 본문이 같은 값을 쓴다)
+    @staticmethod
+    def services_mcp_deploy_options(
+        cpu:str|None, memory:str|None, planned_hours:float|None,
+        min_tasks:int|None, max_tasks:int|None, scale_metric:str|None, scale_target:int|None,
+    ) -> dict:
+        options={
+            "cpu":cpu, "memory":memory, "planned_hours":planned_hours, "min_tasks":min_tasks,
+            "max_tasks":max_tasks, "scale_metric":scale_metric, "scale_target":scale_target,
+        }
+        return {name:value for name, value in options.items() if value is not None}
+
+    # 증설 값은 네 개를 모두 주거나 모두 빼야 한다 - 아니면 Wizard_Error
+    @staticmethod
+    def services_mcp_scaling_check(options:dict) -> None:
+        given=[name for name in ("min_tasks", "max_tasks", "scale_metric", "scale_target") if name in options]
+        if given and len(given) != 4:
+            raise Wizard_Error(SCALING_ERROR)
+
+    # 비용 추정을 부른다 - 값이 잘못된 요청(400·422)은 그대로 던지고, 가격을 못 얻은 경우(503·연결 실패 등)는 None
+    @staticmethod
+    async def services_mcp_estimate(client:Wizard_Client, options:dict) -> dict|None:
+        body={name:options[name] for name in ("cpu", "memory", "planned_hours", "max_tasks") if name in options}
+        try:
+            return await client.client_request("POST", "/api/pricing/estimate", json=body)
+        except Wizard_Error as e:
+            if e.status_code in (400, 422):
+                raise
+            return None
+
+    # 달러 금액을 소수 넷째 자리까지 보인다
+    @staticmethod
+    def services_mcp_usd(value:float|None) -> str:
+        return f"${float(value or 0):.4f}"
+
+    # 비용 추정 응답을 한국어 줄들로 만든다 - 모든 숫자는 응답 값 그대로, 응답 속 글은 마스킹·자르기
+    @staticmethod
+    def services_mcp_cost_lines(estimate:dict|None) -> list[str]:
+        if not estimate:
+            return [NO_PRICE_LINE]
+        usd=Mcp_Service.services_mcp_usd
+        lines=[]
+        spec=f"사양 {guard_text_clip(estimate.get('spec_label') or '')}"
+        if estimate.get("spec_is_default"):
+            spec+=f" - {DEFAULT_SPEC_NOTE}"
+        lines.append(spec)
+        for item in estimate.get("components") or []:
+            lines.append(f"- {guard_text_clip(item.get('name'))}: 시간당 {usd(item.get('hourly_usd'))}")
+        lines.append(f"합계: 시간당 {usd(estimate.get('hourly_usd'))}")
+        periods=estimate.get("periods") or []
+        month=next((p for p in periods if p.get("label") == MONTH_LABEL), None)
+        if month is not None:
+            lines.append(f"한 달 계속 켜 두면 약 ${float(month['usd']):.2f}")
+        if estimate.get("planned_hours") is not None and estimate.get("planned_usd") is not None:
+            hours=float(estimate["planned_hours"])
+            hours_text=str(int(hours)) if hours == int(hours) else str(hours)
+            lines.append(f"{hours_text}시간 동안 약 ${float(estimate['planned_usd']):.2f}")
+        if estimate.get("max_tasks") is not None and estimate.get("max_hourly_usd") is not None:
+            lines.append(
+                f"자동 증설로 최대 {estimate['max_tasks']}개까지 늘면 시간당 최대 {usd(estimate['max_hourly_usd'])}, "
+                f"한 달 최대 ${float(estimate.get('max_monthly_usd') or 0):.2f}"
+            )
+        if estimate.get("arm64_saving_percent") is not None:
+            saving=float(estimate["arm64_saving_percent"])
+            saving_text=str(int(saving)) if saving == int(saving) else f"{saving:g}"
+            lines.append(f"ARM64면 약 {saving_text}% 저렴하지만 이 마법사는 x86으로만 빌드합니다")
+        not_included=[guard_text_clip(item) for item in estimate.get("not_included") or []]
+        if not_included:
+            lines.append("포함되지 않는 것: " + ", ".join(not_included))
+        if estimate.get("basis_date"):
+            lines.append(f"가격 기준일 {guard_text_clip(estimate['basis_date'])} (USD, 온디맨드 추정)")
+        return lines
+
     # 끝난 동작의 결과 - 배포 요약에 status=done 과 배포의 실제 상태(deploy_status)를 붙인다
     @staticmethod
     def services_mcp_done(raw:dict) -> dict:
@@ -228,8 +306,17 @@ class Mcp_Service:
         connection_id:int|None=None,
         confirm_token:str|None=None,
         max_live:int=3,
+        cpu:str|None=None,
+        memory:str|None=None,
+        planned_hours:float|None=None,
+        min_tasks:int|None=None,
+        max_tasks:int|None=None,
+        scale_metric:str|None=None,
+        scale_target:int|None=None,
     ) -> dict:
-        args={"repo_url":repo_url, "branch":branch, "connection_id":connection_id}
+        options=Mcp_Service.services_mcp_deploy_options(cpu, memory, planned_hours, min_tasks, max_tasks, scale_metric, scale_target)
+        Mcp_Service.services_mcp_scaling_check(options)
+        args={"repo_url":repo_url, "branch":branch, "connection_id":connection_id, **options}
         if confirm_token:
             Mcp_Service.services_mcp_consume(store, confirm_token, "deploy", args)
         await Mcp_Service.services_mcp_live_check(client, max_live)
@@ -247,9 +334,11 @@ class Mcp_Service:
                 body["aws_account_id"]=aws_id
             if github_id is not None:
                 body["github_installation_id"]=github_id
+            body.update(options)
             raw=await client.client_request("POST", "/api/deploys", json=body)
             return Mcp_Service.services_mcp_done(raw)
 
+        estimate=await Mcp_Service.services_mcp_estimate(client, options)
         advice=await Mcp_Service.services_mcp_analyze(client, repo_url, branch, github_id)
         spec=f"추천 사양 {advice.get('tier') or '알 수 없음'}"
         if advice.get("cpu") and advice.get("memory"):
@@ -261,6 +350,7 @@ class Mcp_Service:
         )
         if label:
             summary+=f" 연결: {label}."
+        summary+="\n" + "\n".join(Mcp_Service.services_mcp_cost_lines(estimate))
         warnings=[
             "ECR·ECS 서비스·ALB가 만들어지고 떠 있는 동안 요금이 계속 나옵니다.",
             "멈추거나 삭제하기 전까지 요금이 계속됩니다. 끝나면 stop_deploy 또는 delete_deploy 를 쓰세요.",

@@ -1,5 +1,6 @@
 import asyncio
 import threading
+from datetime import datetime, timezone
 
 from fastapi import HTTPException
 
@@ -16,7 +17,7 @@ from features.repos.scheme import Repo_App
 from features.dockerfiles.services import Dockerfile_Service
 from features.dockerfiles.scheme import Dockerfile_Result
 from features.builds.services import Build_Service
-from features.express.services import Express_Service
+from features.express.services import Express_Service, SCALING_KEYS
 from features.explains.services import Explain_Service
 from features.accounts.services import Aws_Account_Service, Github_Service
 from features.envvars.services import Env_Service
@@ -87,6 +88,12 @@ class Deploy_Pipeline:
         Deploy_Pipeline.tasks[d_id]=task
         task.add_done_callback(lambda _: Deploy_Pipeline.tasks.pop(d_id, None))
         return True
+
+
+    # 지금 시각 - 다른 기능과 같은 형식 (UTC, 시간대 표시 없음)
+    @staticmethod
+    def pipeline_now() -> datetime:
+        return datetime.now(timezone.utc).replace(tzinfo=None)
 
 
     # 상태·필드 저장 - 단계마다 짧은 세션을 따로 연다
@@ -190,6 +197,10 @@ class Deploy_Pipeline:
             return
 
         repo_url, branch=deploy.repo_url, deploy.branch
+        cpu, memory=deploy.cpu, deploy.memory
+        # 증설 값은 4개가 다 있을 때만 쓴다 (일부만 있으면 보내지 않는다)
+        scaling_values=(deploy.min_tasks, deploy.max_tasks, deploy.scale_metric, deploy.scale_target)
+        scaling=dict(zip(SCALING_KEYS, scaling_values)) if all(v is not None for v in scaling_values) else None
         service_arn=deploy.service_arn
         slug=Repo_Service.services_repo_slug(repo_url)
         repo_path=settings.work_path / f"deploy_{d_id}"
@@ -333,7 +344,8 @@ class Deploy_Pipeline:
             role_arns=await Deploy_Pipeline.pipeline_get_role_arns(deploy.aws_account_id)
             created=await asyncio.to_thread(Express_Service.services_express_create, session, service_name, image_uri,
                                             result.port, result.health_check_path, environment=environment,
-                                            role_arns=role_arns, on_progress=buffer.buffer_add)
+                                            role_arns=role_arns, on_progress=buffer.buffer_add,
+                                            cpu=cpu, memory=memory, scaling=scaling)
             service_arn=created.service_arn
             # arn은 받자마자 저장한다. 이후에 실패해도 정리할 수 있어야 한다
             await Deploy_Pipeline.pipeline_update(d_id, service_name=created.service_name or service_name,
@@ -343,7 +355,11 @@ class Deploy_Pipeline:
 
         buffer.step='running'
         buffer.buffer_add(f"배포 완료 :{status.endpoint}", 'cmd')
-        await Deploy_Pipeline.pipeline_update(d_id, status='running', endpoint=status.endpoint)
+        # running_since 가 비어 있을 때(처음 뜸, 멈춘 뒤 다시 켬)만 지금 시각으로 채우고 알림 기록도 비워 새로 센다. 살아 있는 서비스의 재배포는 시간을 이어서 센다
+        running_fields={"status": 'running', "endpoint": status.endpoint}
+        if deploy.running_since is None:
+            running_fields.update({"running_since": Deploy_Pipeline.pipeline_now(), "plan_notified_at": None})
+        await Deploy_Pipeline.pipeline_update(d_id, **running_fields)
         await Deploy_Pipeline.pipeline_release_record(d_id, buffer)
         Deploy_Pipeline.pipeline_notify(d_id, 'deploy_succeeded', buffer)
 
@@ -401,8 +417,13 @@ class Deploy_Pipeline:
         except Exception as e:
             buffer.buffer_add(f"환경변수 이름 기록을 건너뜁니다 ({type(e).__name__})", 'warn')
 
-        await Deploy_Pipeline.pipeline_update(d_id, status='failed', error_step=error_step,
-                                              error_msg=error_msg, explain=explain_json)
+        # 서비스가 없는 실패(떠 있던 적 없음)만 running_since 를 비운다. 서비스가 살아 있으면 시간을 이어서 센다 (실행 중에 service_arn 이 저장됐을 수 있어 다시 읽는다)
+        failed_fields={"status": 'failed', "error_step": error_step, "error_msg": error_msg, "explain": explain_json}
+        async with AsyncSessionLocal() as db:
+            current=await Deploy_Crud.crud_deploy_get_by_d_id(db, d_id)
+        if current is not None and not current.service_arn:
+            failed_fields["running_since"]=None
+        await Deploy_Pipeline.pipeline_update(d_id, **failed_fields)
         await Deploy_Pipeline.pipeline_record_issue(d_id, error_step, error_msg, explain_json)
         Deploy_Pipeline.pipeline_notify(d_id, 'deploy_failed', buffer)
 
@@ -425,11 +446,11 @@ class Deploy_Pipeline:
 
             for deploy in stuck:
                 step=deploy.status
-                await Deploy_Crud.crud_deploy_update(db, deploy.d_id, {
-                    "error_step": step,
-                    "error_msg": error_msg,
-                    "status": "failed",
-                })
+                update_data={"error_step": step, "error_msg": error_msg, "status": "failed"}
+                # 서비스가 살아 있으면 running_since 를 이어서 센다
+                if not deploy.service_arn:
+                    update_data["running_since"]=None
+                await Deploy_Crud.crud_deploy_update(db, deploy.d_id, update_data)
                 await Deploy_Crud.crud_deploy_issue_create(db, deploy.d_id, step, error_msg, None)
 
             await db.commit()

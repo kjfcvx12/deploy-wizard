@@ -523,6 +523,29 @@ async def test_mcp_connections_hides_sensitive():
     assert result[0]["aws"]["account"] == "****9012"
 
 
+# 비용 추정 응답 한 건 (가짜 가격) - 요청에 max_tasks·planned_hours 가 있으면 그 줄도 채운다
+def raw_estimate(cpu:str|None=None, memory:str|None=None, planned_hours:float|None=None, max_tasks:int|None=None) -> dict:
+    return {
+        "basis_date":"2026-11-11", "region":"ap-northeast-2", "currency":"USD",
+        "cpu":cpu or "256", "memory":memory or "512",
+        "spec_label":"0.25 vCPU / 0.5 GB", "spec_is_default":cpu is None,
+        "components":[
+            {"name":"Fargate 작업", "hourly_usd":0.0123, "note":None},
+            {"name":"ALB (고정 시간당)", "hourly_usd":0.0225, "note":"트래픽에 따른 LCU 요금은 제외"},
+        ],
+        "hourly_usd":0.0348,
+        "periods":[
+            {"label":"1시간", "hours":1, "usd":0.03}, {"label":"1일", "hours":24, "usd":0.84},
+            {"label":"1주", "hours":168, "usd":5.85}, {"label":"한 달", "hours":730, "usd":25.4},
+        ],
+        "planned_hours":planned_hours, "planned_usd":None if planned_hours is None else 0.35,
+        "max_tasks":max_tasks, "max_hourly_usd":None if max_tasks is None else 0.0717, "max_monthly_usd":None if max_tasks is None else 52.34,
+        "arm64_hourly_usd":0.0300, "arm64_saving_percent":14.0,
+        "assumptions":["온디맨드 가격으로 계산했습니다"],
+        "not_included":["트래픽에 따른 LCU 요금 (ALB 사용량)", "데이터 전송·로그 저장 비용"],
+    }
+
+
 # 행동 도구 시험용 가짜 서버 - 요청을 모두 기록하고 경로별로 응답한다
 class Fake_Wizard:
 
@@ -531,6 +554,9 @@ class Fake_Wizard:
         self.connections=connections if connections is not None else []
         self.requests:list[tuple[str, str, dict|None]]=[]
         self.fail_detail:str|None=None
+        self.estimate_status:int=200
+        self.estimate_detail:str="가격 정보를 가져오지 못했습니다. 잠시 뒤 다시 시도하세요"
+        self.estimate_edit=None
 
     # 기록된 요청 중 메서드·경로가 같은 것의 개수
     def count(self, method:str, path:str) -> int:
@@ -544,7 +570,7 @@ class Fake_Wizard:
         body=json.loads(request.content) if request.content else None
         path=request.url.path
         self.requests.append((request.method, path, body))
-        if request.method in ("POST", "DELETE") and self.fail_detail and path != "/api/deploys/advice":
+        if request.method in ("POST", "DELETE") and self.fail_detail and path not in ("/api/deploys/advice", "/api/pricing/estimate"):
             return httpx.Response(409, json={"detail":self.fail_detail})
         if request.method == "GET" and path == "/api/deploys":
             return httpx.Response(200, json=self.deploys)
@@ -554,6 +580,13 @@ class Fake_Wizard:
             d_id=int(path.rsplit("/", 1)[1])
             known=next((row for row in self.deploys if row["d_id"] == d_id), None)
             return httpx.Response(200, json=known if known is not None else raw_deploy(d_id))
+        if request.method == "POST" and path == "/api/pricing/estimate":
+            if self.estimate_status != 200:
+                return httpx.Response(self.estimate_status, json={"detail":self.estimate_detail})
+            data=raw_estimate(**(body or {}))
+            if self.estimate_edit:
+                self.estimate_edit(data)
+            return httpx.Response(200, json=data)
         if request.method == "POST" and path == "/api/deploys/advice":
             return httpx.Response(200, json={
                 "tier":"small", "confidence":"high", "cpu":None, "memory":None,
@@ -981,4 +1014,178 @@ def test_confirm_store_discard():
     token=store.store_issue("deploy", {"a":1})
     store.store_discard(token)
     store.store_discard("none")
+    assert store.tokens == {}
+
+
+@pytest.mark.asyncio
+async def test_mcp_analyze_keeps_extended_cost_fields():
+    cost={
+        "month":10, "hourly_usd":0.0348, "components":[{"name":"ALB", "hourly_usd":0.0225, "note":None}],
+        "not_included":["LCU 요금"], "arm64_hourly_usd":0.03, "spec_label":"0.25 vCPU / 0.5 GB", "spec_is_default":True,
+    }
+
+    def handler(request:httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"tier":"small", "cost":cost})
+
+    client=make_client(handler)
+    try:
+        result=await Mcp_Service.services_mcp_analyze(client, REPO)
+    finally:
+        await client.aclose()
+    assert result["cost"] == cost
+
+
+@pytest.mark.asyncio
+async def test_mcp_deploy_preview_includes_cost_lines():
+    fake=Fake_Wizard()
+    client=make_client(fake.handler)
+    store=Confirm_Store(300)
+    try:
+        preview=await Mcp_Service.services_mcp_deploy(client, store, REPO, cpu="512", memory="1024", planned_hours=3, max_tasks=2, min_tasks=1, scale_metric="AVERAGE_CPU", scale_target=60)
+    finally:
+        await client.aclose()
+    assert fake.body("POST", "/api/pricing/estimate") == {"cpu":"512", "memory":"1024", "planned_hours":3, "max_tasks":2}
+    summary=preview["summary"]
+    assert "ALB" in summary and "$0.0225" in summary and "$0.0123" in summary
+    assert "시간당" in summary and "$0.0348" in summary
+    assert "한 달 계속 켜 두면 약 $25.40" in summary
+    assert "3시간 동안 약 $0.35" in summary
+    assert "자동 증설로 최대 2개까지 늘면 시간당 최대 $0.0717, 한 달 최대 $52.34" in summary
+    assert "LCU" in summary
+    assert "ARM64면 약 14% 저렴하지만 이 마법사는 x86으로만 빌드합니다" in summary
+    assert "2026-11-11" in summary
+    assert "0.25 vCPU / 0.5 GB" in summary
+    assert "기본 사양" not in summary
+    assert preview["status"] == "confirmation_required"
+    assert fake.count("POST", "/api/deploys") == 0
+
+
+@pytest.mark.asyncio
+async def test_mcp_deploy_preview_default_spec_note_and_no_optional_lines():
+    fake=Fake_Wizard()
+    client=make_client(fake.handler)
+    store=Confirm_Store(300)
+    try:
+        preview=await Mcp_Service.services_mcp_deploy(client, store, REPO)
+    finally:
+        await client.aclose()
+    assert fake.body("POST", "/api/pricing/estimate") == {}
+    assert "기본 사양(AWS 문서 기준, 실제 확인 전)" in preview["summary"]
+    assert "동안 약" not in preview["summary"]
+    assert "자동 증설" not in preview["summary"]
+
+
+@pytest.mark.asyncio
+async def test_mcp_deploy_preview_without_prices():
+    fake=Fake_Wizard()
+    fake.estimate_status=503
+    client=make_client(fake.handler)
+    store=Confirm_Store(300)
+    try:
+        preview=await Mcp_Service.services_mcp_deploy(client, store, REPO)
+    finally:
+        await client.aclose()
+    assert preview["status"] == "confirmation_required"
+    assert "가격을 가져오지 못했습니다 — 요금이 계속 나옵니다" in preview["summary"]
+    assert preview["confirm_token"]
+    assert len(store.tokens) == 1
+
+
+@pytest.mark.asyncio
+async def test_mcp_deploy_preview_bad_option_raises_without_token():
+    fake=Fake_Wizard()
+    fake.estimate_status=400
+    fake.estimate_detail="지원하지 않는 사양입니다"
+    client=make_client(fake.handler)
+    store=Confirm_Store(300)
+    try:
+        with pytest.raises(Wizard_Error) as exc_info:
+            await Mcp_Service.services_mcp_deploy(client, store, REPO, cpu="300", memory="512")
+    finally:
+        await client.aclose()
+    assert "지원하지 않는 사양" in exc_info.value.message
+    assert store.tokens == {}
+
+
+@pytest.mark.asyncio
+async def test_mcp_deploy_preview_guards_api_text():
+    secret="ghp_" + "a" * 36
+    fake=Fake_Wizard()
+
+    def tainted(data:dict) -> None:
+        data["not_included"]=[f"토큰 {secret} " + "길" * 800]
+        data["components"][0]["name"]=f"작업 {secret}"
+
+    fake.estimate_edit=tainted
+    client=make_client(fake.handler)
+    store=Confirm_Store(300)
+    try:
+        preview=await Mcp_Service.services_mcp_deploy(client, store, REPO)
+    finally:
+        await client.aclose()
+    assert secret not in preview["summary"]
+    assert "…" in preview["summary"]
+
+
+@pytest.mark.asyncio
+async def test_mcp_deploy_token_bound_to_spec_and_plan():
+    fake=Fake_Wizard()
+    client=make_client(fake.handler)
+    store=Confirm_Store(300)
+    try:
+        preview=await Mcp_Service.services_mcp_deploy(client, store, REPO, cpu="256", memory="512", planned_hours=2)
+        with pytest.raises(Wizard_Error) as other_spec:
+            await Mcp_Service.services_mcp_deploy(client, store, REPO, cpu="512", memory="1024", planned_hours=2, confirm_token=preview["confirm_token"])
+        with pytest.raises(Wizard_Error):
+            await Mcp_Service.services_mcp_deploy(client, store, REPO, cpu="256", memory="512", planned_hours=9, confirm_token=preview["confirm_token"])
+        with pytest.raises(Wizard_Error):
+            await Mcp_Service.services_mcp_deploy(
+                client, store, REPO, cpu="256", memory="512", planned_hours=2, min_tasks=1, max_tasks=2,
+                scale_metric="AVERAGE_CPU", scale_target=60, confirm_token=preview["confirm_token"],
+            )
+        assert fake.count("POST", "/api/deploys") == 0
+        result=await Mcp_Service.services_mcp_deploy(client, store, REPO, cpu="256", memory="512", planned_hours=2, confirm_token=preview["confirm_token"])
+    finally:
+        await client.aclose()
+    assert "미리보기부터 다시" in other_spec.value.message
+    assert fake.count("POST", "/api/deploys") == 1
+    assert fake.body("POST", "/api/deploys") == {"repo_url":REPO, "cpu":"256", "memory":"512", "planned_hours":2}
+    assert result["status"] == "done"
+
+
+@pytest.mark.asyncio
+async def test_mcp_deploy_autoscaling_args_flow_only_when_given():
+    fake=Fake_Wizard()
+    client=make_client(fake.handler)
+    store=Confirm_Store(300)
+    try:
+        plain=await Mcp_Service.services_mcp_deploy(client, store, REPO)
+        await Mcp_Service.services_mcp_deploy(client, store, REPO, confirm_token=plain["confirm_token"])
+        scaled=await Mcp_Service.services_mcp_deploy(
+            client, store, REPO, min_tasks=1, max_tasks=3, scale_metric="AVERAGE_CPU", scale_target=60
+        )
+        await Mcp_Service.services_mcp_deploy(
+            client, store, REPO, min_tasks=1, max_tasks=3, scale_metric="AVERAGE_CPU", scale_target=60,
+            confirm_token=scaled["confirm_token"],
+        )
+    finally:
+        await client.aclose()
+    bodies=[b for m, p, b in fake.requests if m == "POST" and p == "/api/deploys"]
+    assert bodies[0] == {"repo_url":REPO}
+    assert bodies[1] == {"repo_url":REPO, "min_tasks":1, "max_tasks":3, "scale_metric":"AVERAGE_CPU", "scale_target":60}
+    estimates=[b for m, p, b in fake.requests if m == "POST" and p == "/api/pricing/estimate"]
+    assert estimates == [{}, {"max_tasks":3}]
+
+
+@pytest.mark.asyncio
+async def test_mcp_deploy_partial_autoscaling_rejected_at_preview():
+    fake=Fake_Wizard()
+    client=make_client(fake.handler)
+    store=Confirm_Store(300)
+    try:
+        with pytest.raises(Wizard_Error) as exc_info:
+            await Mcp_Service.services_mcp_deploy(client, store, REPO, max_tasks=3)
+    finally:
+        await client.aclose()
+    assert "네 값" in exc_info.value.message
     assert store.tokens == {}

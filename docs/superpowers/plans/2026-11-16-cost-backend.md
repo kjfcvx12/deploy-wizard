@@ -77,7 +77,7 @@
 
 - [ ] **Step 1: 실패하는 테스트** (표는 테스트 안의 `Price_Table(region="ap-northeast-2", basis_date="2026-11-11", fargate_vcpu_hour=0.04656, fargate_gb_hour=0.00511, fargate_arm_vcpu_hour=0.03725, fargate_arm_gb_hour=0.00403, alb_hour=0.0225, lcu_hour=0.008)`):
   - `test_pricing_spec_options_and_valid` — 4개, 라벨 위 값 그대로. `valid(None,None)`, `valid("256","512")`, `valid("512","1024")` True; `valid("256",None)`, `valid("256","2048")`(프리셋 아님), `valid("300","512")` False.
-  - `test_pricing_estimate_default_spec` — 기본: `hourly_usd == 0.0367` (0.25×0.04656 + 0.5×0.00511 + 0.0225 = 0.03669), `spec_is_default` True, 구성 요소 합 = 시간당, 기간 `한 달` usd `26.78`, `1일` usd `0.88`, `assumptions`에 `기본 사양` 문구, `not_included`에 `LCU`·`데이터 전송`·`로그`·`ECR` 가 각각 들어 있다.
+  - `test_pricing_estimate_default_spec` — 기본: `hourly_usd == 0.0367` (0.25×0.04656 + 0.5×0.00511 + 0.0225 = 0.03669), `spec_is_default` True, 구성 요소 합 = 시간당, 기간 `한 달` usd `26.79`, `1일` usd `0.88`, `assumptions`에 `기본 사양` 문구, `not_included`에 `LCU`·`데이터 전송`·`로그`·`ECR` 가 각각 들어 있다.
   - `test_pricing_estimate_1024_2048` — `("1024","2048")` → `hourly_usd == 0.0793`, `spec_label == "1 vCPU / 2 GB"`, `spec_is_default` False.
   - `test_pricing_estimate_planned_hours` — `planned_hours=8` + 기본 사양 → `planned_usd == 0.29`; `None`이면 `planned_usd is None`.
   - `test_pricing_estimate_max_tasks` — 기본 사양 `max_tasks=4` → `max_hourly_usd == round(4*0.01419+0.0225, 4)`(=0.0793), `max_monthly_usd == round((4*0.01419+0.0225)*730, 2)`; `max_tasks=None`이면 둘 다 `None`; `max_tasks=1`이면 시간당 합계와 같다.
@@ -106,7 +106,7 @@
   - `test_pricing_estimate_endpoint_ok` — `Pricing_Service.services_pricing_table`를 가짜 표를 돌려주게 패치 → `{"cpu":"1024","memory":"2048","planned_hours":24}` → 200, `hourly_usd == 0.0793`, `planned_usd`는 24시간 금액.
   - `test_pricing_estimate_endpoint_bad_input` — 프리셋 밖(400), 한쪽만(400), `planned_hours` 0/-1/9000(400, 422가 아니라 400으로 통일할 수 없으면 기존 앱의 검증 오류 관례를 따른다: **어느 쪽이든 4xx이고 `detail`이 한국어**를 단언).
   - `test_pricing_estimate_endpoint_503_without_prices` — 표가 `None` → 503.
-  - `test_advice_cost_filled_from_prices` — 분석 결과의 `cost.hourly_usd == 0.0367`, `cost.monthly_min == 26.78`, `components` 2개, `not_included`에 `LCU`; 가격 표 `None`이면 `monthly_min is None`.
+  - `test_advice_cost_filled_from_prices` — 분석 결과의 `cost.hourly_usd == 0.0367`, `cost.monthly_min == 26.79`, `components` 2개, `not_included`에 `LCU`; 가격 표 `None`이면 `monthly_min is None`.
 - [ ] **Step 2:** 실패 확인. **Step 3:** 구현 + `docs/api-spec.md`에 두 엔드포인트와 `Advice_Cost` 새 필드를 기존 표 형식으로 추가. **Step 4:** 통과. **Step 5:** 커밋 `feat(pricing): 가격 API와 분석 비용`.
 
 ### Task 4: 배포 옵션 저장과 사양 적용
@@ -122,7 +122,7 @@
   - `Deploy_Create`에 선택 `cpu`, `memory`, `min_tasks`, `max_tasks`, `scale_metric`, `scale_target`, `planned_hours`. 증설 값은 `Pricing_Service.services_pricing_scaling_valid(..., settings.max_tasks_cap)`로 검증해 오류 문구가 있으면 400. 생성 시 프리셋 검증(`spec_valid`)과 `0 < planned_hours <= 8760`을 확인하고 위반 시 400 한국어(`"사양이 올바르지 않습니다 ..."`, `"예정 사용 시간은 ... "`).
   - `Deploy_Settings_Update`에 `planned_hours:float|None`. 보낸 항목만 바뀌는 기존 방식을 따르고, **`null`을 보내면 계획을 지운다**. 값이 바뀌면 `plan_notified_at`을 비운다(알림 재무장). 같은 검증.
   - `Express_Service.services_express_create(..., cpu:str|None=None, memory:str|None=None, scaling:dict|None=None, ...)` — 값이 있으면 `params["cpu"]`·`params["memory"]`로 보내고, `scaling`(`{"minTaskCount","maxTaskCount","autoScalingMetric","autoScalingTargetValue"}`)이 있으면 `params["scalingTarget"]`로 보낸다 (없으면 키 자체를 보내지 않는다). 우선순위: 인자 → `settings.ecs_cpu/ecs_memory` → 보내지 않음.
-  - 파이프라인은 `deploy.cpu`·`deploy.memory`와, 증설 값 4개가 모두 있으면 `scaling` dict 를 `services_express_create`에 넘긴다. `running` 으로 바꿀 때마다 `running_since=지금`, `plan_notified_at=None`으로 함께 저장하고, 멈춤·삭제·실패로 바뀔 때는 `running_since=None`.
+  - 파이프라인은 `deploy.cpu`·`deploy.memory`와, 증설 값 4개가 모두 있으면 `scaling` dict 를 `services_express_create`에 넘긴다. `running` 으로 바꿀 때 `running_since`가 비어 있으면 `running_since=지금`, `plan_notified_at=None`으로 함께 저장하고(이미 값이 있는 살아 있는 서비스의 재배포는 그대로 둔다), 멈춤·삭제·서비스(`service_arn`) 없는 실패로 바뀔 때는 `running_since=None`.
 
 - [ ] **Step 1: 실패하는 테스트**
   - `test_deploy_create_stores_spec_and_plan` — `{"repo_url", "cpu":"512","memory":"1024","planned_hours":4}` → 201, 응답에 그대로.
@@ -153,7 +153,7 @@
 - [ ] **Step 1: 실패하는 테스트**
   - `test_plan_check_notifies_once_at_boundary` — `planned_hours=2`, `running_since = now-2h`(정확히 경계) → 목록에 포함, `plan_notified_at`이 채워짐; 같은 `now`로 다시 부르면 빈 목록. `now-1h59m`은 포함되지 않는다.
   - `test_plan_check_ignores_not_running_no_plan_no_start` — `stopped`, `planned_hours=None`, `running_since=None` 각각 제외.
-  - `test_plan_resets_when_running_again` — 알림을 보낸 뒤 `running_since`가 새 시각이 되고 `plan_notified_at`이 비면(Task 4 동작) 새 기간이 지난 뒤 다시 한 번 대상이 된다.
+  - `test_plan_resets_when_running_again` — 알림을 보낸 뒤 멈췄다 다시 켜서 `running_since`가 새 시각이 되고 `plan_notified_at`이 비면(Task 4 동작) 새 기간이 지난 뒤 다시 한 번 대상이 된다.
   - `test_compose_plan_exceeded_text` — 제목·본문에 서비스 이름, `4시간`(예정 4), `멈추거나 삭제` 가 들어 있고 `deploys/<d_id>` 링크.
   - `test_plan_exceeded_creates_notification_row` — 가짜 mailer·pusher 로 `deploy_fire`/`deploy_run`을 돌려 알림 줄이 1개 생긴다(기존 `deploy_failed` 알림 테스트 방식).
   - `test_monitor_cycle_fires_plan_notification` — 감시 한 주기(기존 `services_health_check_once` 테스트 방식)가 초과 배포에 대해 알림을 1번 보낸다.

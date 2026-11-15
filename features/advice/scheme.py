@@ -17,13 +17,19 @@ class Advice_Need(BaseModel):
     count: int | None = None
 
 
-# 비용 범위 - 요금 구성을 검증하기 전까지 숫자는 전부 None (D10)
+# 비용 - 가격 파일을 읽으면 기본 사양 기준 추정치를 채우고, 못 읽으면 숫자는 None. monthly_min=monthly_max=한 달(730시간) 금액
 class Advice_Cost(BaseModel):
     monthly_min: float | None = None
     monthly_max: float | None = None
     currency: str = 'USD'
     basis_date: str | None = None
     note: str = '트래픽에 따라 늘어납니다'
+    hourly_usd: float | None = None
+    components: list[dict] = []
+    not_included: list[str] = []
+    arm64_hourly_usd: float | None = None
+    spec_label: str | None = None
+    spec_is_default: bool | None = None
 
 
 # 레포를 읽고 모은 신호 - 판정은 이 값만 보고 한다

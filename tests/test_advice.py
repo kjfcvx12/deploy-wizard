@@ -9,6 +9,8 @@ from shared.database import Base, async_engine
 from shared.settings import settings
 
 from features.advice.services import Advice_Service
+from features.pricing.scheme import Price_Table
+from features.pricing.services import Pricing_Service
 from features.advice import services as advice_module
 from features.envvars.scheme import Env_Found
 from features.envvars.services import Env_Service
@@ -276,6 +278,12 @@ async def client(monkeypatch):
     monkeypatch.setattr(Repo_Service, "services_repo_commit_sha", staticmethod(fake_sha))
     monkeypatch.setattr(Repo_Service, "services_repo_clone", staticmethod(fake_clone))
 
+    # 가격 표는 기본으로 비운다 (네트워크 없음) - 비용을 봐야 하는 시험이 따로 갈아끼운다
+    async def no_table(region=None, fetch=None, now=None):
+        return None
+
+    monkeypatch.setattr(Pricing_Service, "services_pricing_table", staticmethod(no_table))
+
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
         c.calls=calls
         yield c
@@ -364,3 +372,130 @@ async def test_advice_cleanup_failure_keeps_original_400(client, monkeypatch):
     response=await client.post("/api/deploys/advice", json={"repo_url": "https://github.com/o/r"})
 
     assert response.status_code == 400
+
+
+# ---- 분석 결과의 비용 (가격 표 연결) ----
+
+# 가짜 단가 표 - 값은 시험 안에서만 쓴다. scale 로 가격이 바뀐 상황을 만든다
+def make_price_table(scale=1.0):
+    return Price_Table(region="ap-northeast-2", basis_date="2026-11-11",
+                       fargate_vcpu_hour=0.04656 * scale, fargate_gb_hour=0.00511 * scale,
+                       fargate_arm_vcpu_hour=0.03725 * scale, fargate_arm_gb_hour=0.00403 * scale,
+                       alb_hour=0.0225 * scale, lcu_hour=0.008)
+
+
+def patch_price_table(monkeypatch, table):
+    async def fake_table(region=None, fetch=None, now=None):
+        return table
+
+    monkeypatch.setattr(Pricing_Service, "services_pricing_table", staticmethod(fake_table))
+
+
+@pytest.mark.asyncio
+async def test_advice_cost_filled_from_prices(client, monkeypatch):
+    patch_price_table(monkeypatch, make_price_table())
+
+    response=await client.post("/api/deploys/advice", json={"repo_url": "https://github.com/o/r"})
+
+    assert response.status_code == 200
+    cost=response.json()["cost"]
+    assert cost["hourly_usd"] == 0.0367
+    assert cost["monthly_min"] == 26.79
+    assert cost["monthly_max"] == 26.79
+    assert cost["currency"] == "USD"
+    assert cost["basis_date"] == "2026-11-11"
+    assert len(cost["components"]) == 2
+    assert any("Fargate" in c["name"] for c in cost["components"])
+    assert any("ALB" in c["name"] for c in cost["components"])
+    assert all(set(c) == {"name", "hourly_usd", "note"} for c in cost["components"])
+    assert any("LCU" in item for item in cost["not_included"])
+    assert cost["arm64_hourly_usd"] == 0.0338
+    assert cost["spec_label"] == "0.25 vCPU / 0.5 GB"
+    assert cost["spec_is_default"] is True
+    # cpu·memory 는 여전히 비어 있다 (사양 추천은 이 작업이 아니다)
+    assert response.json()["cpu"] is None
+
+
+@pytest.mark.asyncio
+async def test_advice_cost_empty_without_prices(client, monkeypatch):
+    patch_price_table(monkeypatch, None)
+
+    response=await client.post("/api/deploys/advice", json={"repo_url": "https://github.com/o/r"})
+
+    assert response.status_code == 200
+    cost=response.json()["cost"]
+    assert cost["monthly_min"] is None
+    assert cost["monthly_max"] is None
+    assert cost["hourly_usd"] is None
+    assert cost["components"] == []
+    assert cost["not_included"] == []
+    assert cost["arm64_hourly_usd"] is None
+    assert cost["spec_label"] is None
+    assert cost["spec_is_default"] is None
+
+
+@pytest.mark.asyncio
+async def test_advice_cost_not_stale_from_advice_cache(client, monkeypatch):
+    patch_price_table(monkeypatch, make_price_table(1.0))
+    first=await client.post("/api/deploys/advice", json={"repo_url": "https://github.com/o/r"})
+
+    # 같은 커밋(캐시 적중)이어도 가격이 바뀌면 비용도 바뀐다
+    patch_price_table(monkeypatch, make_price_table(2.0))
+    second=await client.post("/api/deploys/advice", json={"repo_url": "https://github.com/o/r"})
+
+    assert len(client.calls["clone"]) == 1
+    assert first.json()["cost"]["hourly_usd"] == 0.0367
+    assert second.json()["cost"]["hourly_usd"] == 0.0734
+    assert second.json()["cost"]["hourly_usd"] != first.json()["cost"]["hourly_usd"]
+
+    # 캐시에 들어 있는 원본은 비용이 비어 있다
+    cached=next(iter(Advice_Service.ADVICE_CACHE.values()))
+    assert cached.cost.hourly_usd is None
+    assert cached.cost.monthly_min is None
+
+    # 가격을 못 얻으면 다시 비어 있어야 한다
+    patch_price_table(monkeypatch, None)
+    third=await client.post("/api/deploys/advice", json={"repo_url": "https://github.com/o/r"})
+    assert third.json()["cost"]["hourly_usd"] is None
+
+
+# 가격 계산이 예외로 실패하면 비용은 비운 채 분석은 돌려주고, 이유는 마스킹해서 경고로 남긴다
+@pytest.mark.asyncio
+async def test_advice_with_cost_logs_masked_warning_on_failure(tmp_path, monkeypatch, caplog):
+    import logging
+
+    async def boom(region=None, fetch=None, now=None):
+        raise RuntimeError("가격 조회 실패 token=ghp_abcdefghijklmnopqrstuvwxyz0123456789")
+
+    monkeypatch.setattr(Pricing_Service, "services_pricing_table", staticmethod(boom))
+    base=advise(make_repo(tmp_path, {"requirements.txt": "flask\n", "app.py": "print('hi')\n"}))
+
+    with caplog.at_level(logging.WARNING, logger="features.advice.services"):
+        result=await Advice_Service.services_advice_with_cost(base)
+
+    assert result.cost.monthly_min is None
+    assert any("비용" in record.getMessage() for record in caplog.records)
+    assert not any("ghp_abcdefghijklmnopqrstuvwxyz0123456789" in record.getMessage() for record in caplog.records)
+
+
+# 한 달(730시간) 기간을 못 찾는 경우도 같은 보호 안에서 처리한다 - 예외를 밖으로 내보내지 않는다
+@pytest.mark.asyncio
+async def test_advice_with_cost_guards_missing_month_period(tmp_path, monkeypatch, caplog):
+    import logging
+
+    patch_price_table(monkeypatch, make_price_table())
+    real=Pricing_Service.services_pricing_estimate
+
+    def no_month(*args, **kwargs):
+        estimate=real(*args, **kwargs)
+        estimate.periods=[period for period in estimate.periods if period.hours != 730]
+        return estimate
+
+    monkeypatch.setattr(Pricing_Service, "services_pricing_estimate", staticmethod(no_month))
+    base=advise(make_repo(tmp_path, {"requirements.txt": "flask\n", "app.py": "print('hi')\n"}))
+
+    with caplog.at_level(logging.WARNING, logger="features.advice.services"):
+        result=await Advice_Service.services_advice_with_cost(base)
+
+    assert result.cost.monthly_min is None
+    assert any("비용" in record.getMessage() for record in caplog.records)

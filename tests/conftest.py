@@ -51,6 +51,18 @@ def notification_settings_isolated(monkeypatch):
     monkeypatch.setattr(settings, "app_link_base", "deploywizard://")
 
 
+# 가격 - 앞선 시험의 갱신 실패 기록·잠금이 남지 않게 하고, 실제 .env 의 ECS_CPU/ECS_MEMORY 가 기본 사양 시험에 새어 들어가지 않게 매 시험마다 비워 둔다
+@pytest.fixture(autouse=True)
+def pricing_state_isolated(monkeypatch):
+    from shared.settings import settings
+    from features.pricing import services as pricing_services
+
+    pricing_services.REFRESH_FAILED_AT.clear()
+    pricing_services.REFRESH_LOCKS.clear()
+    monkeypatch.setattr(settings, "ecs_cpu", None)
+    monkeypatch.setattr(settings, "ecs_memory", None)
+
+
 # 시험이 끝나면 그 시험이 띄운 백그라운드 작업이 남지 않게 한다 - 인시던트·알림 작업은 끝나기를 기다리고, 배포 파이프라인 작업은 취소한 뒤 기다린다
 # (다음 시험의 표 만들기와 겹쳐 "database is locked" 가 나는 것을 막는다.) 다른 이벤트 루프(모듈 단위 루프)의 작업은 여기서 건드리지 않는다
 @pytest_asyncio.fixture(autouse=True)

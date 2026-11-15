@@ -68,7 +68,7 @@ class Notification_Setting_Update(BaseModel):
 
     model_config = ConfigDict(extra='forbid')
 
-    # 알림 종류 확인 - 정해진 여섯 가지만, 중복은 한 번으로
+    # 알림 종류 확인 - 정해진 일곱 가지만, 중복은 한 번으로
     @field_validator('kinds')
     @classmethod
     def scheme_setting_kinds_check(cls, value:list[str]|None) -> list[str]|None:

@@ -33,6 +33,10 @@
 
 Claude 에서 배포 마법사를 쓰는 로컬 MCP 서버(`features/mcp`, 도구 13개)가 들어왔다. 시험은 가짜 서버·인메모리 클라이언트로 했고, 2026-11-16 **실제 Claude Code 연결(등록 `✔ Connected`, 읽기 도구 호출, 허용하지 않은 `deploy`를 호스트가 거부)은 확인했다.** **확인 창(elicitation)이 사람에게 보이는지와 MCP 를 통한 실제 배포 한 바퀴(분석 → 배포 → 대기 → 로그 → 삭제)는 아직 확인 전이다.** 로그인 백엔드(사용자 정보 암호화)와 원격 MCP 는 설계서에만 있고 만들지 않았다. 설계: [`superpowers/specs/2026-11-16-mcp-design.md`](./superpowers/specs/2026-11-16-mcp-design.md), 사용법: [`README.md`](../README.md) "Claude에서 쓰기 (MCP)", 기록: [`worklog/2026-11-16.md`](./worklog/2026-11-16.md).
 
+## 비용 확인 백엔드 (2026-11-16)
+
+배포 전 비용 확인 백엔드가 들어왔다 — 가격 파일 읽기·캐시·추정(`features/pricing`), `GET /api/pricing/options`·`POST /api/pricing/estimate`, 분석 결과의 비용(`advice`), 배포 옵션(사양·자동 증설·예정 사용 시간) 저장과 Express 서비스 생성 때 적용, 예정 시간 초과 알림(`plan_exceeded`, 알림만), MCP `deploy` 미리보기의 비용 줄. `pytest`(가짜 가격 파일·가짜 Express)로만 확인했다. **프리셋 4개·`scalingTarget`·기본 사양의 실제 AWS 확인은 아직이다** ([`aws-notes.md`](./aws-notes.md) 체크리스트). **웹 화면은 다음 계획.** 시간대 스케줄 자동 절전, 유휴 휴면, Kubernetes 는 설계만 있다 (스펙 7절). 구조는 [`architecture.md`](./architecture.md) "비용 확인", 설계는 [`superpowers/specs/2026-11-16-cost-confirm-design.md`](./superpowers/specs/2026-11-16-cost-confirm-design.md), 기록은 [`worklog/2026-11-16.md`](./worklog/2026-11-16.md).
+
 ## 다음에 할 일
 
 지금 상태(2026-10-07): 연결 블록 `test` = AWS 계정(역할 위임 확인, 템플릿 버전 2) + GitHub(`kjfcvx12`, All repositories). 배포 기록은 아직 없다. 자세한 것은 [`worklog/2026-10-07.md`](./worklog/2026-10-07.md) "State at save point".

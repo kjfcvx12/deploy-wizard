@@ -142,7 +142,7 @@ async def test_device_api_delete(client):
 async def test_notification_settings_api_get_defaults_and_patch(client):
     body=(await client.get("/api/notifications/settings")).json()
     assert body["notify_email"] is True and body["notify_push"] is True
-    assert set(body["kinds"]) == {"incident_opened", "incident_recovered", "incident_needs_action", "deploy_succeeded", "deploy_failed", "new_commit"}
+    assert set(body["kinds"]) == {"incident_opened", "incident_recovered", "incident_needs_action", "deploy_succeeded", "deploy_failed", "new_commit", "plan_exceeded"}
 
     patched=await client.patch("/api/notifications/settings", json={"notify_push": False, "kinds": ["deploy_failed", "incident_opened"]})
     assert patched.status_code == 200

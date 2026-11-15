@@ -8,8 +8,12 @@ from datetime import datetime
 from typing import Optional
 
 
-# 알림 종류 여섯 가지 - 설정의 kinds 기본값
-NOTIFICATION_KINDS=('incident_opened', 'incident_recovered', 'incident_needs_action', 'deploy_succeeded', 'deploy_failed', 'new_commit')
+# 알림 종류 일곱 가지 - 설정의 kinds 기본값 (모두 켜 둔다)
+NOTIFICATION_KINDS=('incident_opened', 'incident_recovered', 'incident_needs_action', 'deploy_succeeded', 'deploy_failed', 'new_commit', 'plan_exceeded')
+
+
+# 알림 종류 목록의 판 - 설정의 kinds_version 이 비어 있으면(NULL) plan_exceeded 가 생기기 전에 저장된 옛 설정이고, 이 값이면 사용자가 정한 목록이라 그대로 둔다
+NOTIFICATION_KINDS_VERSION=2
 
 
 class Notification(Base):
@@ -25,7 +29,7 @@ class Notification(Base):
     i_id: Mapped[Optional[int]] = mapped_column(ForeignKey("incidents.i_id"))
 
     kind: Mapped[str] = mapped_column(String(30), nullable=False)
-    # incident_opened|incident_recovered|incident_needs_action|deploy_succeeded|deploy_failed|new_commit
+    # incident_opened|incident_recovered|incident_needs_action|deploy_succeeded|deploy_failed|new_commit|plan_exceeded
     channel: Mapped[str] = mapped_column(String(10), nullable=False)
     # inapp|email|push
     title: Mapped[str] = mapped_column(String(200), nullable=False)
@@ -69,3 +73,5 @@ class Notification_Setting(Base):
     notify_push: Mapped[bool] = mapped_column(nullable=False, default=True)
     # 받을 알림 종류 - json 배열 문자열
     kinds: Mapped[str] = mapped_column(Text, nullable=False, default=lambda: json.dumps(list(NOTIFICATION_KINDS)))
+    # kinds 의 판 - NULL 은 옛 설정 (열을 더할 때 기존 줄이 NULL 로 남아야 하므로 기본값을 두지 않고, 새 줄은 crud 가 채운다)
+    kinds_version: Mapped[Optional[int]] = mapped_column()

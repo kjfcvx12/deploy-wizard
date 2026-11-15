@@ -119,7 +119,16 @@ def compose_deploy_explain(deploy) -> dict | None:
     return value if isinstance(value, dict) else None
 
 
-# 배포 알림 - 완료/실패/새 커밋. event 는 새 커밋의 sha
+# 예정 시간 글 - 정수면 4시간, 아니면 1.5시간 (소수 둘째 자리까지)
+def compose_hours_text(hours:float) -> str:
+    value=float(hours)
+    if value.is_integer():
+        return f"{int(value)}시간"
+
+    return f"{format(round(value, 2), 'f').rstrip('0').rstrip('.')}시간"
+
+
+# 배포 알림 - 완료/실패/새 커밋/예정 시간 초과. event 는 새 커밋의 sha
 def compose_deploy(kind:str, service:str, deploy, event:str|None=None) -> Composed:
     link=compose_link(f"deploys/{deploy.d_id}")
 
@@ -147,6 +156,17 @@ def compose_deploy(kind:str, service:str, deploy, event:str|None=None) -> Compos
             f"자세히 보기: {link}",
         ])
         push_line=f"{service} · {summary}"
+
+    elif kind == 'plan_exceeded':
+        planned=compose_hours_text(deploy.planned_hours or 0)
+        title=f"{service} 가 예정한 사용 시간을 넘었습니다"
+        body=compose_body([
+            f"무슨 일: {service} 를 {planned} 쓰기로 했는데 그 시간이 지났습니다.",
+            "왜: 계속 켜 두면 요금이 나옵니다.",
+            "어디를 고치나: 더 쓰지 않으면 멈추거나 삭제하세요. 더 쓸 거라면 예정 시간을 늘립니다.",
+            f"자세히 보기: {link}",
+        ])
+        push_line=f"{service} · 예정한 {planned}이 지났습니다. 멈추거나 삭제하세요"
 
     else:
         short=(event or deploy.watch_commit_sha or "")[:7]

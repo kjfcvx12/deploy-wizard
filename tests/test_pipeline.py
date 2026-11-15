@@ -240,3 +240,215 @@ async def test_pipeline_resume_from_restarts_when_missing_step(client):
         deploy=await Deploy_Crud.crud_deploy_get_by_d_id(db, d_id)
         # commit_sha가 없으면 building이라고 적혀 있어도 처음부터 다시 한다
         assert await Deploy_Pipeline.pipeline_resume_from(d_id, deploy) == "cloning"
+
+
+# 배포의 사양·증설이 Express 생성에 그대로 넘어가고, 처음 running 이 되면(running_since 가 비어 있을 때) running_since 가 채워지며 알림 기록은 비워진다
+@pytest.mark.asyncio
+async def test_pipeline_passes_spec_and_sets_running_since(client, monkeypatch):
+    from datetime import datetime
+
+    d_id=(await client.post("/api/deploys", json={
+        "repo_url": "https://github.com/o/r", "cpu": "512", "memory": "1024", "planned_hours": 4,
+        "min_tasks": 1, "max_tasks": 3, "scale_metric": "AVERAGE_CPU", "scale_target": 60,
+    })).json()["d_id"]
+
+    await stub_progress(d_id, status="failed", error_step="deploying", commit_sha="a" * 40, language="python", support_level="official",
+                        app_dir=".", dockerfile="FROM python:3.12\n", dockerfile_source="template_rule", port=8000, health_check_path="/",
+                        image_uri="111111111111.dkr.ecr.ap-northeast-2.amazonaws.com/x:abc1234", repository_name="deploy-wizard/r-1",
+                        plan_notified_at=datetime(2026, 11, 16, 9, 0, 0))
+
+    seen={}
+
+    def fake_create(*args, **kwargs):
+        seen["kwargs"]=kwargs
+        return Express_Status(service_arn="arn:svc", service_name="dw-r-1")
+
+    monkeypatch.setattr(pipeline_module.Dockerfile_Service, "services_dockerfile_write", staticmethod(lambda *a, **kw: None))
+    monkeypatch.setattr(pipeline_module.Aws_Account_Service, "services_aws_account_build_session", staticmethod(fake_build_session))
+    monkeypatch.setattr(pipeline_module.Express_Service, "services_express_create", staticmethod(fake_create))
+    monkeypatch.setattr(pipeline_module.Express_Service, "services_express_wait",
+                        staticmethod(lambda *a, **kw: Express_Status(service_arn="arn:svc", endpoint="https://x.example")))
+    monkeypatch.setattr(pipeline_module.Build_Service, "services_build_remove_local", staticmethod(lambda *a, **kw: None))
+
+    await Deploy_Pipeline.pipeline_run(d_id)
+
+    assert seen["kwargs"]["cpu"] == "512" and seen["kwargs"]["memory"] == "1024"
+    assert seen["kwargs"]["scaling"] == {"minTaskCount": 1, "maxTaskCount": 3, "autoScalingMetric": "AVERAGE_CPU", "autoScalingTargetValue": 60}
+
+    body=(await client.get(f"/api/deploys/{d_id}")).json()
+    assert body["status"] == "running"
+    assert body["running_since"] is not None
+    assert body["plan_notified_at"] is None
+
+
+# 사양·증설이 없는 배포는 예전처럼 값을 넘기지 않는다 (증설은 4개가 다 있을 때만)
+@pytest.mark.asyncio
+async def test_pipeline_without_spec_passes_none(client, monkeypatch):
+    d_id=(await client.post("/api/deploys", json={"repo_url": "https://github.com/o/r"})).json()["d_id"]
+
+    await stub_progress(d_id, status="failed", error_step="deploying", commit_sha="a" * 40, language="python", support_level="official",
+                        app_dir=".", dockerfile="FROM python:3.12\n", dockerfile_source="template_rule", port=8000, health_check_path="/",
+                        image_uri="111111111111.dkr.ecr.ap-northeast-2.amazonaws.com/x:abc1234", repository_name="deploy-wizard/r-1",
+                        min_tasks=1, max_tasks=3)
+
+    seen={}
+
+    def fake_create(*args, **kwargs):
+        seen["kwargs"]=kwargs
+        return Express_Status(service_arn="arn:svc", service_name="dw-r-1")
+
+    monkeypatch.setattr(pipeline_module.Dockerfile_Service, "services_dockerfile_write", staticmethod(lambda *a, **kw: None))
+    monkeypatch.setattr(pipeline_module.Aws_Account_Service, "services_aws_account_build_session", staticmethod(fake_build_session))
+    monkeypatch.setattr(pipeline_module.Express_Service, "services_express_create", staticmethod(fake_create))
+    monkeypatch.setattr(pipeline_module.Express_Service, "services_express_wait",
+                        staticmethod(lambda *a, **kw: Express_Status(service_arn="arn:svc", endpoint="https://x.example")))
+    monkeypatch.setattr(pipeline_module.Build_Service, "services_build_remove_local", staticmethod(lambda *a, **kw: None))
+
+    await Deploy_Pipeline.pipeline_run(d_id)
+
+    assert seen["kwargs"]["cpu"] is None and seen["kwargs"]["memory"] is None and seen["kwargs"]["scaling"] is None
+
+
+LIVE_FIELDS=dict(status="running", service_arn="arn:svc", service_name="dw-r-1", commit_sha="a" * 40, language="python", support_level="official",
+                 app_dir=".", dockerfile="FROM python:3.12\n", dockerfile_source="template_rule", port=8000, health_check_path="/",
+                 image_uri="111111111111.dkr.ecr.ap-northeast-2.amazonaws.com/x:abc1234", repository_name="deploy-wizard/r-1")
+
+
+# 살아 있는 서비스의 재배포는 running_since·plan_notified_at 을 그대로 둔다 (시간을 이어서 센다)
+@pytest.mark.asyncio
+async def test_pipeline_redeploy_of_live_service_keeps_running_since(client, monkeypatch):
+    from datetime import datetime
+
+    d_id=(await client.post("/api/deploys", json={"repo_url": "https://github.com/o/r", "planned_hours": 2})).json()["d_id"]
+    since, notified=datetime(2026, 11, 16, 9, 0, 0), datetime(2026, 11, 16, 11, 0, 0)
+    await stub_progress(d_id, **{**LIVE_FIELDS, "status": "queued"}, running_since=since, plan_notified_at=notified)
+
+    monkeypatch.setattr(pipeline_module.Dockerfile_Service, "services_dockerfile_write", staticmethod(lambda *a, **kw: None))
+    monkeypatch.setattr(pipeline_module.Aws_Account_Service, "services_aws_account_build_session", staticmethod(fake_build_session))
+    monkeypatch.setattr(pipeline_module.Express_Service, "services_express_update", staticmethod(lambda *a, **kw: None))
+    monkeypatch.setattr(pipeline_module.Express_Service, "services_express_wait",
+                        staticmethod(lambda *a, **kw: Express_Status(service_arn="arn:svc", endpoint="https://x.example")))
+    monkeypatch.setattr(pipeline_module.Build_Service, "services_build_remove_local", staticmethod(lambda *a, **kw: None))
+
+    await Deploy_Pipeline.pipeline_run(d_id, "deploying")
+
+    body=(await client.get(f"/api/deploys/{d_id}")).json()
+    assert body["status"] == "running"
+    assert body["running_since"] == since.isoformat() and body["plan_notified_at"] == notified.isoformat()
+
+
+# 멈춘 뒤 다시 켜면(running_since 가 비어 있음) 처음부터 다시 센다 - 시각이 채워지고 알림 기록이 비워진다
+@pytest.mark.asyncio
+async def test_pipeline_restart_after_stop_resets_running_since(client, monkeypatch):
+    from datetime import datetime
+
+    d_id=(await client.post("/api/deploys", json={"repo_url": "https://github.com/o/r"})).json()["d_id"]
+    await stub_progress(d_id, **{**LIVE_FIELDS, "service_arn": None, "status": "queued"}, running_since=None,
+                        plan_notified_at=datetime(2026, 11, 16, 11, 0, 0))
+
+    monkeypatch.setattr(pipeline_module.Dockerfile_Service, "services_dockerfile_write", staticmethod(lambda *a, **kw: None))
+    monkeypatch.setattr(pipeline_module.Aws_Account_Service, "services_aws_account_build_session", staticmethod(fake_build_session))
+    monkeypatch.setattr(pipeline_module.Express_Service, "services_express_create",
+                        staticmethod(lambda *a, **kw: Express_Status(service_arn="arn:svc2", service_name="dw-r-1")))
+    monkeypatch.setattr(pipeline_module.Express_Service, "services_express_wait",
+                        staticmethod(lambda *a, **kw: Express_Status(service_arn="arn:svc2", endpoint="https://x.example")))
+    monkeypatch.setattr(pipeline_module.Build_Service, "services_build_remove_local", staticmethod(lambda *a, **kw: None))
+
+    await Deploy_Pipeline.pipeline_run(d_id, "deploying")
+
+    body=(await client.get(f"/api/deploys/{d_id}")).json()
+    assert body["status"] == "running" and body["running_since"] is not None and body["plan_notified_at"] is None
+
+
+# 살아 있는 서비스를 다시 배포하다 실패해도 running_since 를 지우지 않는다
+@pytest.mark.asyncio
+async def test_pipeline_failed_redeploy_with_service_keeps_running_since(client, monkeypatch):
+    from datetime import datetime
+
+    d_id=(await client.post("/api/deploys", json={"repo_url": "https://github.com/o/r"})).json()["d_id"]
+    since=datetime(2026, 11, 16, 9, 0, 0)
+    await stub_progress(d_id, **{**LIVE_FIELDS, "status": "queued"}, running_since=since)
+
+    def boom_update(*_a, **_kw):
+        raise RuntimeError("update 실패")
+
+    monkeypatch.setattr(pipeline_module.Dockerfile_Service, "services_dockerfile_write", staticmethod(lambda *a, **kw: None))
+    monkeypatch.setattr(pipeline_module.Aws_Account_Service, "services_aws_account_build_session", staticmethod(fake_build_session))
+    monkeypatch.setattr(pipeline_module.Express_Service, "services_express_update", staticmethod(boom_update))
+
+    await Deploy_Pipeline.pipeline_run(d_id, "deploying")
+
+    body=(await client.get(f"/api/deploys/{d_id}")).json()
+    assert body["status"] == "failed" and body["running_since"] == since.isoformat()
+
+
+# 서비스가 없는 실패(떠 있던 적 없음)는 running_since 를 비운다
+@pytest.mark.asyncio
+async def test_pipeline_failure_without_service_clears_running_since_on_create(client, monkeypatch):
+    from datetime import datetime
+
+    d_id=(await client.post("/api/deploys", json={"repo_url": "https://github.com/o/r"})).json()["d_id"]
+    await stub_progress(d_id, **{**LIVE_FIELDS, "service_arn": None, "status": "queued"}, running_since=datetime(2026, 11, 16, 9, 0, 0))
+
+    monkeypatch.setattr(pipeline_module.Dockerfile_Service, "services_dockerfile_write", staticmethod(lambda *a, **kw: None))
+    monkeypatch.setattr(pipeline_module.Aws_Account_Service, "services_aws_account_build_session", staticmethod(fake_build_session))
+    monkeypatch.setattr(pipeline_module.Express_Service, "services_express_create", staticmethod(boom))
+
+    await Deploy_Pipeline.pipeline_run(d_id, "deploying")
+
+    body=(await client.get(f"/api/deploys/{d_id}")).json()
+    assert body["status"] == "failed" and body["running_since"] is None
+
+
+# 멈춘 배포를 다시 켜면(서비스 없음, 이어하기 deploying) 저장된 사양·증설이 그대로 새 서비스 생성에 넘어간다
+@pytest.mark.asyncio
+async def test_pipeline_start_after_stop_passes_stored_spec_and_scaling(client, monkeypatch):
+    d_id=(await client.post("/api/deploys", json={
+        "repo_url": "https://github.com/o/r", "cpu": "1024", "memory": "2048",
+        "min_tasks": 2, "max_tasks": 4, "scale_metric": "REQUEST_COUNT_PER_TARGET", "scale_target": 500,
+    })).json()["d_id"]
+    await stub_progress(d_id, **{**LIVE_FIELDS, "service_arn": None, "status": "queued"}, running_since=None)
+
+    seen={}
+
+    def fake_create(*args, **kwargs):
+        seen["kwargs"]=kwargs
+        return Express_Status(service_arn="arn:svc2", service_name="dw-r-1")
+
+    monkeypatch.setattr(pipeline_module.Dockerfile_Service, "services_dockerfile_write", staticmethod(lambda *a, **kw: None))
+    monkeypatch.setattr(pipeline_module.Aws_Account_Service, "services_aws_account_build_session", staticmethod(fake_build_session))
+    monkeypatch.setattr(pipeline_module.Express_Service, "services_express_create", staticmethod(fake_create))
+    monkeypatch.setattr(pipeline_module.Express_Service, "services_express_wait",
+                        staticmethod(lambda *a, **kw: Express_Status(service_arn="arn:svc2", endpoint="https://x.example")))
+    monkeypatch.setattr(pipeline_module.Build_Service, "services_build_remove_local", staticmethod(lambda *a, **kw: None))
+
+    await Deploy_Pipeline.pipeline_run(d_id, "deploying")
+
+    assert seen["kwargs"]["cpu"] == "1024" and seen["kwargs"]["memory"] == "2048"
+    assert seen["kwargs"]["scaling"] == {"minTaskCount": 2, "maxTaskCount": 4, "autoScalingMetric": "REQUEST_COUNT_PER_TARGET", "autoScalingTargetValue": 500}
+
+
+# 증설 값이 일부만 저장돼 있으면 다시 켤 때도 증설을 보내지 않는다 (사양은 그대로)
+@pytest.mark.asyncio
+async def test_pipeline_start_after_stop_with_partial_scaling_sends_none(client, monkeypatch):
+    d_id=(await client.post("/api/deploys", json={"repo_url": "https://github.com/o/r", "cpu": "512", "memory": "1024"})).json()["d_id"]
+    await stub_progress(d_id, **{**LIVE_FIELDS, "service_arn": None, "status": "queued"}, running_since=None,
+                        min_tasks=1, max_tasks=3, scale_metric="AVERAGE_CPU")
+
+    seen={}
+
+    def fake_create(*args, **kwargs):
+        seen["kwargs"]=kwargs
+        return Express_Status(service_arn="arn:svc2", service_name="dw-r-1")
+
+    monkeypatch.setattr(pipeline_module.Dockerfile_Service, "services_dockerfile_write", staticmethod(lambda *a, **kw: None))
+    monkeypatch.setattr(pipeline_module.Aws_Account_Service, "services_aws_account_build_session", staticmethod(fake_build_session))
+    monkeypatch.setattr(pipeline_module.Express_Service, "services_express_create", staticmethod(fake_create))
+    monkeypatch.setattr(pipeline_module.Express_Service, "services_express_wait",
+                        staticmethod(lambda *a, **kw: Express_Status(service_arn="arn:svc2", endpoint="https://x.example")))
+    monkeypatch.setattr(pipeline_module.Build_Service, "services_build_remove_local", staticmethod(lambda *a, **kw: None))
+
+    await Deploy_Pipeline.pipeline_run(d_id, "deploying")
+
+    assert seen["kwargs"]["scaling"] is None
+    assert seen["kwargs"]["cpu"] == "512" and seen["kwargs"]["memory"] == "1024"

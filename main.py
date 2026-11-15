@@ -13,7 +13,7 @@ from pathlib import Path
 
 from shared.settings import settings
 from shared.masking import mask_text
-from shared.database import Base, async_engine, AsyncSessionLocal, ensure_columns
+from shared.database import async_engine, AsyncSessionLocal, bootstrap_schema
 
 # 모델을 import 해야 create_all 이 테이블을 안다
 from features.deploys import models as deploy_models
@@ -31,6 +31,7 @@ from features.accounts import router as accounts
 from features.watches import router as watches
 from features.incidents import router as incidents
 from features.notifications import router as notifications
+from features.pricing import router as pricing
 from features.notifications.services import Notification_Service
 from features.incidents.services import Incident_Service
 from features.incidents.recovery import Recovery_Service
@@ -45,10 +46,8 @@ logger=logging.getLogger(__name__)
 
 @asynccontextmanager
 async def lifespan(app:FastAPI):
-    async with async_engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
-        # 이미 있는 deploys 표에는 새 열이 안 생기므로 모자란 열만 더한다
-        await conn.run_sync(ensure_columns)
+    # 표를 만들고, 이미 있는 표에는 새 열이 안 생기므로 모자란 열만 더한다
+    await bootstrap_schema()
 
     # 서버가 꺼지면서 끊긴 배포를 실패로 돌려놓는다
     await Deploy_Pipeline.pipeline_recover()
@@ -104,6 +103,7 @@ app.include_router(accounts.router)
 app.include_router(watches.router)
 app.include_router(incidents.router)
 app.include_router(notifications.router)
+app.include_router(pricing.router)
 app.add_exception_handler(RequestValidationError, notifications.router_notification_validation_error)
 
 
