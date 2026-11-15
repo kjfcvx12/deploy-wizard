@@ -18,6 +18,23 @@ export function formatTime(iso) {
   return `${d.getMonth() + 1}월 ${d.getDate()}일 ${pad(d.getHours())}:${pad(d.getMinutes())}`
 }
 
+// 기기의 현지 날짜로 "11월 9일" 을 만든다 (읽을 수 없으면 빈 글자)
+export function formatDate(iso) {
+  const ms = toMs(iso)
+  if (Number.isNaN(ms)) return ''
+  const d = new Date(ms)
+  return `${d.getMonth() + 1}월 ${d.getDate()}일`
+}
+
+// 기기의 현지 시각으로 "12:12" 를 만든다 (읽을 수 없으면 빈 글자)
+export function formatClock(iso) {
+  const ms = toMs(iso)
+  if (Number.isNaN(ms)) return ''
+  const d = new Date(ms)
+  const pad = (n) => String(n).padStart(2, '0')
+  return `${pad(d.getHours())}:${pad(d.getMinutes())}`
+}
+
 // 두 시각 사이를 "3분 20초" 처럼 보여 준다 (읽을 수 없거나 b 가 a 보다 앞이면 빈 글자)
 export function durationText(a, b) {
   const from = toMs(a)

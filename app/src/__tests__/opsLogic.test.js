@@ -4,7 +4,7 @@ import {
   RECOVERY_ACTION_LABEL, RECOVERY_RESULT_LABEL, RECOVERY_RESULT_TONE, HEALTH_STATE_LABEL,
 } from '../ops/constants'
 import { parseAppLink } from '../ops/links'
-import { formatTime, durationText, incidentTimeline, toMs } from '../ops/format'
+import { formatTime, formatDate, formatClock, durationText, incidentTimeline, toMs } from '../ops/format'
 
 // docs/api-spec.md 에 적힌 서버 값 (여기서 따로 적어 두고 앱의 표와 맞춘다)
 const SERVER = {
@@ -155,6 +155,28 @@ describe('formatTime / durationText', () => {
 
   test.each([[null], [undefined], [''], ['어제'], [42]])('%j 는 빈 글자', (v) => {
     expect(formatTime(v)).toBe('')
+  })
+
+  test('formatDate 는 현지 시각으로 "11월 9일" 을 만든다 (Z 없는 서버 시각은 UTC)', () => {
+    const d = new Date(Date.UTC(2026, 10, 9, 3, 12, 30))
+    const expected = `${d.getMonth() + 1}월 ${d.getDate()}일`
+    expect(formatDate('2026-11-09T03:12:30')).toBe(expected)
+    expect(formatDate('2026-11-09T03:12:30Z')).toBe(expected)
+    expect(formatDate('2026-11-09T12:12:30+09:00')).toBe(expected)
+  })
+
+  test('formatClock 은 두 자리 시:분', () => {
+    const d = new Date(Date.UTC(2026, 10, 9, 3, 5, 30))
+    const pad = (n) => String(n).padStart(2, '0')
+    const expected = `${pad(d.getHours())}:${pad(d.getMinutes())}`
+    expect(formatClock('2026-11-09T03:05:30')).toBe(expected)
+    expect(formatClock('2026-11-09T03:05:30')).toMatch(/^\d{2}:\d{2}$/)
+    expect(formatClock('2026-11-09T12:05:30+09:00')).toBe(expected)
+  })
+
+  test.each([[null], [undefined], [''], ['어제'], [42]])('formatDate·formatClock: %j 는 빈 글자', (v) => {
+    expect(formatDate(v)).toBe('')
+    expect(formatClock(v)).toBe('')
   })
 
   test.each([
