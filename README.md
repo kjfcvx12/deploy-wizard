@@ -141,7 +141,7 @@ Claude Desktop 은 설정 JSON 의 `mcpServers` 에 같은 내용을 넣는다. 
 | `MCP_MAX_LIVE_DEPLOYS` | `3` | 살아 있는 배포 한도 |
 | `MCP_CONFIRM_TTL_SECONDS` | `300` | 확인 토큰 유효 시간(초) |
 
-설계: [`docs/superpowers/specs/2026-11-16-mcp-design.md`](./docs/superpowers/specs/2026-11-16-mcp-design.md). 시험은 가짜·인메모리 클라이언트로만 했고 실제 Claude 연결은 아직 확인 전이다.
+설계: [`docs/superpowers/specs/2026-11-16-mcp-design.md`](./docs/superpowers/specs/2026-11-16-mcp-design.md). 2026-11-16 Claude Code(2.1.325)에서 `claude mcp add` 등록 → `✔ Connected` → 읽기 도구 실제 호출까지 확인했고, 행동 도구(`deploy`)를 허용하지 않으면 호스트가 호출을 막는 것도 확인했다. 확인 창이 사람에게 보이는 모습과 MCP 를 통한 실제 배포 한 바퀴는 아직 확인 전이다.
 
 ## 테스트
 

@@ -31,7 +31,7 @@
 
 ## 로컬 MCP 서버 (2026-11-16)
 
-Claude 에서 배포 마법사를 쓰는 로컬 MCP 서버(`features/mcp`, 도구 13개)가 들어왔다. 가짜 서버·인메모리 클라이언트로만 시험했고 **실제 Claude Code 연결과 MCP 를 통한 실제 배포 한 바퀴(분석 → 배포 → 대기 → 로그 → 삭제)는 아직 확인 전이다.** 로그인 백엔드(사용자 정보 암호화)와 원격 MCP 는 설계서에만 있고 만들지 않았다. 설계: [`superpowers/specs/2026-11-16-mcp-design.md`](./superpowers/specs/2026-11-16-mcp-design.md), 사용법: [`README.md`](../README.md) "Claude에서 쓰기 (MCP)", 기록: [`worklog/2026-11-16.md`](./worklog/2026-11-16.md).
+Claude 에서 배포 마법사를 쓰는 로컬 MCP 서버(`features/mcp`, 도구 13개)가 들어왔다. 시험은 가짜 서버·인메모리 클라이언트로 했고, 2026-11-16 **실제 Claude Code 연결(등록 `✔ Connected`, 읽기 도구 호출, 허용하지 않은 `deploy`를 호스트가 거부)은 확인했다.** **확인 창(elicitation)이 사람에게 보이는지와 MCP 를 통한 실제 배포 한 바퀴(분석 → 배포 → 대기 → 로그 → 삭제)는 아직 확인 전이다.** 로그인 백엔드(사용자 정보 암호화)와 원격 MCP 는 설계서에만 있고 만들지 않았다. 설계: [`superpowers/specs/2026-11-16-mcp-design.md`](./superpowers/specs/2026-11-16-mcp-design.md), 사용법: [`README.md`](../README.md) "Claude에서 쓰기 (MCP)", 기록: [`worklog/2026-11-16.md`](./worklog/2026-11-16.md).
 
 ## 다음에 할 일
 
