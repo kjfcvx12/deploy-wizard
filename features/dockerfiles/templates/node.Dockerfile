@@ -9,6 +9,7 @@ WORKDIR /app
 COPY . .
 RUN {install_command}
 {build_block}
+{user_block}
 EXPOSE {port}
 
 CMD {cmd_json}
