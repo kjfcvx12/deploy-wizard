@@ -50,9 +50,10 @@ src/accounts/     계정 연결 상수·문구(constants, notices), 고른 블�
 src/confirm.js    확인 창 (앱은 Alert, 웹은 브라우저 confirm)
 src/hooks/        usePolling (주기 호출, 백그라운드에서는 멈춤, STOP_POLLING 으로 중단), useOnForeground (앱이 다시 앞으로 올 때 한 번 부름), useUnreadCount (안 읽은 알림 수), usePushSetup, useNotificationRouting
 src/ops/          인시던트·알림 상수와 문구(constants), 시각·타임라인(format), 앱 링크 검사(links), 푸시(push, notifications, notifications.web), 알림 설정 문구(notificationSettings)
-src/components/ops/  HealthBar, HealthDot, ProblemBanner, IncidentCard, IncidentTimeline, NotificationItem, BellButton, QuickLinks, PushPermissionGuide, PushSetupCard, NotificationKinds (알림 종류 6개 2열 타일 + `설명 보기`)
+src/components/ops/  HealthBar, HealthDot, ProblemBanner, IncidentCard, IncidentFacts (인시던트 `이름 | 값` 줄), IncidentTabs (문제·원인 탭 줄), IncidentTimeline, NotificationItem, BellButton, QuickLinks, PushPermissionGuide, PushSetupCard, NotificationKinds (알림 종류 6개 2열 타일 + `설명 보기`)
 src/components/SettingSwitch.js  설정 스위치 한 줄 (배포 설정·알림 설정이 같이 씀, `compact` 로 여백·설명 글을 줄임)
 src/components/SettingTile.js    설정 타일 한 칸 (제목 + 스위치, 알림 종류가 씀)
+src/components/Text.js           한글 어절 줄바꿈을 켠 `Text` 래퍼 (모든 화면이 `react-native` 대신 이걸 씀, 아래 "줄바꿈 (계획 G)")
 src/components/FitScreen.js      한 화면 틀 (화면 높이를 채우는 ScrollView, 안전망)
 src/components/FooterSlot.js     설정 화면 맨 아래 안내 자리 (아래 "한 화면 규칙")
 ```
@@ -64,7 +65,7 @@ src/components/FooterSlot.js     설정 화면 맨 아래 안내 자리 (아래 
 | `/` | 배포 목록 (진행 중 3초, 아니면 15초마다 갱신) | `/` 의 목록 |
 | `/new` | 새 배포: 주소 입력 → `분석` → 결과 패널 → `이 레포로 배포` | `/` 의 새 배포 폼 + 분석 패널 (S-20) |
 | `/deploys/[d_id]` | 배포 상세: 진행 단계, 주소, 로그, 해설, 이력, 다시 배포·멈춤·다시 켜기·삭제, 환경변수 카드 (S-19). 진행 중이거나 로그가 들어오면 1.5초, `running` 이면 30초마다 다시 받고(새 문제 카드·헬스 점이 나타나도록), 다른 화면에서 돌아오면 한 번 더 받는다. 404(지워진 배포)는 한국어 안내 + `돌아가기` 로 멈춘다 | `/deploys/:d_id` |
-| `/incidents/[i_id]` | 인시던트 상세 (D2): 상태 배지, 원인·고칠 곳(복사)·해야 할 일, `마법사가 한 일` 타임라인(감지, 재시작·되돌리기 시도와 결과, 해결·확인 필요), 최근 24시간 헬스체크 막대. 진행 중(`open`·`recovering`)이면 5초마다 갱신하고 `resolved`·`needs_action` 이 되면 멈춘다. 불러오기가 실패하면 404 일 때 멈추고, 그 밖의 실패는 5→10→20→30초로 늘려 가며 다시 시도한다. `needs_action` 이면 `다시 배포`·`멈춤`(확인 창)·`그대로 두기`. 앱이 스스로 하는 조치는 없고 모두 사용자가 누른 버튼이다. 한 화면에 맞춤: 위 요약 고정, 가운데 상자(원인·타임라인)만 넘칠 때 스크롤, 아래 헬스 막대·버튼 고정. 아래로 당겨 새로고침은 그대로 (아래 "한 화면 규칙") | 웹 대응은 계획 E 에서 만들었다 (`docs/ui-spec.md` "4. 운영 화면") |
+| `/incidents/[i_id]` | 인시던트 상세 (D2, 계획 G 에서 탭 2개로 나눔): 탭 줄(`문제`·`원인`, 처음엔 `문제`) 아래 가운데 상자에 선택한 탭이 나온다. **문제 탭**: `배포`(`#번호`)·`문제`(상태 배지)·`날짜`(`11월 9일`)·`시간`(`12:12`)·`원인`(원인 종류 이름) 한 줄씩 `이름 | 값` (해결됐으면 `해결` 줄 하나 더), 진행 중(`open`·`recovering`)이면 안내 글, `마법사가 한 일` 타임라인(감지, 재시작·되돌리기 시도와 결과, 해결·확인 필요). **원인 탭**: 한 줄 요약(머리글) + 원인·고칠 곳(복사)·해야 할 일. 탭 밖 아래에는 최근 24시간 헬스체크 막대, 안내, 버튼이 고정된다. 진행 중이면 5초마다 갱신하고 `resolved`·`needs_action` 이 되면 멈춘다. 불러오기가 실패하면 404 일 때 멈추고, 그 밖의 실패는 5→10→20→30초로 늘려 가며 다시 시도한다. `needs_action` 이면 `다시 배포`·`멈춤`(확인 창)·`그대로 두기`. 앱이 스스로 하는 조치는 없고 모두 사용자가 누른 버튼이다. 한 화면에 맞춤: 위 탭 줄 고정, 가운데 상자(탭 내용)만 넘칠 때 스크롤, 아래 헬스 막대·버튼 고정. 탭을 바꾸면 가운데 상자의 스크롤은 맨 위로 돌아간다. 아래로 당겨 새로고침은 그대로 (아래 "한 화면 규칙") | 웹 대응은 계획 E 에서 만들었다 (`docs/ui-spec.md` "4. 운영 화면"). 웹에는 탭이 없다 |
 | `/notifications` | 알림 목록 (D2): 안 읽은 것은 굵게, 누르면 읽음 처리(`POST /notifications/{n_id}/read`)하고 인시던트·배포 화면으로 이동, `모두 읽음`, `더 보기`(`after` 로 이어 받기), 아래로 당겨 새로고침 | 웹 `/notifications` |
 | `/notification-settings` | 알림 설정 (D2): 메일·푸시 스위치, 알림 종류 6개 스위치(바꾸면 전체 종류 배열을 `PATCH /notifications/settings` 로 보냄). 푸시 줄에서만 OS 권한을 묻는다 (아래 "푸시 알림"). 한 화면에 맞춤: 종류는 2열 타일이고 종류별 설명은 `설명 보기` 를 눌러야 펼친다 (스크린리더에는 항상 읽힘), 저장·오류 안내는 맨 아래 자리 (아래 "한 화면 규칙"). 360×740 에서는 설명을 펼치거나 오류 안내가 2줄이면 안 맞아 스크롤된다 | 웹 `/notification-settings` |
 | `/deploy-settings/[d_id]` | 배포 설정 (D2): `새 커밋이 오면 자동 재배포`·`문제가 생기면 자동 복구` 스위치. 바꾼 항목만 `PATCH /deploys/{d_id}/settings` 로 보낸다 (실패하면 그 스위치만 되돌림). 배포 상세의 `설정` 버튼으로 들어간다. 한 화면에 맞춤: 안내는 맨 아래 자리 (아래 "한 화면 규칙") | 웹 `/deploys/:d_id/settings` |
@@ -83,7 +84,7 @@ src/components/FooterSlot.js     설정 화면 맨 아래 안내 자리 (아래 
 - **`FooterSlot`** (`src/components/FooterSlot.js`): 설정 두 화면의 맨 아래 안내 자리. 평소엔 `변경은 누르는 즉시 저장됩니다 ...` 글이고 저장 성공·오류 안내가 있으면 그 자리를 안내가 대신한다. 안내가 위쪽에 쌓이지 않고, 한 줄 안내일 때는 자리 높이가 거의 변하지 않는다 (두 줄 이상의 오류는 키가 커진다). 오류 안내가 뜰 때만 `scrollToEnd` 로 내리고 (넘칠 때만 의미가 있다) 저장 성공 안내는 화면을 움직이지 않는다.
 - **설정 화면 배치**: 알림 설정은 메일·푸시 줄을 `SettingSwitch compact`(안쪽 여백·설명 글을 줄임, 44pt 이상)로, 알림 종류 6개를 `ops/NotificationKinds` 의 2열 `SettingTile`(제목 + 스위치만, 줄 전체가 스위치)로 놓는다. 배포 설정은 기존 `SettingSwitch` 줄 그대로이고 안내만 맨 아래로 옮겼다.
 - **접는 것은 알림 종류 설명뿐**: 종류별 설명(`KIND_HINT`)은 처음엔 접혀 있고 `설명 보기` 를 누르면 펼쳐진다 (`설명 닫기` 로 다시 접음). 같은 설명이 스크린리더용 `accessibilityHint` 로는 늘 읽힌다 (네이티브 기준 - react-native-web 은 `accessibilityHint` 를 내보내지 않는다). 다른 문구는 접지 않는다.
-- **인시던트 상세 배치**: 위 고정(요약·상태 배지·메타) / 가운데 상자(원인·고칠 곳·해야 할 일 + `마법사가 한 일` 타임라인 - 넘칠 때만 상자 안에서 스크롤) / 아래 고정(헬스 막대·오류·안내·버튼). 안내가 생기면 가운데 상자가 줄어든다 (측정한 경우에는 화면이 넘치지 않았다). 높이는 이렇게 정한다: `FitScreen` 의 `onAvailableHeight` 가 안쪽 여백을 뺀 내용 영역 높이를 알려 주고, 화면이 위 고정 묶음·아래 고정 묶음을 `onLayout` 으로 재서 가운데 상자에 `maxHeight = max(160, 사용 가능 높이 - 위 - 아래 - 간격 둘)` 을 건다 (측정이 하나라도 없으면 제한하지 않는다). 위·아래가 너무 커서 160 도 못 줄 때는 바깥 `FitScreen` 이 스크롤을 받는다. 안쪽 상자는 `bounces={false}` 라 iOS 의 끌어당겨 새로고침을 가로채지 않는다. 가운데 상자에서는 원인 등을 카드로 나누지 않고 얇은 줄로 나눈다 (`IncidentExplain flat`).
+- **인시던트 상세 배치** (계획 G 에서 탭으로 바뀜): 위 고정(`문제`·`원인` 탭 줄) / 가운데 상자(선택한 탭의 내용: 문제 탭은 사실 줄 + `마법사가 한 일` 타임라인, 원인 탭은 요약 + 원인·고칠 곳·해야 할 일 - 넘칠 때만 상자 안에서 스크롤, 탭을 바꾸면 상자를 새로 만들어 맨 위로) / 아래 고정(헬스 막대·오류·안내·버튼). 예전의 맨 위 요약 카드(요약·배지·메타)는 없다 - 요약은 원인 탭, 배지·날짜·시간은 문제 탭 줄이 대신한다. 안내가 생기면 가운데 상자가 줄어든다 (측정한 경우에는 화면이 넘치지 않았다). 높이는 이렇게 정한다: `FitScreen` 의 `onAvailableHeight` 가 안쪽 여백을 뺀 내용 영역 높이를 알려 주고, 화면이 위 고정 묶음·아래 고정 묶음을 `onLayout` 으로 재서 가운데 상자에 `maxHeight = max(160, 사용 가능 높이 - 위 - 아래 - 간격 둘)` 을 건다 (측정이 하나라도 없으면 제한하지 않는다). 위·아래가 너무 커서 160 도 못 줄 때는 바깥 `FitScreen` 이 스크롤을 받는다. 안쪽 상자는 `bounces={false}` 라 iOS 의 끌어당겨 새로고침을 가로채지 않는다. 가운데 상자에서는 원인 등을 카드로 나누지 않고 얇은 줄로 나눈다 (`IncidentExplain flat`).
 - **측정으로 찾은 문제**: 처음 배치(`flex: 1`)는 jest 로는 통과했지만 웹 번들에서 어디서도 맞지 않았다. `flex: 1` 의 기준 높이(`flex-basis: 0%`)가 높이가 정해지지 않은 스크롤 틀 안에서 내용 높이로 풀려 가운데 상자가 내용만큼 커졌다 (복구 중 1207/780, 가장 긴 경우 2132/780). 웹 번들에서는 가운데 상자와 그 안의 `ScrollView` 를 `flexGrow: 1, flexShrink: 1, flexBasis: 0` 으로 바꿔 고쳤다. 네이티브(Yoga)는 부모 높이가 정해지지 않으면 `flexBasis` 를 무시하므로 같은 방법이 통하지 않는다 (전체 검토에서 yoga-layout@3 으로 재현: 뷰포트 780, 안쪽 내용 900 이면 내용 높이 1254 로 버튼이 화면 밖). 그래서 네이티브에서는 위의 `onLayout` 측정 → `maxHeight` 방식을 쓰고, 웹의 `flexBasis: 0` 은 그대로 둔다. 이 방식은 yoga-layout@3 스크래치 스크립트로만 검증했고 실제 기기에서는 재지 않았다. 레이아웃은 jest 로 증명할 수 없다.
 
 **측정 (웹 번들만)**: `npx expo export --platform web` 번들을 Playwright 로 열고 `/api` 를 모의해, `FitScreen` 의 `scrollHeight / clientHeight`(맞으면 `scrollHeight ≤ clientHeight`)를 쟀다. 390×844(안쪽 780)와 360×740(안쪽 676), 라이트·다크 숫자는 같았다. 긴 글(90자 ARN, 5-6줄 원인, 2줄 서버 오류)을 모의로 넣었다.
@@ -98,7 +99,7 @@ src/components/FooterSlot.js     설정 화면 맨 아래 안내 자리 (아래 
 | 인시던트: `다시 배포` 를 누른 뒤 (버튼이 `배포 보기` 하나, 안내 띠 생김; 보통·아주 긴 경우) | 맞음 (780/780), 가운데 상자 414 → 380 으로 줄고 안쪽 상자 스크롤, 버튼 아래 끝 828/844 | 맞음 (676/676), 상자 286 → 252, 버튼 아래 끝 724/740 |
 | 인시던트: 짧은 내용 (원인 한 줄, 타임라인 1건), 복구 중 / `needs_action` | 맞음 (780/780), 안쪽 상자 445·561 / 380 으로 아직 스크롤 | 맞음 (676/676), 445·561 / 252 |
 
-안 맞은 두 칸은 안전망 스크롤이 받아 전부 보인다 (계획이 허용한 범위). 아주 긴 인시던트에서도 맨 아래 버튼의 아래쪽 끝이 화면 안이었다 (390 에서 828/844·778/844, 360 에서 724/740·674/740). 가로 넘침 없음(`scrollWidth ≤ innerWidth`), 44pt 미만 터치 대상 없음(헤더 뒤로 가기 제외), 콘솔 경고·오류는 의도한 모의 400 뿐. `npx jest` 33 파일 1027 테스트 통과. 자세한 숫자는 `docs/worklog/2026-11-15.md` "Plan F measurement".
+(위 표의 인시던트 칸은 계획 F 의 맨 위 요약 카드 배치로 잰 값이다. 탭으로 바꾼 뒤의 값은 `docs/worklog/2026-11-15.md` "Plan G measurement".) 안 맞은 두 칸은 안전망 스크롤이 받아 전부 보인다 (계획이 허용한 범위). 아주 긴 인시던트에서도 맨 아래 버튼의 아래쪽 끝이 화면 안이었다 (390 에서 828/844·778/844, 360 에서 724/740·674/740). 가로 넘침 없음(`scrollWidth ≤ innerWidth`), 44pt 미만 터치 대상 없음(헤더 뒤로 가기 제외), 콘솔 경고·오류는 의도한 모의 400 뿐. `npx jest` 33 파일 1027 테스트 통과. 자세한 숫자는 `docs/worklog/2026-11-15.md` "Plan F measurement".
 
 **확인 못 한 것**: 실제 iOS·안드로이드 기기와 에뮬레이터의 네이티브 레이아웃(웹 번들만 쟀다. 인시던트 상세의 `onLayout` → `maxHeight` 방식은 yoga-layout@3 스크래치 스크립트로만 확인했다), 글꼴 배율 1 초과, 가로 방향, 태블릿. 웹에서는 푸시 미지원 안내 상자가 알림 설정에 늘 있어서 위 숫자는 상자가 있는 쪽(더 엄격한 쪽)이다. 상자가 없는 네이티브 상태는 재지 않았다. 맞았을 때 `scrollHeight == clientHeight` 라서 남는 높이가 얼마인지는 이 숫자로 알 수 없다 (남는 칸은 `flexGrow` 가 채운다).
 
@@ -155,6 +156,17 @@ src/components/FooterSlot.js     설정 화면 맨 아래 안내 자리 (아래 
   - 안내 창은 RN `Modal` 이다. 맨 위 오른쪽에 `닫기` 가 있고 `나중에` 와 같다. 안드로이드(edge-to-edge)와 iOS 에서는 제목 줄이 상태 표시줄 밑으로 들어가지 않게 위쪽 안전 영역만큼 띄운다. 오류·알림은 화면 맨 위에 보이도록 스크롤을 올린다 (창 안의 오류는 창 안에 둔다).
 - 환경변수 값은 쓰기 전용이다: 저장에 성공하면 입력을 비우고, 로그·주소·오류 문장에 넣지 않는다. `database` `cache` `external_api` `secret` 종류에는 값 입력 칸이 없다 (서버가 501).
 
+## 줄바꿈 (계획 G, 2026-11-15)
+
+한글이 줄을 넘길 때 글자 중간이 아니라 어절(띄어쓰기) 단위로 끊기게 했다. 한 어절이 한 줄보다 길 때(ARN·URL 등)만 어쩔 수 없이 끊긴다.
+
+- **웹**(`shared/ui/styles.css`): `body` 에 `word-break: keep-all` 과 `overflow-wrap: break-word`. 코드·로그 상자의 `break-all` 은 그대로다 (`tests/web/koreanWrap.test.js` 가 둘 다 지킨다).
+- **앱**: `src/components/Text.js` 의 `Text` 래퍼. 웹 번들(`Platform.OS === 'web'`)에서는 기본 스타일 `wordBreak: 'keep-all'`, `overflowWrap: 'break-word'` 를 깔고(호출자 `style` 이 이긴다), 모든 플랫폼에서 `lineBreakStrategyIOS="hangul-word"` 를 기본 prop 으로 준다 (호출자가 덮어쓸 수 있다). react-native-web 의 `Text` 는 `lineBreakStrategyIOS` 를 조용히 버린다 (웹 번들에서 경고도 없었다).
+- **규칙**: 모든 화면·컴포넌트는 `react-native` 가 아니라 이 래퍼에서 `Text` 를 가져온다. `src/__tests__/Text.test.js` 의 가드 테스트가 `app/` 과 `src/` 의 `.js` 파일에서 `import { ..., Text, ... } from 'react-native'` 를 찾아 하나라도 있으면 실패시킨다.
+- **안드로이드는 처리하지 않았고 확인하지 못했다.** 한글 어절 줄바꿈을 켜는 RN 공식 prop 이 없어 이 계획은 안드로이드에 아무것도 하지 않았다 (보이지 않는 연결 문자를 글자 사이에 넣는 방법은 문자열을 바꾸고 긴 글에서 넘칠 위험이 있어 기기에서 확인하기 전에는 쓰지 않기로 했다). 안드로이드에서는 글자 중간에서 줄이 바뀔 수 있다고 보아야 한다.
+- **확인한 것**: 웹 번들(Chromium, react-native-web)에서만 쟀다. 모의 API, 390×844 라이트·다크와 360×740 라이트. 공백으로 나눈 낱말 66-139개씩을 `Range.getClientRects` 로 보니 한 낱말이 두 줄에 걸친 경우가 0 이었고, 90자 ARN 은 상자 안에서 세 줄로 끊겨 넘치지 않았다. 숫자는 `docs/worklog/2026-11-15.md` "Plan G measurement".
+- **확인 못 한 것**: 실제 iOS·안드로이드 기기와 에뮬레이터 (iOS `hangul-word` 는 설정만 했고 기기에서 동작을 보지 않았다), 안드로이드 줄바꿈, OS 글꼴 배율 2배 (CSS zoom 은 대신할 수 없어 재지 않았다), 가로 방향. jest 는 레이아웃을 볼 수 없어 래퍼의 prop·style 과 가드만 확인한다.
+
 ## 확인한 것과 못 한 것
 
 - 확인함 (2026-11-09):
@@ -188,6 +200,15 @@ src/components/FooterSlot.js     설정 화면 맨 아래 안내 자리 (아래 
 - 알림 목록에서 `모두 읽음` 중에 `더 보기` 로 가져온 항목은 읽지 않은 모양으로 남는다.
 - 알림 한 줄마다 600ms 읽음 처리 중복 방지가 있다 (줄별).
 - 알림 종 `🔔` 은 테마 색을 따르지 않는다.
+
+계획 G (탭·줄바꿈) - 안 고친 것:
+- **안드로이드 한글 어절 줄바꿈은 처리하지 않았고 확인하지 못했다.** iOS `hangul-word` 도 기기에서 확인하지 못했다 (위 "줄바꿈 (계획 G)").
+- `IncidentFacts` 의 `INCIDENT_KIND_LABEL[incident.kind]` 는 객체의 상속된 속성(`constructor` 같은 이름)도 읽는다. 서버가 그런 `kind` 를 보내면 라벨 대신 함수 글이 나올 수 있다 (서버는 정해진 종류만 보낸다).
+- `Text` 가드 테스트의 정규식은 `import { Text } from 'react-native'` 한 모양만 잡는다. `import RN, { Text }`, `RN.Text`, `Animated.Text`, `require` 는 못 잡는다 (지금 그런 코드는 없다).
+- `IncidentFacts` 의 이름 칸 너비가 44 로 고정이다. 글꼴 배율을 키운 기기에서는 `배포` 같은 라벨이 줄을 넘길 수 있다 (웹 번들 기본 배율에서만 한 줄로 쟀다).
+- `src/ops/format.js` 의 `formatTime`·`formatDate`·`formatClock` 은 시각 읽는 코드가 세 번 반복된다.
+- 웹의 `keep-all` 은 `min-width: 0` 이 없는 flex·grid 칸에서 넘칠 수 있다 (실제 데이터에서는 못 찾았다). 웹 테스트는 `.step` 의 `keep-all` 을 고정하지 않는다.
+- 인시던트 상세 테스트에 `open` 상태의 "마법사가 복구를 시도하고 있습니다" 안내 글 확인은 없다 (`recovering` 만 확인한다).
 - 알림 목록은 포커스를 다시 받거나 푸시가 도착해도 다시 받지 않는다 (당겨서 새로고침).
 - 기기 등록 해제(PATCH)가 실패한 뒤 `hasDevice` 를 되돌리지 않는다.
 - 알림 종류 스위치들이 하나의 잠금을 공유한다 (한 번에 하나만 저장).
