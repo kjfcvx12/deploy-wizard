@@ -344,7 +344,7 @@ AWS 공개 가격 파일(인증 없음)에서 Fargate·ALB 시간당 단가를 �
 
 | 필드 | 타입 | 설명 |
 |------|------|------|
-| `cpu` `memory` | 글자, 선택 | 둘 다 비우면(생략·`""`·공백만) 기본 사양 256/512. 값을 주면 `options`의 프리셋 조합이어야 한다. 한쪽만 주면 400 |
+| `cpu` `memory` | 글자, 선택 | 둘 다 비우면(생략·`""`·공백만) 기본 사양 — 서버 `.env`의 `ECS_CPU`/`ECS_MEMORY`가 둘 다 있고 프리셋 쌍이면 그 값(`spec_is_default`는 true, `assumptions`에 `.env` 설정이라고 적는다), 아니면 256/512. 값을 주면 `options`의 프리셋 조합이어야 한다. 한쪽만 주면 400 |
 | `planned_hours` | 숫자, 선택 | 사용할 시간. 0보다 크고 8760 이하. 주면 `planned_usd`를 채운다 |
 | `max_tasks` | 정수, 선택 | 자동 증설 최대 작업 수. 1 이상 `MAX_TASKS_CAP`(기본 4) 이하. 주면 `max_hourly_usd`·`max_monthly_usd`를 채운다 |
 
@@ -570,6 +570,8 @@ Hard rule 3 의 자동 조치는 두 가지뿐이다. **재시작**(서비스를
 { "notify_email": true, "notify_push": false, "kinds": ["incident_opened", "incident_recovered", "incident_needs_action", "deploy_succeeded", "deploy_failed", "new_commit", "plan_exceeded"] }
 ```
 PATCH 는 보낸 항목만 바꾼다 (`notify_email`·`notify_push` 는 true/false, `kinds` 는 위 일곱 가지 중 일부).
+
+옛 설정 보정: `plan_exceeded` 가 생기기 전에 저장된 설정(내부 `kinds_version` 이 비어 있음)을 처음 읽을 때, 목록이 예전 기본 여섯 가지와 같으면 `plan_exceeded` 를 더해 일곱 가지로 바꾼다 (한 번만). 일부 종류를 일부러 끈 목록은 그대로 둔다. `kinds` 를 PATCH 하면 그 선택이 최종이라 이후 여섯 가지만 보내 `plan_exceeded` 를 끄면 다시 켜지지 않는다. `kinds_version` 은 응답에 나오지 않는다.
 
 ### 알림이 만들어지는 때 (서버 안 - API 아님)
 

@@ -32,7 +32,8 @@
 │
 ├── shared/                     ← 모든 기능이 쓰는 것
 │   ├── settings.py             ← 환경변수 (pydantic-settings)
-│   ├── database.py             ← async 엔진, 세션, Base, ensure_columns (옛 DB 열 보정)
+│   ├── database.py             ← async 엔진, 세션, Base, ensure_columns (옛 DB 열 보정), bootstrap_schema (서버 시작·scripts 가 같이 쓰는 표 만들기+열 보정)
+│   ├── specs.py                ← 사양 프리셋 쌍 4개와 .env 기본 사양 검사 (features/pricing·express 가 같이 쓴다)
 │   ├── aws_session.py          ← 세션 주입 (내 계정 / AssumeRole)
 │   ├── llm.py                  ← 구조화 출력 전용 LLM 클라이언트
 │   ├── masking.py              ← 토큰 마스킹
@@ -146,6 +147,7 @@ AWS 공개 가격 파일 (AmazonECS, AWSELB; 인증 없음, 리전별 index.json
         │  Pricing_Service.services_pricing_table  (httpx, 읽기 실패 시 낡은 캐시, 그것도 없으면 None)
         ▼
 data/cache/pricing-<리전>.json   ← 단가 표 + 저장 시각, PRICING_CACHE_HOURS(24시간) 안이면 그대로 쓴다
+        ※ 오프라인 보호: 갱신에 실패한 리전은 10분 동안 다시 가져오지 않고(낡은 캐시 또는 None), 같은 리전의 동시 호출은 잠금으로 한 번만 가져오며, 두 파일은 동시에 받는다 (연결 5초·읽기 10초·전체 20초, 파일당 5MB 상한). 캐시가 깨졌거나(NaN·음수·0·다른 리전) 정확히 24시간이 지났으면 없는 것으로 본다
         │
         ▼  services_pricing_estimate (순수 함수)
    Cost_Estimate ──▶ POST /api/pricing/estimate (표가 없으면 503)
@@ -153,12 +155,12 @@ data/cache/pricing-<리전>.json   ← 단가 표 + 저장 시각, PRICING_CACHE
         └──────────▶ MCP deploy 미리보기 (REST 로 부른다)
 ```
 
-- **계산**: 시간당 = Fargate(vCPU 수 x vCPU 단가 + GB 수 x GB 단가) + ALB 고정 시간당. 기간별 금액은 1시간·1일(24)·1주(168)·한 달(730시간). 사양은 프리셋 4개(256/512, 512/1024, 1024/2048, 2048/4096)만 받는다. 사양을 안 정하면 기본 사양 256/512로 계산하고 "실제 배포에서 아직 확인하지 않은 값"이라고 밝힌다. 가정은 "서비스마다 ALB 가 하나씩 생긴다"(공유 여부 미확인이라 가장 비싼 경우).
+- **계산**: 시간당 = Fargate(vCPU 수 x vCPU 단가 + GB 수 x GB 단가) + ALB 고정 시간당. 기간별 금액은 1시간·1일(24)·1주(168)·한 달(730시간). 사양은 프리셋 4개(256/512, 512/1024, 1024/2048, 2048/4096)만 받는다. 사양을 안 정하면 서비스 생성이 실제로 보낼 사양으로 계산한다 — `.env`의 `ECS_CPU`/`ECS_MEMORY`가 둘 다 있고 프리셋 쌍이면 그 값(가정에 `.env` 설정이라고 적는다), 아니면 기본 사양 256/512 ("실제 배포에서 아직 확인하지 않은 값"이라고 밝힌다). 같은 판단을 두 곳이 따로 하지 않도록 `shared/specs.py`가 쌍 목록과 `.env` 검사를 맡는다. 증설을 고르지 않으면 작업 1개 기준이며, AWS 기본 오토스케일이 작업 수를 늘릴 수 있다는 사실(최대 수는 확인 전)을 가정에 적는다. 가정은 "서비스마다 ALB 가 하나씩 생긴다"(공유 여부 미확인이라 가장 비싼 경우).
 - **들어 있지 않은 것**: ALB 사용량(LCU) 요금, 데이터 전송, CloudWatch Logs, ECR 저장. 응답의 `not_included`에 그대로 적는다. 금액은 온디맨드 USD 추정치이고 실제 청구서가 아니다.
 - **ARM64**: 시간당 금액과 절감률을 비교용으로만 보여 준다. 이 마법사는 항상 `linux/amd64`로 빌드하므로(하드 규칙 9) ARM64 로 배포하지 않는다.
-- **자동 증설 = 사용자가 고른 AWS 설정**: 만들 때 `min_tasks`·`max_tasks`·`scale_metric`·`scale_target`을 모두 정하면 Express 서비스를 **처음 만들 때만** `scalingTarget`으로 보낸다 (`cpu`·`memory`도 마찬가지, 이미 있는 서비스의 재배포·복구는 보내지 않는다). 늘고 주는 것은 AWS 가 하며 우리 시스템이 자동으로 조치하는 것이 아니다 (하드 규칙 3 의 자동 조치에 해당하지 않음). 최대 작업 수는 `MAX_TASKS_CAP`(기본 4)으로 막는다.
-- **예정 사용 시간 알림 (알림만)**: `deploys.running_since`가 `running`이 될 때 비어 있으면 채워지고(재배포는 이어서 센다), 멈춤·삭제·서비스 없는 실패에서 비워진다. 헬스 감시 루프(60초)가 점검 뒤 `Health_Service.services_health_plan_notify`를 불러, `planned_hours`가 있고 `running_since`로부터 그 시간이 지났고 `plan_notified_at`이 비어 있는 `running` 배포에 `plan_exceeded` 알림을 한 번 보내고 `plan_notified_at`을 채운다. **멈추거나 지우지는 않는다.** 예정 시간을 PATCH 로 바꾸면 알림이 다시 켜진다. 헬스 점검 쪽 실패와 서로 막지 않도록 따로 감싼다. 한계: 이미 있는 `notification_settings` 줄의 `kinds`에는 `plan_exceeded`가 없어서 설정에서 켜기 전까지 이 알림은 꺼진 상태다 (마이그레이션 없음 — 사용자가 끈 것과 옛 설정을 구분할 수 없어서). 열이 생기기 전부터 떠 있던 배포는 `running_since`가 비어 있어 알림 대상이 아니다.
-- **미검증**: 프리셋 4개를 Express 가 모두 받는지, 사양을 안 정했을 때의 실제 기본 크기, `scalingTarget` 허용 범위, ALB 가 서비스마다 하나인지 (`docs/aws-notes.md`). 시험은 전부 가짜 가격 파일·가짜 Express 로 돌렸다.
+- **자동 증설 = 사용자가 고른 AWS 설정**: 만들 때 `min_tasks`·`max_tasks`·`scale_metric`·`scale_target`을 모두 정하면 Express 서비스를 **처음 만들 때만** `scalingTarget`으로 보낸다 (`cpu`·`memory`도 마찬가지, 이미 있는 서비스의 재배포·복구는 보내지 않는다). 늘고 주는 것은 AWS 가 하며 우리 시스템이 자동으로 조치하는 것이 아니다 (하드 규칙 3 의 자동 조치에 해당하지 않음). 최대 작업 수 상한 `MAX_TASKS_CAP`(기본 4)은 **사용자가 고른 증설 설정에만** 적용된다. 증설을 고르지 않으면 `scalingTarget`을 보내지 않아 AWS 기본 오토스케일이 동작하며, 그 기본 최대 작업 수는 미확인이라 이 상한이 막아 주지 못한다 (소유자 결정: 기본 `scalingTarget`을 대신 보내지 않는다).
+- **예정 사용 시간 알림 (알림만)**: `deploys.running_since`가 `running`이 될 때 비어 있으면 채워지고(재배포는 이어서 센다), 멈춤·삭제·서비스 없는 실패에서 비워진다. 헬스 감시 루프(60초)가 점검 뒤 `Health_Service.services_health_plan_notify`를 불러, `planned_hours`가 있고 `running_since`로부터 그 시간이 지났고 `plan_notified_at`이 비어 있는 `running` 배포에 `plan_exceeded` 알림을 한 번 보내고 `plan_notified_at`을 채운다. **멈추거나 지우지는 않는다.** 예정 시간을 PATCH 로 바꾸면 알림이 다시 켜진다. 헬스 점검 쪽 실패와 서로 막지 않도록 따로 감싼다. 옛 설정 보정: `notification_settings.kinds_version`(NULL = 옛 설정)을 둔다. 처음 읽을 때 `kinds_version`이 비어 있으면, 저장된 목록이 예전 기본값(`plan_exceeded`만 빠진 여섯 가지)과 같을 때만 `plan_exceeded`를 더하고, 일부를 일부러 꺼 둔 목록은 그대로 둔 채 `kinds_version=2`로 올린다 (한 번만, 다시 건드리지 않는다). `kinds`를 PATCH 하면 `kinds_version=2`가 같이 저장되어, 이후 여섯 가지만 보내 `plan_exceeded`를 끈 선택은 다시 켜지지 않는다. 새 줄은 일곱 가지와 `kinds_version=2`로 시작한다. 열이 생기기 전부터 떠 있던 배포는 `running_since`가 비어 있어 알림 대상이 아니다.
+- **미검증**: 프리셋 4개를 Express 가 모두 받는지, 사양을 안 정했을 때의 실제 기본 크기, `scalingTarget` 허용 범위, 기본 오토스케일의 최대 작업 수, ALB 가 서비스마다 하나인지 (`docs/aws-notes.md`). 시험은 전부 가짜 가격 파일·가짜 Express 로 돌렸다.
 - **설계만 있고 만들지 않은 것**: 시간대 스케줄 자동 절전, 유휴 휴면, Kubernetes (스펙 7절).
 
 ## 웹 운영 화면 (계획 E)
