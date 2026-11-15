@@ -131,7 +131,11 @@ class Mcp_Service:
     @staticmethod
     async def services_mcp_health(client:Wizard_Client, d_id:int) -> dict:
         raw=await client.client_request("GET", f"/api/deploys/{d_id}/health")
-        return {name:raw.get(name) for name in ("health", "status_code", "detail")}
+        return {
+            "health":raw.get("health"),
+            "status_code":raw.get("status_code"),
+            "detail":guard_text_clip(raw["detail"]) if raw.get("detail") else raw.get("detail"),
+        }
 
     # 블록·연결 요약 목록 (비밀값·역할 ARN·전체 계정 ID 없음)
     @staticmethod

@@ -486,6 +486,21 @@ async def test_mcp_health_fields():
 
 
 @pytest.mark.asyncio
+async def test_mcp_health_detail_is_masked():
+    secret="ghp_" + "a" * 36
+
+    def handler(request:httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"d_id":4, "health":"unhealthy", "status_code":500, "detail":f"token {secret} leaked"})
+
+    client=make_client(handler)
+    try:
+        result=await Mcp_Service.services_mcp_health(client, 4)
+    finally:
+        await client.aclose()
+    assert secret not in result["detail"]
+
+
+@pytest.mark.asyncio
 async def test_mcp_connections_hides_sensitive():
     def handler(request:httpx.Request) -> httpx.Response:
         assert request.url.path == "/api/accounts/connections"

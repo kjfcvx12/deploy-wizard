@@ -239,7 +239,7 @@ tests/test_mcp.py
 
 ### 9.7 Task 6 구현에서 정한 것
 
-- elicitation 은 **켠다**: 행동 도구 5개는 `confirm_token` 이 없을 때만 `ctx.elicit(미리보기 문구, Confirm_Schema)`를 부른다 (`Confirm_Schema` = `ok: bool` 하나). 승인(`accept` + `ok=True`)이면 서비스를 토큰으로 곧바로 다시 불러 실행(한도·바인딩 검사는 서비스 한 곳), 거절·취소면 `{"status": "cancelled"}`. `MCPError`(미지원)는 도구 안에서 잡아 토큰 미리보기를 그대로 돌려준다. `confirm_token` 을 넘기면 elicitation 없이 토큰 경로.
-- 도구 반환형은 `dict[str, Any]` (목록은 `{"items": [...]}`). `max_live`·확인 유효 시간은 `build_server` 인자로만 정하고 도구 매개변수에는 없다.
+- elicitation 은 **켠다**: 행동 도구 5개는 `confirm_token` 이 없을 때만 `ctx.elicit(미리보기 문구, Confirm_Schema)`를 부른다 (`Confirm_Schema` = `ok: bool` 하나). 승인(`accept` + `ok=True`)이면 서비스를 토큰으로 곧바로 다시 불러 실행(한도·바인딩 검사는 서비스 한 곳), 거절·취소면 `{"status": "cancelled", "message": ...}` (모델에 "사용자가 승인하지 않았으니 다시 요청하기 전에는 같은 작업을 다시 묻지 말라"고 알리는 한국어 문구). `MCPError`(미지원)는 도구 안에서 잡아 토큰 미리보기를 그대로 돌려준다. `confirm_token` 을 넘기면 elicitation 없이 토큰 경로.
+- 도구 반환형은 `dict[str, Any]` (목록은 `{"items": [...]}`). `max_live` 는 `build_server` 인자로, 확인 유효 시간은 `main()` 이 만드는 `Confirm_Store` 생성자 인자로만 정하며 도구 매개변수에는 없다.
 - `Wizard_Error` → `ToolError(str(e))` (한국어 문구가 `is_error` 결과로 간다).
 - 새 SDK 이름은 쓰지 않았다 (`Context`, `MCPServer`, `ToolAnnotations`, `MCPError`, `ToolError` 만).

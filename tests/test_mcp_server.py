@@ -86,6 +86,29 @@ async def test_server_lists_thirteen_tools_with_annotations(env):
         assert "요금이 발생한다" in tools[name].description
 
 
+def test_server_confirm_schema_has_korean_title():
+    from features.mcp.server import Confirm_Schema
+
+    field=Confirm_Schema.model_json_schema()["properties"]["ok"]
+    assert field["title"] == "진행"
+    assert "승인하면 실행" in field["description"]
+
+
+@pytest.mark.asyncio
+async def test_server_action_descriptions_explain_both_confirmation_paths(env):
+    async with Client(env.srv, mode="legacy") as c:
+        tools={t.name: t for t in (await c.list_tools()).tools}
+
+    for name in ACTION_NAMES:
+        text=tools[name].description
+        assert "확인 창" in text and "confirm_token" in text
+        assert "미리보기만 돌려준다" not in text
+
+    from features.mcp.server import SERVER_INSTRUCTIONS
+
+    assert "확인 창" in SERVER_INSTRUCTIONS and "confirm_token" in SERVER_INSTRUCTIONS
+
+
 @pytest.mark.asyncio
 async def test_server_max_live_and_ttl_are_not_tool_parameters(env):
     async with Client(env.srv, mode="legacy") as c:
@@ -166,7 +189,9 @@ async def test_server_elicitation_decline_creates_nothing(env):
         result=await c.call_tool("deploy", {"repo_url": REPO})
 
     assert result.is_error is False
-    assert result.structured_content == {"status": "cancelled"}
+    assert result.structured_content["status"] == "cancelled"
+    assert "승인하지 않았습니다" in result.structured_content["message"]
+    assert "다시 묻지 마세요" in result.structured_content["message"]
     assert (await env.get("/api/deploys")).json() == []
     assert env.started == []
 
@@ -223,7 +248,8 @@ async def test_server_delete_elicitation_accept_and_decline(env):
 
     async with Client(env.srv, mode="legacy", elicitation_callback=decline_callback) as c:
         declined=await c.call_tool("delete_deploy", {"d_id": d_id})
-        assert declined.structured_content == {"status": "cancelled"}
+        assert declined.structured_content["status"] == "cancelled"
+        assert declined.structured_content["message"]
     assert (await env.get(f"/api/deploys/{d_id}")).status_code == 200
 
     async with Client(env.srv, mode="legacy", elicitation_callback=accept_callback) as c:
