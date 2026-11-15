@@ -1,4 +1,5 @@
 import base64
+import os
 import boto3
 from pathlib import Path
 from typing import Callable
@@ -47,9 +48,43 @@ class Build_Service:
             return result["repository"]["repositoryUri"]
 
 
+    # 그 폴더에 docker 자격 증명 도우미(docker-credential-*)가 있는지
+    @staticmethod
+    def services_build_has_credential_helper(directory:str) -> bool:
+        try:
+            return any(Path(directory).glob("docker-credential-*"))
+        except OSError:
+            return False
+
+
+    # 로그인·푸시용 docker 환경 -전용 설정 폴더를 쓴다. 전역 자격 증명 저장소(Windows의 desktop)는 ECR 토큰이 길어 저장에 실패한다
+    @staticmethod
+    def services_build_docker_env() -> dict[str, str]:
+        config_dir=settings.docker_auth_path
+        config_dir.mkdir(parents=True, exist_ok=True)
+        (config_dir / "config.json").write_text('{"auths": {}}', encoding="utf-8")
+
+        env=dict(os.environ)
+        env["DOCKER_CONFIG"]=str(config_dir)
+
+        # docker 는 credsStore 가 비어 있어도 PATH 에서 docker-credential-* 을 찾아 기본 저장소로 쓴다 - 이 명령들의 PATH 에서만 뺀다
+        env["PATH"]=os.pathsep.join(p for p in env.get("PATH", "").split(os.pathsep) if p and not Build_Service.services_build_has_credential_helper(p))
+
+        # 설정 폴더를 바꾸면 현재 context(desktop-linux 등)를 잃으므로 엔진 주소를 직접 넘긴다
+        if not env.get("DOCKER_HOST"):
+            try:
+                lines=proc_run(["docker", "context", "inspect", "--format", "{{.Endpoints.docker.Host}}"], timeout=30).splitlines()
+                if lines and lines[-1].strip():
+                    env["DOCKER_HOST"]=lines[-1].strip()
+            except Proc_Error:
+                pass
+
+        return env
+
+
     # ECR 로그인 - 토큰은 12시간이면 만료된다. 매번 새로 받는다 (기획서 06장)
     @staticmethod
-    def services_build_login(session:boto3.Session) -> str:
+    def services_build_login(session:boto3.Session, env:dict[str, str]|None=None) -> str:
         ecr=session.client("ecr")
 
         auth=ecr.get_authorization_token()["authorizationData"][0]
@@ -57,8 +92,12 @@ class Build_Service:
         registry=auth["proxyEndpoint"].removeprefix("https://")
 
         # 비밀번호는 인자가 아니라 stdin으로 넘긴다 (프로세스 목록·로그에 남지 않게)
-        proc_run(["docker", "login", "--username", username, "--password-stdin", registry],
-                 timeout=60, stdin_text=password)
+        try:
+            proc_run(["docker", "login", "--username", username, "--password-stdin", registry],
+                     timeout=60, stdin_text=password, env=env)
+        except Proc_Error as e:
+            # 실패 이유(출력)를 메시지에 남긴다 - 이것 없이는 원인을 알 수 없다
+            raise Proc_Error(f"ECR 로그인 실패 :{e.output[-300:]}", e.output)
 
         return registry
 
@@ -68,12 +107,13 @@ class Build_Service:
     def services_build_push(session:boto3.Session, image_tag:str, repository_name:str, version:str,
                             on_line:Callable[[str], None]|None=None) -> str:
         repository_uri=Build_Service.services_build_ensure_repository(session, repository_name)
-        Build_Service.services_build_login(session)
+        env=Build_Service.services_build_docker_env()
+        Build_Service.services_build_login(session, env)
 
         image_uri=f"{repository_uri}:{version}"
 
-        proc_run(["docker", "tag", image_tag, image_uri], timeout=60)
-        proc_run(["docker", "push", image_uri], timeout=1800, on_line=on_line)
+        proc_run(["docker", "tag", image_tag, image_uri], timeout=60, env=env)
+        proc_run(["docker", "push", image_uri], timeout=1800, on_line=on_line, env=env)
 
         return image_uri
 

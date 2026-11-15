@@ -16,7 +16,8 @@ class Proc_Error(Exception):
 
 # 명령 실행 - 출력 한 줄마다 on_line 호출, 전체 출력을 돌려준다
 def proc_run(args:list[str], cwd:str|None=None, timeout:int=600,
-             on_line:Callable[[str], None]|None=None, stdin_text:str|None=None) -> str:
+             on_line:Callable[[str], None]|None=None, stdin_text:str|None=None,
+             env:dict[str, str]|None=None) -> str:
     lines:list[str]=[]
     timed_out=threading.Event()
 
@@ -24,6 +25,7 @@ def proc_run(args:list[str], cwd:str|None=None, timeout:int=600,
         process=subprocess.Popen(
             args,
             cwd=cwd,
+            env=env,
             stdin=subprocess.PIPE if stdin_text is not None else subprocess.DEVNULL,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
