@@ -26,7 +26,8 @@
 │   ├── watches/                ← services.py 만 (DB 없음, 상태는 Deploy에)  (M6, 진행 중 - 폴링만 완료)
 │   ├── health/                 ← models.py  scheme.py  crud.py  services.py  (D1 - 1분마다 헬스체크 이력, 감시 루프)
 │   ├── incidents/              ← models.py  scheme.py  crud.py  services.py  recovery.py  recovery_state.py  router.py  ui/  (D1 - 인시던트, 규칙 표 설명, 자동 복구; recovery_state 는 기록 반영 재시도·서버 재개. ui/ 는 계획 E)
-│   └── notifications/          ← models.py  scheme.py  crud.py  services.py  compose.py  dispatch.py  inbox.py  router.py  ui/  (D1 - 앱 안·메일·푸시 알림, 기기, 설정. ui/ 는 계획 E)
+│   ├── notifications/          ← models.py  scheme.py  crud.py  services.py  compose.py  dispatch.py  inbox.py  router.py  ui/  (D1 - 앱 안·메일·푸시 알림, 기기, 설정. ui/ 는 계획 E)
+│   └── mcp/                    ← client.py  guard.py  scheme.py  services.py  server.py  __main__.py  (로컬 MCP 서버, DB·라우터 없음)
 │
 ├── shared/                     ← 모든 기능이 쓰는 것
 │   ├── settings.py             ← 환경변수 (pydantic-settings)
@@ -60,6 +61,14 @@ ui/         → 같은 기능의 api.js, shared/ui, 다른 기능의 ui 컴포�
 기능 조립은 `features/deploys/pipeline.py` 한 곳에서만 한다. `repos`·`dockerfiles`·`builds`·`express`·`explains`는 서로를 모른다 (예외: `dockerfiles`는 레포 요약을 위해 `repos`의 services 를 쓴다). `envvars`는 `deploys`가 파이프라인(분석 단계 저장, 배포 직전 값 확인, 컨테이너에 넣을 값)과 목록의 `env_pending`을 채우려고 services 로만 부른다. 반대로 `envvars`가 배포 존재를 확인하려고 `deploys`의 services 를 부르는데, 순환 임포트라 `envvars/services.py`에서는 함수 안에서 지연 임포트한다. `advice`는 DB에 쓰지 않고 `repos`·`envvars`·`accounts`(GitHub 토큰)의 services 만 부르며, 아무도 `advice`를 부르지 않는다 — 라우터만 있다. `accounts`·`watches`는 예외 — `deploys`가 배포에 쓸 AWS/GitHub 세션을 얻으려고 `accounts`의 services 를 부르고(M6, `pipeline.py`·`services_deploy_delete`·`services_deploy_get_remote`에 배선됨), `accounts`도 계정 삭제 시 연결을 끊으려고 `deploys`의 services 를 부른다(순환 임포트라 `accounts/services.py`에서는 함수 안에서 지연 임포트한다). `watches`는 `deploys`(폴링 대상 조회, 재배포 트리거)와 `accounts`(GitHub 토큰)의 services 만 부르고, 아무도 `watches`를 부르지 않는다 — `main.py`가 백그라운드 태스크로 직접 돌린다.
 
 (D1) 운영 복구·알림 세 기능도 services 끼리만 부른다. `health.services`는 `deploys`(점검 대상 조회, 결과 반영)와 `incidents`(점검 결과 훅)를 부른다. `incidents.services`는 `express`(상태 조회)·`accounts`(세션)·`notifications`를, `incidents.recovery`는 거기에 `envvars`(복구 때도 환경변수를 같이 보낸다)를 더해 부르고, 필요할 때 `deploys`·`health`를 부른다. `deploys.services`는 목록의 `open_incident_id`를 채우려고 `incidents`를, `deploys.pipeline`과 `watches`는 알림을 보내려고 `notifications`를 부른다. `notifications.services`는 인시던트·배포를 읽으려고 `incidents`·`deploys`를 부른다. 순환 임포트가 되는 쪽(`incidents`↔`deploys`/`health`, `notifications`↔`incidents`/`deploys`)은 쓰는 함수 안에서 지연 임포트한다. 조립은 원래 `pipeline.py` 한 곳이라는 원칙의 예외가 하나 있다 — `incidents/recovery.py`가 복구 때 `express`의 갱신을 직접 부른다 (배포 파이프라인과 별개로, 이미 떠 있는 서비스에 두 가지 조치만 하는 자리라서).
+
+## 로컬 MCP 서버 (`features/mcp`)
+
+Claude 같은 MCP 클라이언트가 stdio 로 붙는 별도 프로세스(`python -m features.mcp`)다. 서버 모듈(`deploys`·`accounts` 등)을 **임포트하지 않고** `client.py`의 `Wizard_Client`가 REST API 를 HTTP 로 부른다 (주소 `WIZARD_API_URL`, 토큰 `WIZARD_API_TOKEN` 은 2단계용). 그래서 의존 방향은 `features/mcp -> shared/settings` 하나뿐이고, 아무도 `mcp`를 부르지 않는다. 같은 REST 를 웹·앱과 함께 쓰므로 API 스펙은 바뀌지 않는다.
+
+- `services.py`: 도구 로직 (첫 인자 `Wizard_Client`). 응답을 허용 목록 요약으로 줄이고, 로그·오류·해설은 `guard.py`로 마스킹·자른 뒤 "신뢰할 수 없는 데이터" 표시로 감싼다.
+- `server.py`: 도구 13개 등록(읽기 8, 행동 5). 행동 도구는 `confirm_token` 이 없으면 미리보기를 만든 뒤, 클라이언트가 elicitation 을 지원하면 사용자에게 직접 묻고, 아니면 미리보기와 확인 토큰(`Confirm_Store`, 5분·1회용·도구와 인자에 묶임)을 돌려준다. 살아 있는 배포 한도(기본 3)는 서비스 한 곳에서 검사한다.
+- 자동 조치는 늘리지 않는다 — 확인 없이 AWS 를 바꾸는 도구가 없다 (하드 규칙 3).
 
 ## 계층
 
