@@ -197,6 +197,54 @@ async def test_server_elicitation_decline_creates_nothing(env):
 
 
 @pytest.mark.asyncio
+async def test_server_elicitation_decline_discards_token(env):
+    wizard=Wizard_Client("http://test", transport=env.transport)
+    store=Confirm_Store(300)
+    srv=build_server(wizard, store, max_live=3)
+    async with Client(srv, mode="legacy", elicitation_callback=decline_callback) as c:
+        result=await c.call_tool("deploy", {"repo_url": REPO})
+    await wizard.aclose()
+
+    assert result.structured_content["status"] == "cancelled"
+    assert store.tokens == {}
+
+
+@pytest.mark.asyncio
+async def test_server_elicitation_accept_without_ok_is_cancelled(env):
+    async def unticked_callback(context, params):
+        return ElicitResult(action="accept", content={"ok": False})
+
+    async with Client(env.srv, mode="legacy", elicitation_callback=unticked_callback) as c:
+        result=await c.call_tool("deploy", {"repo_url": REPO})
+
+    assert result.is_error is False
+    assert result.structured_content["status"] == "cancelled"
+    assert (await env.get("/api/deploys")).json() == []
+    assert env.started == []
+
+
+@pytest.mark.asyncio
+async def test_server_elicitation_accept_blocked_when_limit_reached_meanwhile(env):
+    wizard=Wizard_Client("http://test", transport=env.transport)
+    srv=build_server(wizard, Confirm_Store(300), max_live=1)
+
+    async def race_callback(context, params):
+        # 사용자가 승인하기 전에 다른 배포가 생겨 한도에 닿는다
+        await env.post("/api/deploys", json={"repo_url": "https://github.com/o/other"})
+        return ElicitResult(action="accept", content={"ok": True})
+
+    async with Client(srv, mode="legacy", elicitation_callback=race_callback) as c:
+        result=await c.call_tool("deploy", {"repo_url": REPO})
+    await wizard.aclose()
+
+    assert result.is_error is True
+    assert "한도" in result.content[0].text
+    rows=(await env.get("/api/deploys")).json()
+    assert [row["repo_url"] for row in rows] == ["https://github.com/o/other"]
+    assert len(env.started) == 1
+
+
+@pytest.mark.asyncio
 async def test_server_elicitation_message_shows_preview(env):
     seen=[]
 
@@ -249,7 +297,8 @@ async def test_server_delete_elicitation_accept_and_decline(env):
     async with Client(env.srv, mode="legacy", elicitation_callback=decline_callback) as c:
         declined=await c.call_tool("delete_deploy", {"d_id": d_id})
         assert declined.structured_content["status"] == "cancelled"
-        assert declined.structured_content["message"]
+        assert "승인하지 않았습니다" in declined.structured_content["message"]
+        assert "다시 묻지 마세요" in declined.structured_content["message"]
     assert (await env.get(f"/api/deploys/{d_id}")).status_code == 200
 
     async with Client(env.srv, mode="legacy", elicitation_callback=accept_callback) as c:

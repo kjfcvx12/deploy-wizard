@@ -52,7 +52,7 @@ def server_confirm_message(preview:dict) -> str:
 
 
 # 행동 도구 공통 흐름 - 토큰이 있으면 그대로 실행, 없으면 미리보기 후 elicitation 으로 직접 확인하고 안 되면 토큰 미리보기를 돌려준다
-async def server_action(ctx:Context, call:Callable[[str|None], Awaitable[dict]], confirm_token:str|None) -> dict:
+async def server_action(ctx:Context, store:Confirm_Store, call:Callable[[str|None], Awaitable[dict]], confirm_token:str|None) -> dict:
     if confirm_token:
         return await server_run(call(confirm_token))
     preview=await server_run(call(None))
@@ -64,6 +64,7 @@ async def server_action(ctx:Context, call:Callable[[str|None], Awaitable[dict]],
         return preview
     if answer.action == "accept" and answer.data.ok is True:
         return await server_run(call(preview["confirm_token"]))
+    store.store_discard(preview["confirm_token"])
     return {"status":"cancelled", "message":CANCELLED_MESSAGE}
 
 
@@ -148,6 +149,7 @@ def build_server(client:Wizard_Client, store:Confirm_Store, max_live:int=3) -> M
     ) -> dict[str, Any]:
         return await server_action(
             ctx,
+            store,
             lambda token:Mcp_Service.services_mcp_deploy(client, store, repo_url, branch, connection_id, token, max_live),
             confirm_token,
         )
@@ -161,7 +163,7 @@ def build_server(client:Wizard_Client, store:Confirm_Store, max_live:int=3) -> M
         annotations=ADDITIVE,
     )
     async def server_tool_redeploy(ctx:Context, d_id:int, confirm_token:str|None=None) -> dict[str, Any]:
-        return await server_action(ctx, lambda token:Mcp_Service.services_mcp_redeploy(client, store, d_id, token), confirm_token)
+        return await server_action(ctx, store, lambda token:Mcp_Service.services_mcp_redeploy(client, store, d_id, token, max_live), confirm_token)
 
     @srv.tool(
         name="stop_deploy",
@@ -172,7 +174,7 @@ def build_server(client:Wizard_Client, store:Confirm_Store, max_live:int=3) -> M
         annotations=DESTRUCTIVE,
     )
     async def server_tool_stop_deploy(ctx:Context, d_id:int, confirm_token:str|None=None) -> dict[str, Any]:
-        return await server_action(ctx, lambda token:Mcp_Service.services_mcp_stop(client, store, d_id, token), confirm_token)
+        return await server_action(ctx, store, lambda token:Mcp_Service.services_mcp_stop(client, store, d_id, token), confirm_token)
 
     @srv.tool(
         name="start_deploy",
@@ -183,7 +185,7 @@ def build_server(client:Wizard_Client, store:Confirm_Store, max_live:int=3) -> M
         annotations=ADDITIVE,
     )
     async def server_tool_start_deploy(ctx:Context, d_id:int, confirm_token:str|None=None) -> dict[str, Any]:
-        return await server_action(ctx, lambda token:Mcp_Service.services_mcp_start(client, store, d_id, token), confirm_token)
+        return await server_action(ctx, store, lambda token:Mcp_Service.services_mcp_start(client, store, d_id, token, max_live), confirm_token)
 
     @srv.tool(
         name="delete_deploy",
@@ -194,7 +196,7 @@ def build_server(client:Wizard_Client, store:Confirm_Store, max_live:int=3) -> M
         annotations=DESTRUCTIVE,
     )
     async def server_tool_delete_deploy(ctx:Context, d_id:int, confirm_token:str|None=None) -> dict[str, Any]:
-        return await server_action(ctx, lambda token:Mcp_Service.services_mcp_delete(client, store, d_id, token), confirm_token)
+        return await server_action(ctx, store, lambda token:Mcp_Service.services_mcp_delete(client, store, d_id, token), confirm_token)
 
     return srv
 

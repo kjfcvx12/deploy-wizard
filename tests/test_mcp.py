@@ -9,6 +9,7 @@ from features.mcp.guard import (
     guard_connection_summary,
     guard_deploy_summary,
     guard_mask_account_id,
+    guard_text_clip,
     guard_wrap_untrusted,
 )
 from features.mcp.scheme import Deploy_Summary
@@ -262,7 +263,7 @@ async def test_mcp_analyze_filters_fields():
         result=await Mcp_Service.services_mcp_analyze(client, "https://github.com/o/r")
     finally:
         await client.aclose()
-    assert set(result) == {"tier", "confidence", "cpu", "memory", "cost", "reasons", "needs", "unknowns", "language", "support_level", "app_dir"}
+    assert set(result) == {"tier", "confidence", "cpu", "memory", "cost", "reasons", "needs", "unknowns", "language", "support_level", "app_dir", "notice"}
     assert "internal_secret" not in result
     assert seen["body"] == {"repo_url":"https://github.com/o/r"}
 
@@ -550,7 +551,9 @@ class Fake_Wizard:
         if request.method == "GET" and path == "/api/accounts/connections":
             return httpx.Response(200, json=self.connections)
         if request.method == "GET" and path.startswith("/api/deploys/"):
-            return httpx.Response(200, json=raw_deploy(int(path.rsplit("/", 1)[1])))
+            d_id=int(path.rsplit("/", 1)[1])
+            known=next((row for row in self.deploys if row["d_id"] == d_id), None)
+            return httpx.Response(200, json=known if known is not None else raw_deploy(d_id))
         if request.method == "POST" and path == "/api/deploys/advice":
             return httpx.Response(200, json={
                 "tier":"small", "confidence":"high", "cpu":None, "memory":None,
@@ -741,3 +744,241 @@ async def test_action_conflict_message_passthrough():
     finally:
         await client.aclose()
     assert exc_info.value.message == "진행 중인 배포는 멈출 수 없습니다"
+
+
+# 살아 있는 배포 3개 (한도 3에 딱 걸린다)
+def three_live() -> list[dict]:
+    return [raw_deploy(1, "running"), raw_deploy(2, "building"), raw_deploy(3, "needs_input")]
+
+
+# 상태를 바꾸는 요청(POST/DELETE) 개수
+def writes(fake:Fake_Wizard) -> int:
+    return sum(1 for m, _, _ in fake.requests if m in ("POST", "DELETE"))
+
+
+@pytest.mark.asyncio
+async def test_start_preview_blocked_at_live_cap():
+    fake=Fake_Wizard(deploys=three_live() + [raw_deploy(5, "stopped")])
+    client=make_client(fake.handler)
+    store=Confirm_Store(300)
+    try:
+        with pytest.raises(Wizard_Error) as exc_info:
+            await Mcp_Service.services_mcp_start(client, store, 5, max_live=3)
+    finally:
+        await client.aclose()
+    assert "한도" in exc_info.value.message
+    assert writes(fake) == 0
+    assert len(store.tokens) == 0
+
+
+@pytest.mark.asyncio
+async def test_start_rechecked_after_consume():
+    fake=Fake_Wizard(deploys=[raw_deploy(1, "running"), raw_deploy(5, "stopped")])
+    client=make_client(fake.handler)
+    store=Confirm_Store(300)
+    try:
+        preview=await Mcp_Service.services_mcp_start(client, store, 5, max_live=3)
+        fake.deploys.extend([raw_deploy(2, "running"), raw_deploy(3, "running")])
+        with pytest.raises(Wizard_Error) as exc_info:
+            await Mcp_Service.services_mcp_start(client, store, 5, preview["confirm_token"], max_live=3)
+    finally:
+        await client.aclose()
+    assert "한도" in exc_info.value.message
+    assert writes(fake) == 0
+
+
+@pytest.mark.asyncio
+async def test_redeploy_stopped_blocked_but_running_allowed_at_cap():
+    fake=Fake_Wizard(deploys=three_live() + [raw_deploy(5, "stopped")])
+    client=make_client(fake.handler)
+    store=Confirm_Store(300)
+    try:
+        with pytest.raises(Wizard_Error) as exc_info:
+            await Mcp_Service.services_mcp_redeploy(client, store, 5, max_live=3)
+        # running 인 대상은 이미 세어진 배포라 한도에서도 허용
+        preview=await Mcp_Service.services_mcp_redeploy(client, store, 1, max_live=3)
+        done=await Mcp_Service.services_mcp_redeploy(client, store, 1, preview["confirm_token"], max_live=3)
+    finally:
+        await client.aclose()
+    assert "한도" in exc_info.value.message
+    assert preview["status"] == "confirmation_required"
+    assert done["status"] == "done"
+    assert fake.count("POST", "/api/deploys/5/redeploy") == 0
+    assert fake.count("POST", "/api/deploys/1/redeploy") == 1
+
+
+@pytest.mark.asyncio
+async def test_redeploy_failed_without_service_blocked_rechecked_after_consume():
+    fake=Fake_Wizard(deploys=[raw_deploy(1, "running"), raw_deploy(2, "running"), raw_deploy(5, "failed")])
+    client=make_client(fake.handler)
+    store=Confirm_Store(300)
+    try:
+        preview=await Mcp_Service.services_mcp_redeploy(client, store, 5, max_live=3)
+        fake.deploys.append(raw_deploy(3, "running"))
+        with pytest.raises(Wizard_Error) as exc_info:
+            await Mcp_Service.services_mcp_redeploy(client, store, 5, preview["confirm_token"], max_live=3)
+    finally:
+        await client.aclose()
+    assert "한도" in exc_info.value.message
+    assert writes(fake) == 0
+
+
+@pytest.mark.asyncio
+async def test_failed_with_service_arn_counts_toward_cap():
+    arn="arn:aws:ecs:ap-northeast-2:123456789012:service/x"
+    with_arn=Fake_Wizard(deploys=[raw_deploy(1, "running"), raw_deploy(2, "running"), raw_deploy(3, "failed", service_arn=arn)])
+    without=Fake_Wizard(deploys=[raw_deploy(1, "running"), raw_deploy(2, "running"), raw_deploy(3, "failed", service_arn=None)])
+    blocked=make_client(with_arn.handler)
+    allowed=make_client(without.handler)
+    try:
+        with pytest.raises(Wizard_Error):
+            await Mcp_Service.services_mcp_live_check(blocked, 3)
+        await Mcp_Service.services_mcp_live_check(allowed, 3)
+    finally:
+        await blocked.aclose()
+        await allowed.aclose()
+
+
+@pytest.mark.asyncio
+async def test_redeploy_failed_with_service_allowed_at_cap():
+    arn="arn:aws:ecs:ap-northeast-2:123456789012:service/x"
+    fake=Fake_Wizard(deploys=[raw_deploy(1, "running"), raw_deploy(2, "running"), raw_deploy(5, "failed", service_arn=arn)])
+    client=make_client(fake.handler)
+    store=Confirm_Store(300)
+    try:
+        preview=await Mcp_Service.services_mcp_redeploy(client, store, 5, max_live=3)
+        done=await Mcp_Service.services_mcp_redeploy(client, store, 5, preview["confirm_token"], max_live=3)
+    finally:
+        await client.aclose()
+    assert done["status"] == "done"
+
+
+@pytest.mark.asyncio
+async def test_error_detail_is_masked_and_clipped():
+    secret="ghp_" + "a"*36
+
+    def leaky(request:httpx.Request) -> httpx.Response:
+        return httpx.Response(409, json={"detail":f"clone 실패: https 토큰 {secret} 거부됨"})
+
+    def long(request:httpx.Request) -> httpx.Response:
+        return httpx.Response(409, json={"detail":"가"*900})
+
+    message=await error_message(leaky)
+    assert secret not in message
+    assert "clone 실패" in message
+    clipped=await error_message(long)
+    assert len(clipped) <= 501
+
+
+@pytest.mark.asyncio
+async def test_logs_and_deploy_error_mask_account_id():
+    image="123456789012.dkr.ecr.ap-northeast-2.amazonaws.com/x"
+    arn="arn:aws:iam::123456789012:role/Deny"
+
+    def handler(request:httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/logs"):
+            after=int(request.url.params.get("after", "0"))
+            rows=[] if after else [{"d_l_id":1, "step":"pushing", "level":"info", "message":f"push {image} by {arn}"}]
+            return httpx.Response(200, json=rows)
+        return httpx.Response(200, json=raw_deploy(1, "failed", error_msg=f"AccessDenied {arn} / {image}"))
+
+    client=make_client(handler)
+    try:
+        logs=await Mcp_Service.services_mcp_logs(client, 1)
+        deploy=await Mcp_Service.services_mcp_get_deploy(client, 1)
+    finally:
+        await client.aclose()
+    for text in (logs["lines"][0], deploy["error_msg"]):
+        assert "123456789012" not in text
+        assert text.count("****9012") == 2
+    assert "ecr.ap-northeast-2.amazonaws.com/x" in logs["lines"][0]
+
+
+# 토큰은 자르기 전에 가려야 한다 - 490자 뒤에 걸친 토큰이 잘린 채 남으면 안 된다
+def test_guard_text_clip_masks_before_truncating():
+    result=guard_text_clip("x"*490 + "ghp_" + "a"*36)
+    assert "ghp_" not in result
+    assert result.startswith("x"*490)
+
+
+def test_guard_text_clip_exact_max_line_has_no_ellipsis():
+    exact="y"*500
+    assert guard_text_clip(exact) == exact
+    assert guard_text_clip(exact + "z") == exact + "…"
+
+
+@pytest.mark.asyncio
+async def test_analyze_guards_free_text():
+    secret="ghp_" + "a"*36
+
+    def handler(request:httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={
+            "tier":"small", "reasons":[f"토큰 {secret}"], "needs":[{"kind":"env", "name":"X", "message":"y"*700}],
+            "unknowns":["계정 123456789012.dkr.ecr.x"], "language":"node", "app_dir":f"a/{secret}",
+        })
+
+    client=make_client(handler)
+    try:
+        result=await Mcp_Service.services_mcp_analyze(client, REPO)
+    finally:
+        await client.aclose()
+    text=json.dumps(result, ensure_ascii=False)
+    assert secret not in text
+    assert "123456789012" not in text
+    assert len(result["needs"][0]["message"]) <= 501
+    assert result["needs"][0]["name"] == "X"
+    assert result["notice"]
+
+
+@pytest.mark.asyncio
+async def test_analyze_without_free_text_has_no_notice():
+    def handler(request:httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"tier":"small", "reasons":[], "needs":[], "unknowns":[], "language":"node"})
+
+    client=make_client(handler)
+    try:
+        result=await Mcp_Service.services_mcp_analyze(client, REPO)
+    finally:
+        await client.aclose()
+    assert "notice" not in result
+
+
+@pytest.mark.asyncio
+async def test_token_not_replayable_across_tools():
+    fake=Fake_Wizard()
+    client=make_client(fake.handler)
+    store=Confirm_Store(300)
+    try:
+        preview=await Mcp_Service.services_mcp_stop(client, store, 5)
+        with pytest.raises(Wizard_Error):
+            await Mcp_Service.services_mcp_delete(client, store, 5, preview["confirm_token"])
+        with pytest.raises(Wizard_Error):
+            await Mcp_Service.services_mcp_start(client, store, 5, preview["confirm_token"])
+    finally:
+        await client.aclose()
+    assert writes(fake) == 0
+
+
+@pytest.mark.asyncio
+async def test_action_token_expires_by_clock():
+    clock=[1000.0]
+    fake=Fake_Wizard()
+    client=make_client(fake.handler)
+    store=Confirm_Store(300, now=lambda: clock[0])
+    try:
+        preview=await Mcp_Service.services_mcp_stop(client, store, 5)
+        clock[0]+=301
+        with pytest.raises(Wizard_Error) as exc_info:
+            await Mcp_Service.services_mcp_stop(client, store, 5, preview["confirm_token"])
+    finally:
+        await client.aclose()
+    assert "만료" in exc_info.value.message
+    assert writes(fake) == 0
+
+
+def test_confirm_store_discard():
+    store=Confirm_Store(300)
+    token=store.store_issue("deploy", {"a":1})
+    store.store_discard(token)
+    store.store_discard("none")
+    assert store.tokens == {}

@@ -2,6 +2,8 @@ from typing import Any
 
 import httpx
 
+from features.mcp.guard import guard_text_clip
+
 
 # 서버가 돌려준 실패를 한국어 한 줄로 담는 예외
 class Wizard_Error(Exception):
@@ -49,7 +51,7 @@ class Wizard_Client:
         if response.status_code == 422:
             return "입력 형식이 맞지 않습니다. 값을 확인해 주세요."
         if isinstance(detail, str) and detail:
-            return detail
+            return guard_text_clip(detail)
         return f"배포 마법사 서버가 오류를 돌려줬습니다 (HTTP {response.status_code})."
 
     # 마지막 tail 개 로그 줄을 오래된 것부터 돌려준다 - 한 번에 500개씩 끝까지 읽는다

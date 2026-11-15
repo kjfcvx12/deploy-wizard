@@ -62,7 +62,28 @@ class Mcp_Service:
         if github_installation_id is not None:
             body["github_installation_id"]=github_installation_id
         raw=await client.client_request("POST", "/api/deploys/advice", json=body)
-        return {name:raw[name] for name in ADVICE_FIELDS if name in raw}
+        result={name:raw[name] for name in ADVICE_FIELDS if name in raw}
+        has_text=False
+        for name in ("reasons", "unknowns"):
+            if result.get(name):
+                result[name]=[guard_text_clip(item) for item in result[name]]
+                has_text=True
+        if result.get("needs"):
+            needs=[]
+            for item in result["needs"]:
+                if isinstance(item, dict):
+                    item={**item, "message":guard_text_clip(item["message"])} if item.get("message") else item
+                else:
+                    item=guard_text_clip(item)
+                needs.append(item)
+            result["needs"]=needs
+            has_text=True
+        if result.get("app_dir"):
+            result["app_dir"]=guard_text_clip(result["app_dir"])
+            has_text=True
+        if has_text:
+            result["notice"]=UNTRUSTED_NOTICE
+        return result
 
     # 배포 목록 요약
     @staticmethod
@@ -143,11 +164,17 @@ class Mcp_Service:
         rows=await client.client_request("GET", "/api/accounts/connections")
         return [guard_connection_summary(row) for row in rows]
 
+    # 요금이 나오는 배포인가 - 진행·실행 상태, 또는 서비스가 남아 있는 실패 (멈춤은 ARN 을 지우고 생성 전 실패는 ARN 이 없다)
+    @staticmethod
+    def services_mcp_is_live(row:dict) -> bool:
+        status=row.get("status")
+        return status in LIVE_STATUSES or (status == "failed" and bool(row.get("service_arn")))
+
     # 살아 있는 배포 수가 한도 이상이면 Wizard_Error
     @staticmethod
     async def services_mcp_live_check(client:Wizard_Client, max_live:int) -> None:
         rows=await client.client_request("GET", "/api/deploys")
-        live=sum(1 for row in rows if row.get("status") in LIVE_STATUSES)
+        live=sum(1 for row in rows if Mcp_Service.services_mcp_is_live(row))
         if live >= max_live:
             raise Wizard_Error(
                 f"살아 있는 배포가 {live}개로 한도({max_live}개)에 이르렀습니다. 요금이 계속 나오므로 "
@@ -241,13 +268,21 @@ class Mcp_Service:
         warnings.extend(f"확인 필요: {guard_text_clip(item)}" for item in advice.get("unknowns") or [])
         return Mcp_Service.services_mcp_preview(store, "deploy", args, summary, warnings)
 
-    # 기존 배포에 하는 동작 하나 - 토큰 없이 부르면 미리보기, 토큰이 맞으면 실행
+    # 기존 배포에 하는 동작 하나 - 토큰 없이 부르면 미리보기, 토큰이 맞으면 실행 (새 서비스가 생기는 동작은 한도를 두 번 확인한다)
     @staticmethod
-    async def services_mcp_action(client:Wizard_Client, store:Confirm_Store, tool:str, d_id:int, confirm_token:str|None) -> dict:
+    async def services_mcp_action(
+        client:Wizard_Client, store:Confirm_Store, tool:str, d_id:int, confirm_token:str|None, max_live:int=3
+    ) -> dict:
         method, path, title, warnings=ACTION_SPECS[tool]
         args={"d_id":d_id}
         if confirm_token:
             Mcp_Service.services_mcp_consume(store, confirm_token, tool, args)
+            if tool == "start_deploy":
+                await Mcp_Service.services_mcp_live_check(client, max_live)
+            elif tool == "redeploy":
+                target=await client.client_request("GET", f"/api/deploys/{d_id}")
+                if not Mcp_Service.services_mcp_is_live(target):
+                    await Mcp_Service.services_mcp_live_check(client, max_live)
             raw=await client.client_request(method, path.format(d_id=d_id))
             if tool == "delete_deploy":
                 raw=raw or {}
@@ -258,14 +293,19 @@ class Mcp_Service:
                 }
             return Mcp_Service.services_mcp_done(raw)
 
-        current=Mcp_Service.services_mcp_summary(await client.client_request("GET", f"/api/deploys/{d_id}"))
+        target=await client.client_request("GET", f"/api/deploys/{d_id}")
+        if tool == "start_deploy" or (tool == "redeploy" and not Mcp_Service.services_mcp_is_live(target)):
+            await Mcp_Service.services_mcp_live_check(client, max_live)
+        current=Mcp_Service.services_mcp_summary(target)
         summary=f"배포 {d_id}번 ({current['repo_url']}, 지금 상태 {current['status']}) 을 {title}합니다."
         return Mcp_Service.services_mcp_preview(store, tool, args, summary, list(warnings))
 
     # 다시 배포 (미리보기 → 확인 → 실행)
     @staticmethod
-    async def services_mcp_redeploy(client:Wizard_Client, store:Confirm_Store, d_id:int, confirm_token:str|None=None) -> dict:
-        return await Mcp_Service.services_mcp_action(client, store, "redeploy", d_id, confirm_token)
+    async def services_mcp_redeploy(
+        client:Wizard_Client, store:Confirm_Store, d_id:int, confirm_token:str|None=None, max_live:int=3
+    ) -> dict:
+        return await Mcp_Service.services_mcp_action(client, store, "redeploy", d_id, confirm_token, max_live)
 
     # 멈춤 (미리보기 → 확인 → 실행)
     @staticmethod
@@ -274,8 +314,10 @@ class Mcp_Service:
 
     # 다시 켜기 (미리보기 → 확인 → 실행)
     @staticmethod
-    async def services_mcp_start(client:Wizard_Client, store:Confirm_Store, d_id:int, confirm_token:str|None=None) -> dict:
-        return await Mcp_Service.services_mcp_action(client, store, "start_deploy", d_id, confirm_token)
+    async def services_mcp_start(
+        client:Wizard_Client, store:Confirm_Store, d_id:int, confirm_token:str|None=None, max_live:int=3
+    ) -> dict:
+        return await Mcp_Service.services_mcp_action(client, store, "start_deploy", d_id, confirm_token, max_live)
 
     # 삭제 (미리보기 → 확인 → 실행)
     @staticmethod
