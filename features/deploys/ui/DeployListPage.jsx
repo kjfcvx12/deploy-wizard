@@ -1,9 +1,12 @@
 import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 
+import ProblemBanner from '@features/incidents/ui/ProblemBanner.jsx'
+
 import { deployApi } from './api.js'
 import { isProgress, repoName } from './constants.js'
 import DeployForm from './DeployForm.jsx'
+import HealthDot from './HealthDot.jsx'
 import StatusBadge from './StatusBadge.jsx'
 
 // 입력 + 내가 배포한 서비스 목록과 현재 상태 (M4)
@@ -38,9 +41,11 @@ export default function DeployListPage() {
     <>
       <DeployForm />
 
+      {deploys?.filter((deploy) => deploy.open_incident_id).map((deploy) => <ProblemBanner key={deploy.d_id} deploy={deploy} />)}
+
       <section className="card">
         <h2>내 배포</h2>
-        {error && <div className="notice err">서버에 연결할 수 없습니다 :{error}</div>}
+        {error && <div className="notice err">{error}</div>}
         {deploys && deploys.length === 0 && <p className="muted">아직 배포한 것이 없습니다.</p>}
         {deploys?.map((deploy) => (
           <Link key={deploy.d_id} to={`/deploys/${deploy.d_id}`} className="deploy-item">
@@ -54,7 +59,10 @@ export default function DeployListPage() {
                 {deploy.env_pending > 0 && ` · 환경변수 ${deploy.env_pending}개 입력 필요`}
               </div>
             </div>
-            <StatusBadge status={deploy.status} />
+            <div className="deploy-status">
+              {deploy.status === 'running' && <HealthDot state={deploy.health_state} />}
+              <StatusBadge status={deploy.status} />
+            </div>
           </Link>
         ))}
       </section>

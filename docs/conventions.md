@@ -75,6 +75,7 @@ class Deploy_Service:
 - 색·간격은 `shared/ui/styles.css`의 CSS 변수만 쓴다. 컴포넌트에 색을 하드코딩하지 않는다.
 - 상태값 문자열은 `features/deploys/ui/constants.js`에서만 정의한다.
 - 폴링은 `useEffect` 안에서 `alive` 플래그와 `clearTimeout`으로 정리한다.
+- 글이 잘리거나 숨겨지지 않게 한다 — line-clamp, text-overflow, font-size:0, overflow:hidden 으로 내용을 가리지 않는다 (코드·로그 상자는 스크롤 가능).
 
 ## Git
 

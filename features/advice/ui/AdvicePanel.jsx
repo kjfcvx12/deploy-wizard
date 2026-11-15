@@ -85,7 +85,7 @@ export default function AdvicePanel({ advice, busy, onDeploy, onReset }) {
       )}
 
       {unknowns.length > 0 && (
-        <details className="advice-block">
+        <details className="advice-block" open>
           <summary>알 수 없었던 것 <span className="muted small">({unknowns.length})</span></summary>
           <ul>{unknowns.map((item, i) => <li key={i}>{item}</li>)}</ul>
         </details>

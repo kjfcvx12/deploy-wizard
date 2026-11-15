@@ -3,19 +3,30 @@ import { Link, useNavigate, useParams } from 'react-router-dom'
 
 import ExplainCard from '@features/explains/ui/ExplainCard.jsx'
 import EnvVarsCard from '@features/envvars/ui/EnvVarsCard.jsx'
+import IncidentCard from '@features/incidents/ui/IncidentCard.jsx'
+import { isValidId } from '@shared/ui/isValidId.js'
+import NotFoundNotice from '@shared/ui/NotFoundNotice.jsx'
 
 import { deployApi } from './api.js'
-import { isProgress, repoName, showsEnvCard } from './constants.js'
+import { DEPLOY_NOT_FOUND_TEXT, HEALTH_STATE_LABEL, isProgress, repoName, showsEnvCard } from './constants.js'
 import StatusBadge from './StatusBadge.jsx'
+import StopDialog from './StopDialog.jsx'
 import StepProgress from './StepProgress.jsx'
 import LogTerminal from './LogTerminal.jsx'
 import IssueHistory from './IssueHistory.jsx'
 
-const HEALTH_LABEL = { healthy: '응답 정상', unhealthy: '응답 없음', unknown: '확인 전' }
+// 떠 있는 배포를 다시 보는 간격(ms)
+const RUNNING_POLL_MS = 15000
 
-// 단계별 진행률, 터미널형 로그, 완료 시 클릭 가능한 링크 (M4) + 실패 해설과 선택지 (M5)
+// 배포 상세 화면 - 주소의 d_id 가 바뀌면 화면을 새로 만들고, 올바른 번호가 아니면 요청 없이 없는 배포 안내를 보인다
 export default function DeployDetailPage() {
   const { d_id } = useParams()
+  if (!isValidId(d_id)) return <NotFoundNotice text={DEPLOY_NOT_FOUND_TEXT} />
+  return <DeployDetail key={d_id} d_id={d_id} />
+}
+
+// 단계별 진행률, 터미널형 로그, 완료 시 클릭 가능한 링크 (M4) + 실패 해설과 선택지 (M5)
+function DeployDetail({ d_id }) {
   const navigate = useNavigate()
   const dialog = useRef(null)
   const stopDialog = useRef(null)
@@ -27,13 +38,16 @@ export default function DeployDetailPage() {
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   const [round, setRound] = useState(0)
+  const [notFound, setNotFound] = useState(false)
 
   // 상태와 로그를 함께 폴링 - 로그는 마지막 d_l_id 이후 것만 받는다
   useEffect(() => {
     let alive = true
     let timer = null
     let after = 0
+    let running = false
     setLogs([])
+    setNotFound(false)
 
     const load = async () => {
       try {
@@ -47,9 +61,19 @@ export default function DeployDetailPage() {
           setLogs((prev) => [...prev, ...nextLogs])
         }
 
+        // 진행 중이거나 로그가 더 올 때는 자주, 떠 있는 동안은 새로 생기는 문제를 알아채도록 천천히 계속 본다
+        running = nextDeploy.status === 'running'
         if (isProgress(nextDeploy.status) || nextLogs.length > 0) timer = setTimeout(load, 1500)
+        else if (running) timer = setTimeout(load, RUNNING_POLL_MS)
       } catch (e) {
-        if (alive) setError(e.message)
+        if (!alive) return
+        // 배포가 지워졌다 - 다시 부르지 않고 없는 배포 안내로 바꾼다
+        if (e.status === 404) {
+          setNotFound(true)
+          return
+        }
+        setError(e.message)
+        if (running) timer = setTimeout(load, RUNNING_POLL_MS)
       }
     }
 
@@ -126,6 +150,8 @@ export default function DeployDetailPage() {
     }
   }
 
+  if (notFound) return <NotFoundNotice text={DEPLOY_NOT_FOUND_TEXT} />
+
   if (!deploy) {
     return error ? <div className="notice err">{error}</div> : <p className="muted">불러오는 중...</p>
   }
@@ -134,7 +160,12 @@ export default function DeployDetailPage() {
 
   return (
     <>
-      <p className="small back-link"><Link to="/">← 목록</Link></p>
+      <div className="row spread detail-top">
+        <p className="small back-link"><Link to="/">← 목록</Link></p>
+        {deploy.status !== 'deleting' && deploy.status !== 'deleted' && (
+          <Link className="link-button" to={`/deploys/${d_id}/settings`}>설정</Link>
+        )}
+      </div>
 
       {deploy.status === 'needs_input' && (
         <div className="notice info" style={{ marginTop: 0, marginBottom: 16 }}>
@@ -149,7 +180,7 @@ export default function DeployDetailPage() {
             <div className="deploy-meta">
               #{deploy.d_id}
               {deploy.branch && ` · ${deploy.branch}`}
-              {deploy.commit_sha && ` · ${deploy.commit_sha.slice(0, 7)}`}
+              {deploy.commit_sha && ` · ${deploy.commit_sha}`}
               {deploy.language && ` · ${deploy.language}`}
               {deploy.app_dir && deploy.app_dir !== '.' && ` · ${deploy.app_dir}/`}
             </div>
@@ -168,11 +199,15 @@ export default function DeployDetailPage() {
         <EnvVarsCard deploy={deploy} onContinued={() => setRound((n) => n + 1)} onRedeploy={redeploy} />
       )}
 
+      {deploy.open_incident_id && (
+        <IncidentCard d_id={deploy.d_id} i_id={deploy.open_incident_id} refreshKey={`${deploy.open_incident_id}:${deploy.open_incident_status}`} />
+      )}
+
       {deploy.status === 'running' && deploy.endpoint && (
         <section className="card">
           <div className="row spread">
             <a className="endpoint" href={deploy.endpoint} target="_blank" rel="noreferrer">{deploy.endpoint}</a>
-            {health && <span className={`badge ${health.health === 'healthy' ? 'ok' : 'err'}`}>{HEALTH_LABEL[health.health]}</span>}
+            {health && <span className={`badge ${health.health === 'healthy' ? 'ok' : 'err'}`}>{HEALTH_STATE_LABEL[health.health] || health.health}</span>}
           </div>
           <p className="muted small" style={{ margin: '8px 0 0' }}>
             떠 있는 동안 로드밸런서와 컨테이너 요금이 계속 나옵니다. 잠시 안 쓸 거면 아래에서 [멈춤], 완전히 지울 거면 [삭제]를 누르세요.
@@ -231,14 +266,7 @@ export default function DeployDetailPage() {
         </div>
       )}
 
-      <dialog ref={stopDialog}>
-        <h2 style={{ marginTop: 0 }}>이 배포를 멈출까요?</h2>
-        <p>ECS 서비스를 내려서 컨테이너 요금이 멈춥니다. 주소는 접속되지 않게 됩니다. 이미지와 설정은 남겨 두므로 [다시 켜기] 한 번으로 다시 띄울 수 있습니다.</p>
-        <div className="row" style={{ justifyContent: 'flex-end' }}>
-          <button onClick={() => stopDialog.current?.close()}>그대로 두기</button>
-          <button className="danger" onClick={stop}>멈춤</button>
-        </div>
-      </dialog>
+      <StopDialog dialogRef={stopDialog} onStop={stop} />
 
       <dialog ref={dialog}>
         <h2 style={{ marginTop: 0 }}>이 배포를 삭제할까요?</h2>

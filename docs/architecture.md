@@ -25,8 +25,8 @@
 │   ├── accounts/               ← scheme.py  crud.py  services.py  router.py  cloudformation/  ui/  (M6, 진행 중)
 │   ├── watches/                ← services.py 만 (DB 없음, 상태는 Deploy에)  (M6, 진행 중 - 폴링만 완료)
 │   ├── health/                 ← models.py  scheme.py  crud.py  services.py  (D1 - 1분마다 헬스체크 이력, 감시 루프)
-│   ├── incidents/              ← models.py  scheme.py  crud.py  services.py  recovery.py  recovery_state.py  router.py  (D1 - 인시던트, 규칙 표 설명, 자동 복구; recovery_state 는 기록 반영 재시도·서버 재개)
-│   └── notifications/          ← models.py  scheme.py  crud.py  services.py  compose.py  dispatch.py  inbox.py  router.py  (D1 - 앱 안·메일·푸시 알림, 기기, 설정)
+│   ├── incidents/              ← models.py  scheme.py  crud.py  services.py  recovery.py  recovery_state.py  router.py  ui/  (D1 - 인시던트, 규칙 표 설명, 자동 복구; recovery_state 는 기록 반영 재시도·서버 재개. ui/ 는 계획 E)
+│   └── notifications/          ← models.py  scheme.py  crud.py  services.py  compose.py  dispatch.py  inbox.py  router.py  ui/  (D1 - 앱 안·메일·푸시 알림, 기기, 설정. ui/ 는 계획 E)
 │
 ├── shared/                     ← 모든 기능이 쓰는 것
 │   ├── settings.py             ← 환경변수 (pydantic-settings)
@@ -38,7 +38,7 @@
 │   └── ui/                     ← main.jsx, App.jsx, api.js, styles.css
 │
 ├── scripts/                    ← setup_roles, m1_deploy, deploy_cli, cleanup
-└── tests/
+└── tests/                      ← pytest(*.py) + web/ (화면 로직 node:test, 계획 E)
 ```
 
 ### 왜 백/프론트로 나누지 않는가
@@ -123,6 +123,27 @@ DB가 없는 기능(`repos`, `builds` …)은 `services.py`만 있다.
 - **서버 재시작**: `services_recovery_resume`이 `recovering` 인시던트는 `needs_action`(진행 중이던 조치는 `failed`)으로, 처리 중이던 `open`은 배포가 `running`이고 `auto_recover`가 켜져 있으면 처리를 다시 띄우고 아니면 `needs_action`으로 정리한다.
 - **아직 없는 것**: 컨테이너 로그·ECS 이벤트 수집(AWS 호출 미검증), 운영 에이전트(`docs/app-web` D12, 읽기 도구 + 조치 도구 둘을 LLM이 고르는 루프), 로그인별 알림(`u_id`는 로그인이 생길 때까지 null). 지금 원인 설명은 규칙 표뿐이다.
 - **미검증**: 같은 이미지로 서비스를 갱신하면 실제로 작업이 다시 시작되는지, 이미지 갱신으로 되돌리기가 실제로 되는지(`docs/aws-notes.md` "운영 복구"), 실제 SMTP 서버와 Expo 푸시 서버로의 발송. 시험은 전부 가짜(점검기·갱신기·잠자기·메일·푸시)로 돌렸다.
+
+## 웹 운영 화면 (계획 E)
+
+인시던트·알림·배포 설정 화면은 서버를 바꾸지 않고 기존 API(`docs/api-spec.md`)만 부른다. 화면 모양은 [`ui-spec.md`](./ui-spec.md) "4. 운영 화면". 여기서는 코드가 어디에 놓이는지만 적는다.
+
+```
+features/incidents/ui/       api.js(getOne 만) · constants.js · health.js · timeline.js
+                             IncidentDetailPage · IncidentCard · IncidentBadge · IncidentExplain · IncidentTimeline · HealthBar · ProblemBanner
+features/notifications/ui/   api.js · constants.js · logic.js · useUnreadCount.js
+                             NotificationsPage · NotificationSettingsPage · NotificationItem · BellLink
+features/deploys/ui/         (기존) + DeploySettingsPage · HealthDot · StopDialog, api.js 에 patchSettings · getHealthHistory
+shared/ui/                   time.js · polling.js · usePolling.js · SettingSwitch.jsx (api.js 의 request 가 error.status 를 단다)
+tests/web/                   node:test 로직 테스트 (npm run test:web)
+```
+
+- **기능 사이**: `deploys/ui` 와 `incidents/ui` 는 서로의 컴포넌트를 가져다 쓴다(`DeployDetailPage` → `IncidentCard`, `IncidentDetailPage` → `StopDialog`·`deployApi`). 모듈 순환은 없고, 앞서 `ExplainCard`·`EnvVarsCard` 를 `DeployDetailPage` 가 가져다 쓴 것과 같은 방식이다. 읽지 않은 수(`useUnreadCount`)는 `usePolling` 위에서 30초 기준으로 돌고, 실패가 이어지면 5분 상한까지 늘린다(`backoffDelay(30000, n, 300000)`). 주소의 id 검사는 `shared/ui/isValidId.js`, 없는 항목 안내는 `shared/ui/NotFoundNotice.jsx` 가 맡는다.
+- **한 기능 안의 방향**: 화면(`*Page.jsx`) → 컴포넌트(`*.jsx`) → 순수 로직·상수(`constants.js` `health.js` `timeline.js` `logic.js`) → `api.js` → `shared/ui/api.js`의 `request`. 순수 로직은 React·`fetch`를 가져오지 않아 Node 에서 그대로 시험된다. 상태·종류 글자는 기능마다 `constants.js` 한 곳에만 둔다.
+- **기능 사이의 UI 가져오기** (`ui/ → 다른 기능의 ui`, 위 의존 방향에서 허용): 인시던트 상세(`features/incidents/ui`)는 `features/deploys/ui`의 `StopDialog`와 `deployApi`(다시 배포·멈춤·헬스 이력)를 쓰고, 목록·상세의 배너·카드·점은 반대로 `incidents/ui`의 `ProblemBanner`·`IncidentCard`를 가져온다. 서버 쪽 `services` 규칙과 달리 화면은 컴포넌트와 `api.js`를 직접 가져온다. 인시던트 화면이 쓰는 `incidentApi`에는 `getOne`뿐이다 (인시던트는 서버가 만들고 닫는다).
+- **폴링**: 인시던트 상세(5초, 끝나면 멈춤)와 상단 바 읽지 않은 수(30초)는 `usePolling`, 간격 계산은 `polling.js`의 `backoffDelay`. `usePolling`의 규칙: 번호(`seq`)로 늦게 온 응답을 버리고 `clearTimeout`으로 정리, 숨겨진 탭에서는 멈춤, 실패하면 간격을 두 배씩 늘려 최대 30초, 인시던트 상세는 404 를 다시 부르지 않는다. 배포 목록·상세는 기존 `setTimeout` 루프라서 이 규칙이 적용되지 않는다: `alive` 표시와 `clearTimeout`만 쓰고 간격은 고정이다(목록 3초/15초, 읽기 실패 뒤 10초. 상세 진행 중 1.5초, `running` 15초이고 실패해도 `running`이면 15초 뒤 재시도, 읽기가 404 면 멈추고 없는 배포 안내). 숨겨진 탭 멈춤도 없다. 알림·설정 화면은 폴링하지 않는다.
+- **자동 조치 없음**: 웹은 서버가 한 재시작·되돌리기를 읽기 전용 기록으로 보여 줄 뿐이고, 모든 변경은 사용자가 누른 버튼(멈춤은 확인 대화상자 뒤)이다 (규칙 3).
+- **시험**: `tests/web/*.test.js`를 `npm run test:web`(`node --test "tests/web/*.test.js"`, Node 22)으로 돌린다. 시간·헬스 칸·타임라인·알림 로직·`backoffDelay`·`api.js`(가짜 `fetch`)가 대상이다. 화면 파일은 Vite 별칭(`@shared` `@features`)을 쓰므로 별칭을 쓰는 모듈을 가져오는 테스트는 먼저 `tests/web/useAlias.mjs`를 불러 `aliasHooks.mjs` 별칭 훅을 등록한다 (순수 로직 파일은 상대 경로라서 필요 없다). 화면 컴포넌트와 브라우저 동작은 자동 테스트가 없다.
 
 ## 자동화 원칙 (기획서 03장)
 

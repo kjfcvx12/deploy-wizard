@@ -18,4 +18,8 @@ export const deployApi = {
   stop: (d_id) => request(`/api/deploys/${d_id}/stop`, { method: 'POST' }),
   start: (d_id) => request(`/api/deploys/${d_id}/start`, { method: 'POST' }),
   remove: (d_id) => request(`/api/deploys/${d_id}`, { method: 'DELETE' }),
+  // 보낸 항목만 바뀐다 ({ auto_redeploy, auto_recover })
+  patchSettings: (d_id, body) => request(`/api/deploys/${d_id}/settings`, { method: 'PATCH', body }),
+  // 헬스체크 이력 - hours 는 1~168
+  getHealthHistory: (d_id, hours = 24) => request(`/api/deploys/${d_id}/health-history?hours=${hours}`),
 }

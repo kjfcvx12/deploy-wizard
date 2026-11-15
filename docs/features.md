@@ -15,8 +15,8 @@
 | `accounts` | 사용자 AWS 계정 연결(CloudFormation+AssumeRole) · GitHub App 연결 - 연결·파이프라인 배선(private 클론 포함) 완료 | models · scheme · crud · services · router · cloudformation/ · ui | M6 (진행 중) |
 | `watches` | 코드 변경 감지 - 폴링(백그라운드) + 웹훅(서명 검증 + 디바운스) 둘 다 코드 완료 | services | M6 (코드 완료, 실제 검증 남음) |
 | `health` | 떠 있는 배포를 1분마다 점검해 이력을 남기는 감시 루프, 이력 정리(7일) | models · scheme · crud · services | D1 (코드 완료, 실제 AWS 미검증) |
-| `incidents` | 연속 실패로 인시던트 열고 닫기, 규칙 표 원인 설명, 자동 복구(재시작·이전 정상 이미지로 되돌리기), 한도, 서버 재시작 때 정리, 조회 API | models · scheme · crud · services · recovery · router | D1 (코드 완료, 실제 AWS 미검증) |
-| `notifications` | 앱 안·메일·Expo 푸시 알림, 기기 등록, 알림 설정, 알림 조회 API | models · scheme · crud · services · compose · dispatch · inbox · router | D1 (코드 완료, 실제 SMTP·Expo 미검증) |
+| `incidents` | 연속 실패로 인시던트 열고 닫기, 규칙 표 원인 설명, 자동 복구(재시작·이전 정상 이미지로 되돌리기), 한도, 서버 재시작 때 정리, 조회 API | models · scheme · crud · services · recovery · router · ui | D1 (코드 완료, 실제 AWS 미검증), 화면은 계획 E |
+| `notifications` | 앱 안·메일·Expo 푸시 알림, 기기 등록, 알림 설정, 알림 조회 API | models · scheme · crud · services · compose · dispatch · inbox · router · ui | D1 (코드 완료, 실제 SMTP·Expo 미검증), 화면은 계획 E |
 
 ## 기능 사이의 흐름
 
@@ -100,7 +100,7 @@
 
 ## 모바일 앱 (`app/`, C1)
 
-`app/`는 `features/`·`shared/`와 따로 있는 Expo 앱(독립 패키지, 순수 JS)이다. 기존 API만 부른다 (서버는 바꾸지 않았다. 다만 D2 에서 `Deploy_Read` 에 `open_incident_status` 를 더하고 `open_incident_id` 가 `needs_action` 인시던트도 덮게 했다). C1 범위는 배포 목록, 새 배포(분석 → 배포), 배포 상세(진행·로그·해설·이력·다시 배포·멈춤·다시 켜기·삭제), 환경변수 입력 카드, C2 에서 더한 계정 연결 화면(`/accounts`: 블록, AWS·GitHub 연결·확인·해제)까지다. D2 에서 인시던트 상세(`/incidents/[i_id]`), 배포 설정, 알림 목록·종 배지, 푸시 권한·토큰 등록, 알림 설정 화면이 더해졌다(푸시는 기기에서 미확인, EAS 프로젝트 id 없음, 웹에는 아직 없음). 로그인, 스토어 빌드, 딥링크 복귀는 아직 없다. 웹과 같은 문구·상태 값을 쓰도록 웹 `ui/` 파일을 보고 옮겼으므로 양쪽을 같이 고친다 (목록은 `app/README.md`와 `docs/ui-spec.md`의 "앱"). 실제 기기에서는 확인하지 못했다.
+`app/`는 `features/`·`shared/`와 따로 있는 Expo 앱(독립 패키지, 순수 JS)이다. 기존 API만 부른다 (서버는 바꾸지 않았다. 다만 D2 에서 `Deploy_Read` 에 `open_incident_status` 를 더하고 `open_incident_id` 가 `needs_action` 인시던트도 덮게 했다). C1 범위는 배포 목록, 새 배포(분석 → 배포), 배포 상세(진행·로그·해설·이력·다시 배포·멈춤·다시 켜기·삭제), 환경변수 입력 카드, C2 에서 더한 계정 연결 화면(`/accounts`: 블록, AWS·GitHub 연결·확인·해제)까지다. D2 에서 인시던트 상세(`/incidents/[i_id]`), 배포 설정, 알림 목록·종 배지, 푸시 권한·토큰 등록, 알림 설정 화면이 더해졌다(푸시는 기기에서 미확인, EAS 프로젝트 id 없음. 웹 대응은 계획 E 에서 만들었다). 로그인, 스토어 빌드, 딥링크 복귀는 아직 없다. 웹과 같은 문구·상태 값을 쓰도록 웹 `ui/` 파일을 보고 옮겼으므로 양쪽을 같이 고친다 (목록은 `app/README.md`와 `docs/ui-spec.md`의 "앱"). 실제 기기에서는 확인하지 못했다.
 
 ### health / incidents / notifications (D1, 코드 완료 - 실제 AWS·SMTP·Expo 로는 아직 검증 전)
 - 흐름·한도·재시작 때 정리는 [`architecture.md`](./architecture.md) "운영 감시와 자동 복구", 엔드포인트와 응답은 [`api-spec.md`](./api-spec.md) "Incidents", "Notifications · Devices".
@@ -108,6 +108,11 @@
 - **재시작 = 같은 이미지로 서비스 갱신.** 실제로 작업이 다시 뜨는지 검증 전이다. 되돌릴 이전 이미지가 없으면(`bad_release` 제외) 재시작만 해 보고 사람에게 넘긴다.
 - **`auto_recover` 기본값은 켜짐.** 배포별로 `PATCH /api/deploys/{d_id}/settings`로 끈다.
 - **메일 설정이 없으면(`MAIL_HOST`·`MAIL_TO`) 메일은 건너뛴다** (줄도 남기지 않음). 푸시 `sent`는 Expo 가 받았다는 뜻일 뿐 기기 도착이 아니다 (영수증 확인 안 함).
+- **웹 화면 (계획 E, 서버 변경 없음)**: 새로 생긴 `ui/` 폴더 둘과 `deploys/ui`·`shared/ui` 추가분. 코드 위치와 의존 방향은 [`architecture.md`](./architecture.md) "웹 운영 화면", 화면 모양은 [`ui-spec.md`](./ui-spec.md) "4. 운영 화면".
+  - `incidents/ui/`: `api.js`(`getOne`만) · `constants.js`(상태·종류·조치 글, `problemLabel`) · `health.js`(15분 칸) · `timeline.js`(마법사가 한 일) · `IncidentDetailPage` `IncidentCard` `IncidentBadge` `IncidentExplain` `IncidentTimeline` `HealthBar` `ProblemBanner`
+  - `notifications/ui/`: `api.js`(기기 등록 없음) · `constants.js` · `logic.js`(이동 경로·설정 값·배지 글) · `useUnreadCount.js` · `NotificationsPage` `NotificationSettingsPage` `NotificationItem` `BellLink`
+  - `deploys/ui/` 추가: `DeploySettingsPage`(자동 재배포·자동 복구 스위치) · `HealthDot` · `StopDialog`(상세와 인시던트 상세가 공유)
+  - `shared/ui/` 추가: `time.js`(UTC `Z` 없는 서버 시각) · `polling.js` · `usePolling.js` · `SettingSwitch.jsx`
 - 알림은 `u_id` 없이 한 사람 기준이다. 로그인이 생기면 사용자별로 나눈다.
 - 알려진 한계(미뤄 둠): 같은 커밋 재배포 시 복구 막힘 유지, 설정 첫 읽기 경쟁, 알림 표 정리 없음, 검증 점검이 헬스 행으로 남지 않음 등. 목록은 `docs/worklog/2026-11-10.md`.
 
