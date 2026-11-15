@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { ActivityIndicator, ScrollView, StyleSheet, Text, View } from 'react-native'
-import { useSafeAreaInsets } from 'react-native-safe-area-context'
+import { ActivityIndicator, StyleSheet, Text, View } from 'react-native'
 import { Stack, useLocalSearchParams, useRouter } from 'expo-router'
 import { deployApi } from '../../src/api'
+import FitScreen from '../../src/components/FitScreen'
+import FooterSlot from '../../src/components/FooterSlot'
 import SettingSwitch from '../../src/components/SettingSwitch'
 import { Button, Notice } from '../../src/components/ui'
 import { repoName } from '../../src/constants'
@@ -12,6 +13,8 @@ const NOT_FOUND_TEXT = '배포를 찾을 수 없습니다. 이미 삭제된 배�
 const SAVED_TEXT = '저장했습니다'
 // 저장 안내가 떠 있는 시간(ms)
 const SAVED_MS = 3000
+// 맨 아래 자리의 기본 글
+const NOTE_TEXT = '변경은 누르는 즉시 저장됩니다. 이미 진행 중인 배포에는 영향이 없습니다.'
 
 // 스위치 둘의 이름·설명 - 자동 복구는 재시작과 이전 버전으로 되돌리기만 한다는 점을 분명히 적는다 (업무 규칙 3)
 const SETTINGS = [
@@ -43,7 +46,6 @@ export default function DeploySettingsScreen() {
 function DeploySettings({ d_id }) {
   const colors = useColors()
   const router = useRouter()
-  const insets = useSafeAreaInsets()
   const scrollRef = useRef(null)
   const alive = useRef(false)
   const loadSeq = useRef(0)
@@ -87,9 +89,9 @@ function DeploySettings({ d_id }) {
 
   useEffect(() => { load() }, [load])
 
-  // 실패나 안내가 생기면 맨 위로 올려 보여 준다
+  // 실패나 안내가 생기면 맨 아래 안내 자리가 보이게 내린다 (넘칠 때만 의미가 있다)
   useEffect(() => {
-    if (message) scrollRef.current?.scrollTo?.({ y: 0, animated: true })
+    if (message) scrollRef.current?.scrollToEnd?.({ animated: true })
   }, [message])
 
   // 스위치 하나를 바꾼다 - 먼저 새 값으로 보이고, 같은 스위치는 응답이 올 때까지 잠근다. 실패하면 그 스위치만 되돌린다
@@ -130,16 +132,16 @@ function DeploySettings({ d_id }) {
   let body
   if (loadError?.status === 404) {
     body = (
-      <View style={styles.stack}>
+      <View style={[styles.stack, styles.center]}>
         <Notice>{NOT_FOUND_TEXT}</Notice>
         <Button label="돌아가기" onPress={leave} style={styles.self} />
       </View>
     )
   } else if (!values) {
     body = loading
-      ? <ActivityIndicator accessibilityLabel="불러오는 중" size="large" color={colors.accent} style={styles.spinner} />
+      ? <ActivityIndicator accessibilityLabel="불러오는 중" size="large" color={colors.accent} style={styles.center} />
       : (
-        <View style={styles.stack}>
+        <View style={[styles.stack, styles.center]}>
           <Notice>{loadError?.message}</Notice>
           <View style={styles.actions}>
             <Button label="다시 시도" onPress={load} />
@@ -149,8 +151,7 @@ function DeploySettings({ d_id }) {
       )
   } else {
     body = (
-      <View style={styles.stack}>
-        {!!message && <Notice tone={message.tone}>{message.text}</Notice>}
+      <View style={[styles.stack, styles.fill]}>
         <Text accessibilityRole="header" style={[styles.heading, { color: colors.text }]}>
           {`${repoName(deploy.repo_url)} · 배포 #${d_id}`}
         </Text>
@@ -165,7 +166,6 @@ function DeploySettings({ d_id }) {
             onToggle={() => { toggle(setting.field) }}
           />
         ))}
-        <Text style={[styles.note, { color: colors.muted }]}>변경은 누르는 즉시 저장됩니다. 이미 진행 중인 배포에는 영향이 없습니다.</Text>
       </View>
     )
   }
@@ -173,24 +173,19 @@ function DeploySettings({ d_id }) {
   return (
     <>
       <Stack.Screen options={{ title: '배포 설정' }} />
-      <ScrollView
-        ref={scrollRef}
-        testID="settings-scroll"
-        contentContainerStyle={[styles.content, { paddingBottom: spacing.xl * 2 + insets.bottom }]}
-        style={{ backgroundColor: colors.bg }}
-      >
+      <FitScreen testID="settings-scroll" scrollRef={scrollRef}>
         {body}
-      </ScrollView>
+        {!!values && loadError?.status !== 404 && <FooterSlot message={message} note={NOTE_TEXT} />}
+      </FitScreen>
     </>
   )
 }
 
 const styles = StyleSheet.create({
-  content: { padding: spacing.lg },
   stack: { gap: spacing.md },
   actions: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.md },
   self: { alignSelf: 'flex-start' },
-  spinner: { marginTop: spacing.xl * 2 },
+  fill: { flex: 1 },
+  center: { flex: 1, justifyContent: 'center' },
   heading: { fontSize: 17, fontWeight: '700', lineHeight: 24 },
-  note: { fontSize: 13, lineHeight: 19 },
 })
