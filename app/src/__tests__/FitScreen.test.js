@@ -1,6 +1,6 @@
 import { createRef } from 'react'
 import { RefreshControl, StyleSheet, Text } from 'react-native'
-import { render, screen } from '@testing-library/react-native'
+import { render, screen, fireEvent } from '@testing-library/react-native'
 import FitScreen from '../components/FitScreen'
 import FooterSlot from '../components/FooterSlot'
 import { spacing } from '../theme'
@@ -30,6 +30,19 @@ describe('FitScreen', () => {
     await render(<FitScreen testID="fit"><Text>x</Text></FitScreen>)
     expect(screen.getByTestId('fit').props.alwaysBounceVertical).toBe(false)
     expect(screen.getByTestId('fit').props.refreshControl).toBeFalsy()
+  })
+
+  test('onAvailableHeight 를 주면 ScrollView 높이에서 위·아래 안쪽 여백을 뺀 값을 알리고, 안 주면 onLayout 을 달지 않는다', async () => {
+    const onAvailableHeight = jest.fn()
+    const view = await render(<FitScreen testID="fit" onAvailableHeight={onAvailableHeight}><Text>x</Text></FitScreen>)
+    const scroll = screen.getByTestId('fit')
+    const style = StyleSheet.flatten(scroll.props.contentContainerStyle)
+    await fireEvent(scroll, 'layout', { nativeEvent: { layout: { x: 0, y: 0, width: 390, height: 780 } } })
+    expect(onAvailableHeight).toHaveBeenCalledTimes(1)
+    expect(onAvailableHeight).toHaveBeenCalledWith(780 - style.padding - style.paddingBottom)
+    await view.unmount()
+    await render(<FitScreen testID="fit"><Text>x</Text></FitScreen>)
+    expect(screen.getByTestId('fit').props.onLayout).toBeUndefined()
   })
 })
 

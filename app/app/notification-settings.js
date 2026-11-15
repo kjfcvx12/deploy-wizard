@@ -79,9 +79,9 @@ export default function NotificationSettingsScreen() {
     if (next === 'granted') setGuideOpen(false)
   })
 
-  // 실패나 안내가 생기면 맨 아래 안내 자리가 보이게 내린다 (넘칠 때만 의미가 있다)
+  // 오류 안내가 생기면 맨 아래 안내 자리가 보이게 내린다 (넘칠 때만 의미가 있다) - 저장 성공 안내는 화면을 움직이지 않는다
   useEffect(() => {
-    if (message) scrollRef.current?.scrollToEnd?.({ animated: true })
+    if (message?.tone === 'err') scrollRef.current?.scrollToEnd?.({ animated: true })
   }, [message])
 
   // 같은 스위치(묶음)가 응답을 기다리는 동안은 다시 누를 수 없다 - 종류 스위치는 목록 전체를 한 번에 보내므로 한 묶음이다

@@ -1,4 +1,4 @@
-import { AppState, StyleSheet, Platform } from 'react-native'
+import { AppState, ScrollView, StyleSheet, Platform } from 'react-native'
 import AsyncStorage from '@react-native-async-storage/async-storage'
 import * as Notifications from 'expo-notifications'
 import { render, screen, fireEvent, act, waitFor } from '@testing-library/react-native'
@@ -159,6 +159,20 @@ describe('알림 설정 - 메일·종류 스위치', () => {
     expect(await screen.findByText('알림 설정을 저장하지 못했습니다')).toBeTruthy()
     expect(checked('메일 받기')).toBe(true)
     expect(screen.queryByText('저장했습니다')).toBeNull()
+  })
+
+  test('저장 성공 안내는 화면을 움직이지 않고, 오류 안내는 맨 아래로 내린다', async () => {
+    // 목 ScrollView 의 scrollToEnd 는 이미 jest.fn 이라 호출 기록이 테스트 사이에 남는다 - 새 jest.fn 으로 갈아 끼워 이 테스트의 호출만 센다
+    const scrollToEnd = jest.fn()
+    jest.spyOn(ScrollView.prototype, 'scrollToEnd').mockImplementation(scrollToEnd)
+    await open()
+    await fireEvent.press(row('메일 받기'))
+    expect(await screen.findByText('저장했습니다')).toBeTruthy()
+    expect(scrollToEnd).not.toHaveBeenCalled()
+    notificationApi.patchSettings.mockRejectedValue(new Error('알림 설정을 저장하지 못했습니다'))
+    await fireEvent.press(row('메일 받기'))
+    expect(await screen.findByText('알림 설정을 저장하지 못했습니다')).toBeTruthy()
+    expect(scrollToEnd).toHaveBeenCalled()
   })
 
   test('같은 스위치를 응답 전에 다시 눌러도 요청은 한 번', async () => {

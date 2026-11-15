@@ -4,7 +4,7 @@ import { render, screen, fireEvent, act, within } from '@testing-library/react-n
 import { deployApi, healthApi, incidentApi } from '../api'
 import IncidentDetail from '../../app/incidents/[i_id]'
 import { formatTime } from '../ops/format'
-import { monoFont } from '../theme'
+import { monoFont, spacing } from '../theme'
 
 const mockPush = jest.fn()
 const mockBack = jest.fn()
@@ -174,6 +174,9 @@ describe('인시던트 상세 - 한 화면 배치 (위 고정 · 가운데 상�
     await act(async () => {})
     const box = within(screen.getByTestId('incident-body'))
     expect(screen.getByTestId('incident-body').props.nestedScrollEnabled).toBe(true)
+    // 안쪽 상자가 iOS 의 끌어당겨 새로고침을 가로채지 않게 튕김을 끈다
+    expect(screen.getByTestId('incident-body').props.bounces).toBe(false)
+    expect(screen.getByTestId('incident-body').props.alwaysBounceVertical).toBe(false)
     ;['원인', '고칠 곳', '해야 할 일', '마법사가 한 일'].forEach((title) => expect(box.getByText(title)).toBeTruthy())
     expect(box.getByText(FIX)).toBeTruthy()
     expect(box.getAllByTestId('timeline-item')).toHaveLength(2)
@@ -183,6 +186,28 @@ describe('인시던트 상세 - 한 화면 배치 (위 고정 · 가운데 상�
     expect(screen.getByRole('button', { name: '배포 #3 보기' })).toBeTruthy()
     // 요약은 상자 밖(위 고정)
     expect(box.queryByText('복구 중')).toBeNull()
+  })
+
+  test('가운데 상자의 maxHeight 는 측정이 모두 끝나면 사용 가능 높이 - 위 묶음 - 아래 묶음 - 간격 둘, 하나라도 없으면 제한하지 않는다', async () => {
+    await open()
+    await act(async () => {})
+    const maxOf = () => StyleSheet.flatten(screen.getByTestId('incident-middle').props.style)
+    const layout = (id, height) => fireEvent(screen.getByTestId(id), 'layout', { nativeEvent: { layout: { x: 0, y: 0, width: 390, height } } })
+    expect(maxOf().maxHeight).toBeUndefined()
+    expect(maxOf().minHeight).toBe(160)
+    expect(maxOf().flexGrow).toBe(1)
+    await layout('incident-scroll', 780)
+    await layout('incident-top', 100)
+    expect(maxOf().maxHeight).toBeUndefined()
+    await layout('incident-bottom', 166)
+    const content = StyleSheet.flatten(screen.getByTestId('incident-scroll').props.contentContainerStyle)
+    const available = 780 - content.padding - content.paddingBottom
+    expect(maxOf().maxHeight).toBe(available - 100 - 166 - spacing.md * 2)
+    // 아래 묶음이 커지면 (안내가 뜨면) 상자가 줄고, 위·아래가 너무 크면 최소 160 으로 멈춘다
+    await layout('incident-bottom', 238)
+    expect(maxOf().maxHeight).toBe(available - 100 - 238 - spacing.md * 2)
+    await layout('incident-top', 900)
+    expect(maxOf().maxHeight).toBe(160)
   })
 
   test('needs_action 이면 버튼 3개가 있고 동작 뒤에는 배포 보기 한 개만 남는다', async () => {

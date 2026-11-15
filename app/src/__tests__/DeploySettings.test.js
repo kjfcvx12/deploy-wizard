@@ -273,7 +273,7 @@ describe('배포 설정 - 맨 아래 안내 자리', () => {
     expect(screen.getByText(NOTE_TEXT)).toBeTruthy()
   })
 
-  test('안내가 뜨면 맨 아래로 스크롤하고, 맨 위로는 올리지 않는다', async () => {
+  test('저장 성공 안내는 화면을 움직이지 않는다 (맨 아래로도 맨 위로도 스크롤하지 않음)', async () => {
     const scrollToEnd = jest.fn()
     const scrollTo = jest.fn()
     jest.spyOn(ScrollView.prototype, 'scrollToEnd').mockImplementation(scrollToEnd)
@@ -281,6 +281,21 @@ describe('배포 설정 - 맨 아래 안내 자리', () => {
     await open()
     await fireEvent.press(row(RECOVER))
     await flush()
+    expect(screen.getByText('저장했습니다')).toBeTruthy()
+    expect(scrollToEnd).not.toHaveBeenCalled()
+    expect(scrollTo).not.toHaveBeenCalled()
+  })
+
+  test('오류 안내가 뜨면 맨 아래로 스크롤하고, 맨 위로는 올리지 않는다', async () => {
+    const scrollToEnd = jest.fn()
+    const scrollTo = jest.fn()
+    jest.spyOn(ScrollView.prototype, 'scrollToEnd').mockImplementation(scrollToEnd)
+    jest.spyOn(ScrollView.prototype, 'scrollTo').mockImplementation(scrollTo)
+    deployApi.patchSettings.mockRejectedValueOnce(new Error('지금은 설정을 바꿀 수 없습니다'))
+    await open()
+    await fireEvent.press(row(RECOVER))
+    await flush()
+    expect(screen.getByText('지금은 설정을 바꿀 수 없습니다')).toBeTruthy()
     expect(scrollToEnd).toHaveBeenCalled()
     expect(scrollTo).not.toHaveBeenCalled()
   })

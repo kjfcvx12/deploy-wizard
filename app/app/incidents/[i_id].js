@@ -19,6 +19,8 @@ const MAX_BACKOFF_MS = 30000
 // 헬스 이력은 처음·상태가 바뀔 때·수동 새로고침 때 받고, 그 밖에는 60초에 한 번만
 const HEALTH_HOURS = 24
 const HEALTH_REFRESH_MS = 60000
+// 가운데 상자의 최소 높이 - 위·아래 고정 부분이 커도 이 아래로는 줄이지 않고 바깥 스크롤이 받는다
+const MIDDLE_MIN = 160
 const NOT_FOUND_TEXT = '문제를 찾을 수 없습니다. 이미 삭제된 배포이거나 지워진 기록일 수 있습니다.'
 
 // 인시던트 상세 화면 (S-13) - 주소의 i_id 가 바뀌면 화면을 새로 만들어 다른 인시던트의 상태가 남지 않게 한다
@@ -31,7 +33,6 @@ export default function IncidentDetailScreen() {
 function IncidentDetail({ i_id }) {
   const colors = useColors()
   const router = useRouter()
-  const scrollRef = useRef(null)
   const alive = useRef(false)
   const busyRef = useRef(false)
   const failsRef = useRef(0)
@@ -45,6 +46,10 @@ function IncidentDetail({ i_id }) {
   const [notice, setNotice] = useState('')
   const [acted, setActed] = useState(false)
   const [pulling, setPulling] = useState(false)
+  // 가운데 상자의 최대 높이를 정하는 측정값 - 화면 내용 영역·위 고정 묶음·아래 고정 묶음의 높이 (아직 못 쟀으면 null)
+  const [available, setAvailable] = useState(null)
+  const [topH, setTopH] = useState(null)
+  const [bottomH, setBottomH] = useState(null)
   // 헬스 이력 - undefined 면 아직 받는 중(막대를 그리지 않음), null 이면 한 번도 받지 못함, 배열이면 받은 이력
   const [checks, setChecks] = useState(undefined)
 
@@ -126,6 +131,14 @@ function IncidentDetail({ i_id }) {
     }
   }
 
+  // 위·아래 고정 묶음의 높이를 잰다 (같은 값이면 state 가 바뀌지 않아 다시 그리지 않는다)
+  const onTopLayout = (event) => { setTopH(Math.round(event.nativeEvent.layout.height)) }
+  const onBottomLayout = (event) => { setBottomH(Math.round(event.nativeEvent.layout.height)) }
+  // 가운데 상자가 쓸 수 있는 최대 높이 - 측정이 하나라도 없으면 제한하지 않는다 (그룹 사이 간격은 둘)
+  const middleMax = available == null || topH == null || bottomH == null
+    ? undefined
+    : Math.max(MIDDLE_MIN, available - topH - bottomH - spacing.md * 2)
+
   let body
   if (error?.status === 404) {
     // 인시던트나 배포가 지워졌다 - 처음 열 때든 보던 중이든 같은 안내
@@ -153,48 +166,52 @@ function IncidentDetail({ i_id }) {
     const finished = incident.resolved_at ? durationText(incident.detected_at, incident.resolved_at) : ''
     body = (
       <View style={[styles.stack, styles.fill]}>
-        <Card style={styles.stack}>
-          <View style={styles.headTop}>
-            <Text accessibilityRole="header" style={[styles.summary, wrapAnywhere, { color: colors.text }]}>
-              {incident.summary || incident.explain?.summary || '문제가 감지되었습니다'}
+        <View testID="incident-top" onLayout={onTopLayout}>
+          <Card style={styles.stack}>
+            <View style={styles.headTop}>
+              <Text accessibilityRole="header" style={[styles.summary, wrapAnywhere, { color: colors.text }]}>
+                {incident.summary || incident.explain?.summary || '문제가 감지되었습니다'}
+              </Text>
+              <IncidentBadge status={incident.status} />
+            </View>
+            <Text style={[styles.meta, { color: colors.muted }]}>
+              {`배포 #${incident.d_id} · ${INCIDENT_KIND_LABEL[incident.kind] || incident.kind} · 감지 ${formatTime(incident.detected_at)}`}
+              {incident.status === 'resolved' && incident.resolved_at ? ` · 해결 ${formatTime(incident.resolved_at)}${finished ? ` (${finished})` : ''}` : ''}
             </Text>
-            <IncidentBadge status={incident.status} />
-          </View>
-          <Text style={[styles.meta, { color: colors.muted }]}>
-            {`배포 #${incident.d_id} · ${INCIDENT_KIND_LABEL[incident.kind] || incident.kind} · 감지 ${formatTime(incident.detected_at)}`}
-            {incident.status === 'resolved' && incident.resolved_at ? ` · 해결 ${formatTime(incident.resolved_at)}${finished ? ` (${finished})` : ''}` : ''}
-          </Text>
-          {INCIDENT_ACTIVE_STATUSES.includes(incident.status) && (
-            <Text style={[styles.meta, { color: colors.muted }]}>마법사가 복구를 시도하고 있습니다. 이 화면은 5초마다 새로 고쳐집니다.</Text>
-          )}
-        </Card>
+            {INCIDENT_ACTIVE_STATUSES.includes(incident.status) && (
+              <Text style={[styles.meta, { color: colors.muted }]}>마법사가 복구를 시도하고 있습니다. 이 화면은 5초마다 새로 고쳐집니다.</Text>
+            )}
+          </Card>
+        </View>
 
-        <Card style={styles.middle}>
-          <ScrollView testID="incident-body" nestedScrollEnabled style={styles.grow} contentContainerStyle={styles.stack}>
+        <Card testID="incident-middle" style={[styles.middle, middleMax != null && { maxHeight: middleMax }]}>
+          <ScrollView testID="incident-body" nestedScrollEnabled bounces={false} alwaysBounceVertical={false} style={styles.grow} contentContainerStyle={styles.stack}>
             <IncidentExplain flat explain={incident.explain} onError={setActionError} />
             <View style={[styles.divider, { backgroundColor: colors.border }]} />
             <IncidentTimeline incident={incident} />
           </ScrollView>
         </Card>
 
-        {checks !== undefined && <Card><HealthBar checks={checks} hours={HEALTH_HOURS} /></Card>}
+        <View testID="incident-bottom" onLayout={onBottomLayout} style={styles.stack}>
+          {checks !== undefined && <Card><HealthBar checks={checks} hours={HEALTH_HOURS} /></Card>}
 
-        {!!error && <Notice>{error.message}</Notice>}
-        {!!actionError && <Notice>{actionError}</Notice>}
-        {!!notice && <Notice tone="info">{notice}</Notice>}
+          {!!error && <Notice>{error.message}</Notice>}
+          {!!actionError && <Notice>{actionError}</Notice>}
+          {!!notice && <Notice tone="info">{notice}</Notice>}
 
-        {needsAction ? (
-          <View style={styles.stack}>
-            <View style={styles.buttonRow}>
-              <Button variant="primary" label="다시 배포" accessibilityLabel={label('다시 배포')} onPress={redeploy} disabled={busy} style={styles.flex} />
-              <Button label="멈춤" accessibilityLabel={label('멈춤')} onPress={askStop} disabled={busy} style={styles.flex} />
-              <Button label="그대로 두기" accessibilityLabel={label('그대로 두기')} onPress={leave} disabled={busy} style={styles.flex} />
+          {needsAction ? (
+            <View style={styles.stack}>
+              <View style={styles.buttonRow}>
+                <Button variant="primary" label="다시 배포" accessibilityLabel={label('다시 배포')} onPress={redeploy} disabled={busy} style={styles.flex} />
+                <Button label="멈춤" accessibilityLabel={label('멈춤')} onPress={askStop} disabled={busy} style={styles.flex} />
+                <Button label="그대로 두기" accessibilityLabel={label('그대로 두기')} onPress={leave} disabled={busy} style={styles.flex} />
+              </View>
+              <Text style={[styles.meta, { color: colors.muted }]}>아무것도 누르지 않으면 그대로 둡니다. 마법사가 자동으로 지우거나 바꾸지 않습니다.</Text>
             </View>
-            <Text style={[styles.meta, { color: colors.muted }]}>아무것도 누르지 않으면 그대로 둡니다. 마법사가 자동으로 지우거나 바꾸지 않습니다.</Text>
-          </View>
-        ) : (
-          <Button label="배포 보기" accessibilityLabel={label('보기')} onPress={goDeploy} disabled={busy} />
-        )}
+          ) : (
+            <Button label="배포 보기" accessibilityLabel={label('보기')} onPress={goDeploy} disabled={busy} />
+          )}
+        </View>
       </View>
     )
   }
@@ -203,8 +220,8 @@ function IncidentDetail({ i_id }) {
     <>
       <Stack.Screen options={{ title: `문제 #${i_id}` }} />
       <FitScreen
-        scrollRef={scrollRef}
         testID="incident-scroll"
+        onAvailableHeight={setAvailable}
         refreshControl={<RefreshControl refreshing={pulling} onRefresh={onPull} tintColor={colors.accent} colors={[colors.accent]} />}
       >
         {body}
@@ -217,12 +234,13 @@ const styles = StyleSheet.create({
   stack: { gap: spacing.md },
   row: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.md },
   self: { alignSelf: 'flex-start' },
-  // 화면 높이가 정해져 있지 않은 틀 안이라 flex: 1 (기준 0%) 은 내용 높이로 풀린다 - 기준을 0 으로 못박아야 가운데 상자가 남는 높이만 차지한다
+  // 웹 번들에서는 flex: 1 (기준 0%) 이 내용 높이로 풀려 flexBasis: 0 이 필요했다. 네이티브(Yoga)는 부모 높이가 정해지지 않으면 flexBasis 를 무시하므로
+  // 가운데 상자의 maxHeight 를 onLayout 측정값에서 계산해 건다 (yoga-layout@3 스크래치 스크립트로만 확인했고 실제 기기에서는 아직 재지 않았다)
   fill: { flexGrow: 1 },
   flex: { flex: 1 },
   grow: { flexGrow: 1, flexShrink: 1, flexBasis: 0 },
   center: { flex: 1, justifyContent: 'center' },
-  middle: { flexGrow: 1, flexShrink: 1, flexBasis: 0, minHeight: 160 },
+  middle: { flexGrow: 1, flexShrink: 1, flexBasis: 0, minHeight: MIDDLE_MIN },
   divider: { height: 1 },
   buttonRow: { flexDirection: 'row', gap: spacing.sm },
   headTop: { flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between', gap: spacing.md },
