@@ -8,9 +8,10 @@ from features.mcp.guard import guard_text_clip
 # 서버가 돌려준 실패를 한국어 한 줄로 담는 예외
 class Wizard_Error(Exception):
 
-    def __init__(self, message:str):
+    def __init__(self, message:str, status_code:int|None=None):
         super().__init__(message)
         self.message=message
+        self.status_code=status_code
 
 
 # 배포 마법사 REST API 호출 클라이언트 (기획서 5.1) - 표준 출력에는 아무것도 쓰지 않는다
@@ -33,7 +34,7 @@ class Wizard_Client:
             raise Wizard_Error(f"배포 마법사 서버와 통신하지 못했습니다: {type(e).__name__}")
 
         if response.status_code >= 400:
-            raise Wizard_Error(self.client_error_message(response))
+            raise Wizard_Error(self.client_error_message(response), response.status_code)
         if not response.content:
             return None
         try:

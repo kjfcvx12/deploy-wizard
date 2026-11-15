@@ -140,17 +140,35 @@ def build_server(client:Wizard_Client, store:Confirm_Store, max_live:int=3) -> M
         name="deploy",
         description=(
             "GitHub 레포를 AWS에 새로 배포한다. ECR·ECS 서비스·ALB가 만들어지고 떠 있는 동안 요금이 발생한다. "
-            + CONFIRM_FLOW + " private 레포는 connection_id 를 쓴다."
+            + CONFIRM_FLOW + " private 레포는 connection_id 를 쓴다. "
+            "미리보기에 구성 요소별 시간당 가격과 한 달 금액이 나온다. "
+            "cpu·memory 는 사양 프리셋(CPU 단위/MiB) 중 하나로 256/512, 512/1024, 1024/2048, 2048/4096 이고 둘 다 주거나 둘 다 뺀다(빼면 기본 사양). "
+            "planned_hours 는 예정 사용 시간(시간)이며, 넘기면 알림만 가고 자동으로 끄지 않는다. "
+            "자동 증설은 사용자가 고르는 AWS 설정이다: min_tasks·max_tasks·scale_metric(AVERAGE_CPU, AVERAGE_MEMORY, REQUEST_COUNT_PER_TARGET 중 하나)·scale_target 네 값을 모두 주거나 모두 빼며 max_tasks 는 4 이하다."
         ),
         annotations=ADDITIVE,
     )
     async def server_tool_deploy(
-        ctx:Context, repo_url:str, branch:str|None=None, connection_id:int|None=None, confirm_token:str|None=None
+        ctx:Context,
+        repo_url:str,
+        branch:str|None=None,
+        connection_id:int|None=None,
+        confirm_token:str|None=None,
+        cpu:str|None=None,
+        memory:str|None=None,
+        planned_hours:float|None=None,
+        min_tasks:int|None=None,
+        max_tasks:int|None=None,
+        scale_metric:str|None=None,
+        scale_target:int|None=None,
     ) -> dict[str, Any]:
         return await server_action(
             ctx,
             store,
-            lambda token:Mcp_Service.services_mcp_deploy(client, store, repo_url, branch, connection_id, token, max_live),
+            lambda token:Mcp_Service.services_mcp_deploy(
+                client, store, repo_url, branch, connection_id, token, max_live,
+                cpu, memory, planned_hours, min_tasks, max_tasks, scale_metric, scale_target,
+            ),
             confirm_token,
         )
 
