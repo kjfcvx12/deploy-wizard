@@ -242,6 +242,25 @@ describe('알림 설정 - 메일·종류 스위치', () => {
     expect(screen.getByText('끈 종류는 앱 안 알림 목록에도 남지 않습니다')).toBeTruthy()
   })
 
+  test('저장 성공 안내가 맨 아래 자리에 뜨고 기본 글을 대신한다', async () => {
+    await open()
+    expect(screen.getByText('변경은 누르는 즉시 저장됩니다.')).toBeTruthy()
+    await fireEvent.press(row('메일 받기'))
+    await flush()
+    expect(screen.getByText('저장했습니다')).toBeTruthy()
+    expect(screen.queryByText('변경은 누르는 즉시 저장됩니다.')).toBeNull()
+    await act(async () => { jest.advanceTimersByTime(3500) })
+    expect(screen.getByText('변경은 누르는 즉시 저장됩니다.')).toBeTruthy()
+  })
+
+  test('종류 설명은 처음엔 접혀 있고 [설명 보기] 로 펼친다 (accessibilityHint 로는 항상 있다)', async () => {
+    await open()
+    expect(screen.queryByText(/실행 중인 서비스에 문제가 감지됐을 때/)).toBeNull()
+    expect(row('문제 감지 알림').props.accessibilityHint).toBe('실행 중인 서비스에 문제가 감지됐을 때')
+    await fireEvent.press(screen.getByRole('button', { name: '설명 보기' }))
+    expect(screen.getByText('문제 감지 — 실행 중인 서비스에 문제가 감지됐을 때')).toBeTruthy()
+  })
+
   test('스위치는 이름·상태·설명이 접근성 요소에 있고 눌림 높이 44 이상', async () => {
     await open()
     const mail = row('메일 받기')
@@ -398,6 +417,16 @@ describe('알림 설정 - 이 환경에서 푸시를 못 쓸 때', () => {
     expect(Notifications.getPermissionsAsync).not.toHaveBeenCalled()
     await fireEvent.press(row('메일 받기'))
     expect(notificationApi.patchSettings).toHaveBeenCalledWith({ notify_email: false })
+  })
+
+  test('푸시 안내 상자가 떠 있어도 종류 스위치가 모두 있다', async () => {
+    await open()
+    await fireEvent.press(row('푸시 받기'))
+    expect(screen.getByRole('button', { name: '알림 켜기' })).toBeTruthy()
+    for (const label of ['문제 감지', '복구 완료', '확인 필요', '배포 성공', '배포 실패', '새 커밋']) {
+      expect(row(`${label} 알림`)).toBeTruthy()
+    }
+    expect(screen.getAllByRole('switch')).toHaveLength(8)
   })
 
   test('프로젝트 연결 전(no_project): 스토어 빌드 준비 안내가 보이고 나머지는 동작', async () => {
