@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { Pressable, StyleSheet, View } from 'react-native'
 import { Text } from './Text'
 import { confidenceLabel, needLabel, tierLabel } from '../constants'
-import { monoFont, radius, spacing, useColors } from '../theme'
+import { monoFont, radius, spacing, useColors, wrapAnywhere } from '../theme'
 
 const COST_UNKNOWN = '아직 계산할 수 없습니다 (실제 배포로 요금 구성을 확인한 뒤 표시됩니다). 트래픽에 따라 늘어납니다.'
 
@@ -109,7 +109,7 @@ export default function AdvicePanel({ advice, busy, onDeploy, onReset, headingRe
         </View>
         <Badge kind={official ? 'ok' : 'warn'}>{official ? '공식 지원' : '실험 지원'}</Badge>
         {!!advice.app_dir && advice.app_dir !== '.' && (
-          <Text style={[styles.small, { color: colors.text }]}>
+          <Text style={[styles.small, wrapAnywhere, { color: colors.text }]}>
             앱 폴더: <Text style={{ fontFamily: monoFont }}>{advice.app_dir}</Text>
           </Text>
         )}

@@ -258,6 +258,7 @@ details.env-group > summary { font-size: 14px; }
 
 /* 분석 결과 */
 .advice > .row { margin-bottom: 4px; }
+.advice > .row > * { min-width: 0; overflow-wrap: anywhere; }
 .advice-tier { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-top: 12px; font-size: 20px; font-weight: 700; }
 .advice-low { color: var(--warn); margin: 6px 0 0; }
 .advice-block { margin-top: 16px; }

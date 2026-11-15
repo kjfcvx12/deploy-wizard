@@ -164,9 +164,12 @@ src/components/FooterSlot.js     설정 화면 맨 아래 안내 자리 (아래 
 - **앱**: `src/components/Text.js` 의 `Text` 래퍼. 웹 번들(`Platform.OS === 'web'`)에서는 기본 스타일 `wordBreak: 'keep-all'`, `overflowWrap: 'break-word'` 를 깔고(호출자 `style` 이 이긴다), 모든 플랫폼에서 `lineBreakStrategyIOS="hangul-word"` 를 기본 prop 으로 준다 (호출자가 덮어쓸 수 있다). react-native-web 의 `Text` 는 `lineBreakStrategyIOS` 를 조용히 버린다 (웹 번들에서 경고도 없었다).
 - **규칙**: 모든 화면·컴포넌트는 `react-native` 가 아니라 이 래퍼에서 `Text` 를 가져온다. `src/__tests__/Text.test.js` 의 가드 테스트가 `app/` 과 `src/` 의 `.js` 파일에서 `import { ..., Text, ... } from 'react-native'` 를 찾아 하나라도 있으면 실패시킨다.
 - **안드로이드는 처리하지 않았고 확인하지 못했다.** 한글 어절 줄바꿈을 켜는 RN 공식 prop 이 없어 이 계획은 안드로이드에 아무것도 하지 않았다 (보이지 않는 연결 문자를 글자 사이에 넣는 방법은 문자열을 바꾸고 긴 글에서 넘칠 위험이 있어 기기에서 확인하기 전에는 쓰지 않기로 했다). 안드로이드에서는 글자 중간에서 줄이 바뀔 수 있다고 보아야 한다.
-- **확인한 것**: 웹 번들(Chromium, react-native-web)에서만, 그리고 인시던트 상세 화면만 쟀다 (나머지 앱 화면은 `Text` 래퍼만 받았고 다시 재지 않았다). 모의 API, 390×844 라이트·다크와 360×740 라이트. 공백으로 나눈 낱말 66-139개씩을 `Range.getClientRects` 로 보니 한 낱말이 두 줄에 걸친 경우가 0 이었고, 90자 ARN 은 상자 안에서 세 줄로 끊겨 넘치지 않았다. 숫자는 `docs/worklog/2026-11-15.md` "Plan G measurement".
+- **확인한 것**: 웹 번들(Chromium, react-native-web)에서만 쟀다 (인시던트 상세는 계획 G 에서, 나머지 화면은 아래 "가로 넘침 훑기"). 모의 API, 390×844 라이트·다크와 360×740 라이트. 공백으로 나눈 낱말 66-139개씩을 `Range.getClientRects` 로 보니 한 낱말이 두 줄에 걸친 경우가 0 이었고, 90자 ARN 은 상자 안에서 세 줄로 끊겨 넘치지 않았다. 숫자는 `docs/worklog/2026-11-15.md` "Plan G measurement".
 - **래퍼를 거치지 않는 것**: `TextInput` 과 내비게이션 헤더 제목은 `Text` 래퍼를 쓰지 않는다.
-- **웹 쪽 확인 범위**: Vite 개발 서버 + 모의 `/api` 로 `/notifications`·`/incidents/7` 을 320·390px 에서만 쟀다. 데스크톱 너비와 계정·안내 쪽은 재지 않았고, `min-width: 0` 이 없는 flex·grid 칸의 띄어쓰기 없는 긴 한글 낱말은 끊기지 않고 넘칠 수 있다. `main` 에 합치기 전에 나머지 화면·경로의 가로 넘침을 훑어야 한다.
+- **가로 넘침 훑기** (2026-11-15, `fix/overflow-sweep`): 줄바꿈 규칙을 전역으로 건 뒤 `min-width: 0` 이 없는 칸이 넘치는지 쟀다. 웹 번들 + 모의 `/api` + Chromium 에서 긴 한글 낱말 48자·ARN 90자·긴 레포·브랜치·환경변수 이름·긴 서버 문장을 넣어 `scrollWidth <= innerWidth` 와 오른쪽 끝이 화면을 넘는 요소를 봤다.
+  - **웹**(Vite 개발 서버, 라이트): `shared/ui/App.jsx` 의 모든 경로 - 목록, 새 배포 폼(연결 고르기·브랜치·분석 결과·분석 오류), 배포 상세 여섯 상태(환경변수 카드·인시던트 카드·Dockerfile·문제 이력 포함)와 멈춤·삭제 창, 배포 설정, 인시던트 두 건, 알림, 알림 설정, 계정 연결(블록 넷, 안내 창·스택 업데이트 창·삭제 창·알림), `/guide/github`·`/guide/aws` - 을 320·390·768·1280px 로 쟀다. 넘친 곳은 분석 결과 첫 줄의 `앱 폴더` 경로 한 곳뿐이었다 (320/390 에서 `scrollWidth` 627 > 305). `.advice > .row > *` 에 `min-width: 0` + `overflow-wrap: anywhere` 로 고쳤다 (한글 `keep-all` 때문이 아니라 띄어쓰기 없는 긴 경로 때문이었다). 나머지는 모두 `scrollWidth` 가 `clientWidth` 와 같았다. 가로 스크롤 상자로 의도된 것은 Dockerfile `pre` 하나.
+  - **앱**(웹 번들, 360·390 라이트 + 390 다크): `/`, `/new`(연결·레포 칩·브랜치·분석 결과·분석 오류), `/deploys/[d_id]` 여섯 상태, `/deploy-settings/[d_id]`(오류 포함), `/incidents/[i_id]`, `/notifications`, `/notification-settings`(설명 펼침), `/accounts`(블록 넷, AWS 안내·역할 ARN 입력·스택 업데이트 안내, GitHub 확인 알림, 확인 실패 알림). 같은 `앱 폴더` 줄이 넘쳤다 (오른쪽 끝 579 > 345~375). `Text` 에 `wrapAnywhere` 를 더해 고쳤다. 고친 뒤 모든 칸에서 화면을 넘는 요소 0, 잘린 요소 0 (알림 본문 한 줄 말줄임 `numberOfLines={1}` 은 의도된 것으로 제외), 콘솔 경고·오류는 모의로 일부러 낸 400·500 뿐, 모의하지 않은 요청 0.
+  - **재지 않은 것**: 실제 기기·서버·안드로이드·iOS, 웹의 다크 모드, 앱의 360 다크, OS 글꼴 배율, 가로 방향, 데이터가 훨씬 많은 목록(스크롤 길이), 실제 AWS·GitHub 가 돌려주는 값. 헤드리스 Chromium 의 세로 스크롤바 15px 때문에 `scrollWidth` 는 보통 `innerWidth - 15` 로 나온다 (넘침이 아니다). 숫자는 `docs/worklog/2026-11-15.md` "Overflow sweep".
 - **확인 못 한 것**: 실제 iOS·안드로이드 기기와 에뮬레이터 (iOS `hangul-word` 는 설정만 했고 기기에서 동작을 보지 않았다), 안드로이드 줄바꿈, OS 글꼴 배율 2배 (CSS zoom 은 대신할 수 없어 재지 않았다), 가로 방향. jest 는 레이아웃을 볼 수 없어 래퍼의 prop·style 과 가드만 확인한다.
 
 ## 확인한 것과 못 한 것
@@ -209,7 +212,7 @@ src/components/FooterSlot.js     설정 화면 맨 아래 안내 자리 (아래 
 - `Text` 가드 테스트의 정규식은 `import { Text } from 'react-native'` 한 모양만 잡는다. `import RN, { Text }`, `RN.Text`, `Animated.Text`, `require` 는 못 잡는다 (지금 그런 코드는 없다).
 - `IncidentFacts` 의 이름 칸 너비가 44 로 고정이다. 글꼴 배율을 키운 기기에서는 `배포` 같은 라벨이 줄을 넘길 수 있다 (웹 번들 기본 배율에서만 한 줄로 쟀다).
 - `src/ops/format.js` 의 `formatTime`·`formatDate`·`formatClock` 은 시각 읽는 코드가 세 번 반복된다.
-- 웹의 `keep-all` 은 `min-width: 0` 이 없는 flex·grid 칸에서 넘칠 수 있다 (실제 데이터에서는 못 찾았다). 웹 테스트는 `.step` 의 `keep-all` 을 고정하지 않는다.
+- 웹의 `keep-all` 은 `min-width: 0` 이 없는 flex·grid 칸에서 넘칠 수 있다. 2026-11-15 훑기(모의 데이터, 위 "가로 넘침 훑기")에서는 한글 때문에 넘친 칸을 못 찾았다. 웹 테스트는 `.step` 의 `keep-all` 을 고정하지 않는다.
 - 인시던트 상세 테스트에 `open` 상태의 "마법사가 복구를 시도하고 있습니다" 안내 글 확인은 없다 (`recovering` 만 확인한다).
 - 알림 목록은 포커스를 다시 받거나 푸시가 도착해도 다시 받지 않는다 (당겨서 새로고침).
 - 기기 등록 해제(PATCH)가 실패한 뒤 `hasDevice` 를 되돌리지 않는다.
