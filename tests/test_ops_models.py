@@ -91,7 +91,7 @@ async def test_ops_all_tables_round_trip(db):
     loaded=await db.get(Notification_Setting, 1)
     assert loaded.notify_email is True and loaded.notify_push is True
     assert set(json.loads(loaded.kinds)) == {'incident_opened', 'incident_recovered', 'incident_needs_action',
-                                             'deploy_succeeded', 'deploy_failed', 'new_commit'}
+                                             'deploy_succeeded', 'deploy_failed', 'new_commit', 'plan_exceeded'}
 
 
 @pytest.mark.asyncio

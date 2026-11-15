@@ -141,6 +141,14 @@ class Deploy_Crud:
         return result.scalars().all()
 
 
+    # 예정 시간 초과를 따져 볼 배포 - running 이고 예정 시간·시작 시각이 있고 아직 알리지 않은 것
+    @staticmethod
+    async def crud_deploy_get_plan_candidates(db:AsyncSession) -> list[Deploy]:
+        result=await db.execute(select(Deploy).filter(Deploy.status == 'running', Deploy.planned_hours.is_not(None),
+                                                      Deploy.running_since.is_not(None), Deploy.plan_notified_at.is_(None)))
+        return result.scalars().all()
+
+
     # 레포 주소로 배포 찾기 (웹훅 매칭용) - 브랜치 비교는 services 레이어에서
     @staticmethod
     async def crud_deploy_get_by_repo_url(db:AsyncSession, repo_url:str) -> list[Deploy]:

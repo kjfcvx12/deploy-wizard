@@ -2,7 +2,7 @@ import asyncio
 import logging
 import math
 import httpx
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from sqlalchemy.ext.asyncio import AsyncSession
 from fastapi import HTTPException, status
@@ -593,6 +593,28 @@ class Deploy_Service:
             await db.rollback()
             raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                                 detail=f"설정 변경 실패 :{mask_text(str(e))}")
+
+
+    # 예정 사용 시간 초과 점검 - 알림만 한다 (멈추거나 지우지 않는다). 시간이 지난 배포에 알림 기록(plan_notified_at)을 남기고 d_id 를 돌려준다
+    # 정확히 경계(지난 시간 == 예정 시간)에서도 포함한다. 알림 기록이 있으면 다시 돌려주지 않는다 (멈췄다 켜거나 예정 시간을 바꾸면 비워진다)
+    @staticmethod
+    async def services_deploy_plan_check(db: AsyncSession, now: datetime | None = None) -> list[int]:
+        try:
+            now=now or datetime.now(timezone.utc).replace(tzinfo=None)
+
+            due=[d for d in await Deploy_Crud.crud_deploy_get_plan_candidates(db)
+                 if now - d.running_since >= timedelta(hours=d.planned_hours)]
+
+            for deploy in due:
+                await Deploy_Crud.crud_deploy_update(db, deploy.d_id, {"plan_notified_at": now})
+
+            await db.commit()
+            return [d.d_id for d in due]
+
+        except Exception as e:
+            await db.rollback()
+            raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                                detail=f"예정 시간 점검 실패 :{mask_text(str(e))}")
 
 
     # 헬스체크 결과 반영 - running 인 배포만. health_state·last_health_at 을 갱신하고, 정상이면 current 릴리스의 healthy_since 를 처음 한 번 채운다

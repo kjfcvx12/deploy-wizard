@@ -86,7 +86,7 @@ class Notification_Service:
                                 detail=f"알림 발송 실패 :{dispatch_scrub(str(e))}")
 
 
-    # 배포 알림 보내기 - deploy_succeeded | deploy_failed | new_commit. event 는 새 커밋의 sha (커밋마다 한 번만 알린다)
+    # 배포 알림 보내기 - deploy_succeeded | deploy_failed | new_commit | plan_exceeded. event 는 새 커밋의 sha (커밋마다 한 번만 알린다)
     @staticmethod
     async def services_notification_send_deploy(db:AsyncSession, deploy, kind:str, mailer=None, pusher=None, event:str|None=None) -> None:
         try:

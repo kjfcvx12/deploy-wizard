@@ -552,7 +552,7 @@ Hard rule 3 의 자동 조치는 두 가지뿐이다. **재시작**(서비스를
 
 - `after` 는 `n_id` 커서(1 이상, 아니면 422) - 그보다 오래된 것부터 최신순 100건. `unread=true` 면 읽지 않은 것만. 없는 `n_id`(또는 앱 안 알림이 아닌 줄)는 404 `해당 id의 알림이 없습니다`.
 - `expo_token` 은 `^(Exponent|Expo)PushToken\[.+\]$` 형식, `platform` 은 `ios` `android` (아니면 422). 없는 `p_d_id` 는 404 `해당 id의 기기가 없습니다`.
-- 설정은 한 줄뿐이고 처음 읽을 때 기본값(메일 켬, 푸시 켬, 여섯 종류 모두)으로 만든다. PATCH 본문에 모르는 항목이나 모르는 `kinds` 값이 있으면 422.
+- 설정은 한 줄뿐이고 처음 읽을 때 기본값(메일 켬, 푸시 켬, 일곱 종류 모두)으로 만든다. PATCH 본문에 모르는 항목이나 모르는 `kinds` 값이 있으면 422.
 
 ### `Notification_Read`
 ```json
@@ -567,9 +567,9 @@ Hard rule 3 의 자동 조치는 두 가지뿐이다. **재시작**(서비스를
 
 ### `Notification_Setting_Read` / PATCH 본문
 ```json
-{ "notify_email": true, "notify_push": false, "kinds": ["incident_opened", "incident_recovered", "incident_needs_action", "deploy_succeeded", "deploy_failed", "new_commit"] }
+{ "notify_email": true, "notify_push": false, "kinds": ["incident_opened", "incident_recovered", "incident_needs_action", "deploy_succeeded", "deploy_failed", "new_commit", "plan_exceeded"] }
 ```
-PATCH 는 보낸 항목만 바꾼다 (`notify_email`·`notify_push` 는 true/false, `kinds` 는 위 여섯 가지 중 일부).
+PATCH 는 보낸 항목만 바꾼다 (`notify_email`·`notify_push` 는 true/false, `kinds` 는 위 일곱 가지 중 일부).
 
 ### 알림이 만들어지는 때 (서버 안 - API 아님)
 
@@ -581,6 +581,7 @@ PATCH 는 보낸 항목만 바꾼다 (`notify_email`·`notify_push` 는 true/fal
 | `deploy_succeeded` | 파이프라인이 `running` 에 닿았을 때 |
 | `deploy_failed` | 파이프라인이 `failed` 로 멈췄을 때 |
 | `new_commit` | 자동 재배포가 꺼진 배포에서 새 커밋을 처음 봤을 때 (커밋마다 한 번) |
+| `plan_exceeded` | `running` 배포가 예정한 사용 시간(`planned_hours`)을 `running_since` 부터 넘겼을 때 (감시 루프가 1분마다 점검, 알림만 - 멈추거나 지우지 않는다). 시작 기록이 새로 생기거나 예정 시간을 바꾸면 다시 알린다 |
 
 - 종류가 설정에서 꺼져 있으면 아무것도 만들지 않는다. 켜져 있으면 `inapp` 줄을 항상 남기고, `notify_email` 이 켜져 있고 `MAIL_HOST`·`MAIL_TO` 가 있으면 `email` 줄, `notify_push` 가 켜져 있고 등록된 기기가 있으면 `push` 줄을 남긴다 (`queued` -> `sent|failed`, 실패 이유는 마스킹한 `error`). 메일 설정이 없으면 줄도 남기지 않는다.
 - 인시던트 알림은 (인시던트, `kind`, 채널)마다 한 줄 - 같은 알림을 다시 보내려 해도 건너뛴다. `new_commit` 은 (배포, 커밋, 채널)마다 한 줄.

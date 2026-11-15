@@ -8,8 +8,8 @@ from datetime import datetime
 from typing import Optional
 
 
-# 알림 종류 여섯 가지 - 설정의 kinds 기본값
-NOTIFICATION_KINDS=('incident_opened', 'incident_recovered', 'incident_needs_action', 'deploy_succeeded', 'deploy_failed', 'new_commit')
+# 알림 종류 일곱 가지 - 설정의 kinds 기본값 (모두 켜 둔다)
+NOTIFICATION_KINDS=('incident_opened', 'incident_recovered', 'incident_needs_action', 'deploy_succeeded', 'deploy_failed', 'new_commit', 'plan_exceeded')
 
 
 class Notification(Base):
@@ -25,7 +25,7 @@ class Notification(Base):
     i_id: Mapped[Optional[int]] = mapped_column(ForeignKey("incidents.i_id"))
 
     kind: Mapped[str] = mapped_column(String(30), nullable=False)
-    # incident_opened|incident_recovered|incident_needs_action|deploy_succeeded|deploy_failed|new_commit
+    # incident_opened|incident_recovered|incident_needs_action|deploy_succeeded|deploy_failed|new_commit|plan_exceeded
     channel: Mapped[str] = mapped_column(String(10), nullable=False)
     # inapp|email|push
     title: Mapped[str] = mapped_column(String(200), nullable=False)
