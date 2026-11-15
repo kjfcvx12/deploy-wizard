@@ -254,7 +254,16 @@ Base URL: `http://localhost:8081` · 전부 JSON · 인증 없음(로컬 전용)
   "confidence": "medium",
   "cpu": null,
   "memory": null,
-  "cost": { "monthly_min": null, "monthly_max": null, "currency": "USD", "basis_date": null, "note": "트래픽에 따라 늘어납니다" },
+  "cost": {
+    "monthly_min": 26.79, "monthly_max": 26.79, "currency": "USD", "basis_date": "2026-11-11", "note": "트래픽에 따라 늘어납니다",
+    "hourly_usd": 0.0367,
+    "components": [
+      { "name": "Fargate (vCPU·메모리)", "hourly_usd": 0.0142, "note": "0.25 vCPU / 0.5 GB" },
+      { "name": "ALB (고정 시간당)", "hourly_usd": 0.0225, "note": "트래픽에 따른 LCU 요금은 제외" }
+    ],
+    "not_included": ["트래픽에 따른 LCU 요금 (ALB 사용량)", "데이터 전송 요금 (인터넷으로 나가는 트래픽)", "로그 저장·조회 요금 (CloudWatch Logs)", "ECR 이미지 저장 요금"],
+    "arm64_hourly_usd": 0.0338, "spec_label": "0.25 vCPU / 0.5 GB", "spec_is_default": true
+  },
   "reasons": ["sqlalchemy, psycopg2-binary 라이브러리를 사용해 중간 사양으로 잡았습니다 (requirements.txt)"],
   "needs": [
     { "kind": "database", "supported": false, "message": "마법사가 아직 만들어 주지 못합니다", "count": null },
@@ -274,7 +283,7 @@ Base URL: `http://localhost:8081` · 전부 JSON · 인증 없음(로컬 전용)
 | `confidence` | `high` `medium` `low`. 의존성 파일을 못 읽었거나 종류를 모르는 환경변수가 2개 이상이면 low, 1개이거나 실험 지원 언어면 medium, 나머지 high |
 | `needs[].kind` | `database` `cache` `worker` `env_vars` `disk_write` `static_site`. `supported: false`는 마법사가 아직 만들어 주지 못하는 것 (`message`로 이유). `env_vars`는 `count`가 있고 1개 이상일 때만 나온다 |
 | `cpu` `memory` | **항상 `null`.** Express Mode가 허용하는 CPU·메모리 조합을 실제 배포로 확인하기 전이다 (결정 D10) |
-| `cost` | 숫자(`monthly_min` `monthly_max` `basis_date`)는 **항상 `null`**. 요금 구성을 검증하기 전에는 비운다. `note`만 채운다 |
+| `cost` | AWS 공개 가격 파일에서 읽은 단가로 **기본 사양(0.25 vCPU / 0.5 GB)** 의 온디맨드 추정치를 응답 직전에 채운다. 분석 결과 캐시에는 넣지 않고 매 요청마다 다시 계산한다(가격이 바뀌어도 낡은 값이 나가지 않게). `monthly_min` = `monthly_max` = 한 달(730시간) 금액, `hourly_usd` = 시간당, `components[]` = `{name, hourly_usd, note}`(Fargate·ALB), `not_included[]` = 빠진 요금(LCU·데이터 전송·로그·ECR), `arm64_hourly_usd` = ARM64일 때 시간당(가격이 없으면 `null`), `spec_label`·`spec_is_default` = 어떤 사양으로 계산했는지. **가격을 못 얻으면** 숫자와 `basis_date`·`hourly_usd`·`arm64_hourly_usd`·`spec_label`·`spec_is_default`는 `null`, `components`·`not_included`는 `[]`이고 `note`만 채운다 |
 
 ### 상태 코드와 `detail`
 
@@ -288,6 +297,67 @@ Base URL: `http://localhost:8081` · 전부 JSON · 인증 없음(로컬 전용)
 | 500 | 그 밖의 분석 실패 | `분석 실패 :<마스킹된 사유>` |
 
 `disk_write`는 소스에서 파일을 쓰는 코드 흔적(`open(..., "w")`, `write_text`, `fs.writeFile` 등)을 정규식·AST로 찾는 **추정**이다. 테스트 파일은 건너뛰며, 임시 파일·로그 쓰기를 잘못 잡을 수 있다.
+
+## Pricing (비용 확인 - 백엔드)
+
+AWS 공개 가격 파일(인증 없음)에서 Fargate·ALB 시간당 단가를 읽어 추정한다. 단가는 서버 파일 캐시(`PRICING_CACHE_HOURS`, 기본 24시간)에 두고, 읽기에 실패하면 낡은 캐시를 쓴다. 리전은 서버 설정(`AWS_REGION`)을 따른다. AWS 호출·DB 쓰기는 없다. 금액은 전부 USD 온디맨드 **추정치**다.
+
+| Method | Endpoint | 설명 | 응답 |
+|--------|----------|------|------|
+| GET | `/api/pricing/options` | 사양 프리셋 4개와 사용 기간 선택지 | 200 `Pricing_Options` |
+| POST | `/api/pricing/estimate` | 사양·사용 시간·최대 작업 수로 비용 추정 | 200 `Cost_Estimate` |
+
+### GET `/api/pricing/options`
+
+```json
+{
+  "specs": [{ "label": "0.25 vCPU / 0.5 GB", "cpu": "256", "memory": "512", "vcpu": 0.25, "memory_gb": 0.5 }],
+  "plans": [{ "label": "4시간", "hours": 4 }, { "label": "하루", "hours": 24 }, { "label": "일주일", "hours": 168 }, { "label": "계속", "hours": null }]
+}
+```
+
+`specs`는 항상 4개(0.25/0.5, 0.5/1, 1/2, 2/4 vCPU/GB). `plans`의 마지막 `hours: null`은 "계속"(기간을 정하지 않음).
+
+### POST `/api/pricing/estimate` 본문 `Estimate_Request`
+
+```json
+{ "cpu": "1024", "memory": "2048", "planned_hours": 24, "max_tasks": 3 }
+```
+
+| 필드 | 타입 | 설명 |
+|------|------|------|
+| `cpu` `memory` | 글자, 선택 | 둘 다 비우면(생략·`""`·공백만) 기본 사양 256/512. 값을 주면 `options`의 프리셋 조합이어야 한다. 한쪽만 주면 400 |
+| `planned_hours` | 숫자, 선택 | 사용할 시간. 0보다 크고 8760 이하. 주면 `planned_usd`를 채운다 |
+| `max_tasks` | 정수, 선택 | 자동 증설 최대 작업 수. 1 이상 `MAX_TASKS_CAP`(기본 4) 이하. 주면 `max_hourly_usd`·`max_monthly_usd`를 채운다 |
+
+### `Cost_Estimate`
+
+```json
+{
+  "basis_date": "2026-11-11", "region": "ap-northeast-2", "currency": "USD",
+  "cpu": "1024", "memory": "2048", "spec_label": "1 vCPU / 2 GB", "spec_is_default": false,
+  "components": [{ "name": "Fargate (vCPU·메모리)", "hourly_usd": 0.0568, "note": "1 vCPU / 2 GB" }, { "name": "ALB (고정 시간당)", "hourly_usd": 0.0225, "note": "트래픽에 따른 LCU 요금은 제외" }],
+  "hourly_usd": 0.0793,
+  "periods": [{ "label": "1시간", "hours": 1, "usd": 0.08 }, { "label": "1일", "hours": 24, "usd": 1.9 }, { "label": "1주", "hours": 168, "usd": 13.32 }, { "label": "한 달", "hours": 730, "usd": 57.87 }],
+  "planned_hours": 24, "planned_usd": 1.9,
+  "max_tasks": 3, "max_hourly_usd": 0.1928, "max_monthly_usd": 140.77,
+  "arm64_hourly_usd": 0.0678, "arm64_saving_percent": 14.5,
+  "assumptions": ["금액은 AWS 가격 목록(2026-11-11 기준)의 온디맨드 USD 추정치입니다"],
+  "not_included": ["트래픽에 따른 LCU 요금 (ALB 사용량)"]
+}
+```
+
+`planned_*`·`max_*`는 해당 입력이 없으면 `null`. `arm64_*`는 ARM64 단가가 없으면 `null`. 한 달은 730시간. 서비스마다 ALB가 하나씩 생긴다고 보고 계산한다(가장 비싼 경우).
+
+### 상태 코드와 `detail`
+
+| 코드 | 언제 | `detail` |
+|------|------|----------|
+| 400 | 프리셋이 아니거나 한쪽만 줌 | `지원하지 않는 사양입니다. CPU와 메모리를 정해진 사양 중에서 함께 골라 주세요` |
+| 400 | `planned_hours`가 숫자가 아니거나(NaN·무한대) 0 이하 또는 8760 초과 | `사용 시간이 올바른 숫자가 아닙니다` / `사용 시간은 0보다 크고 8760시간(1년) 이하여야 합니다` |
+| 400 | `max_tasks`가 범위 밖 | `최대 작업 수는 1 이상 {상한} 이하여야 합니다 (요금이 크게 늘지 않도록 정한 상한)` |
+| 422 | JSON 타입이 틀림 (`max_tasks`가 불리언·소수·글자, `planned_hours`가 불리언·글자, `cpu`가 숫자 등) | FastAPI 기본 검증 오류 목록 |
+| 503 | 가격 파일을 못 읽고 쓸 캐시도 없음 | `가격 정보를 가져오지 못했습니다. 잠시 뒤 다시 시도하세요` |
 
 ## Accounts (M6 - 진행 중)
 

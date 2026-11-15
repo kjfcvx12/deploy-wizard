@@ -9,7 +9,7 @@ import httpx
 
 from shared.settings import settings
 
-from features.pricing.scheme import Cost_Component, Cost_Estimate, Cost_Period, Price_Table, Spec_Option
+from features.pricing.scheme import Cost_Component, Cost_Estimate, Cost_Period, Price_Table, Pricing_Plan, Spec_Option
 
 # 가격 파일 읽기와 캐시 (기획 설계 5.1) - 파일은 인증 없는 AWS 공개 가격 파일
 # 파싱 실패·누락은 예외가 아니라 None, 네트워크 실패도 낡은 캐시 또는 None 으로 돌려준다 (금액 없음)
@@ -37,6 +37,10 @@ DEFAULT_CPU="256"
 DEFAULT_MEMORY="512"
 # 기간별 금액 계산에 쓰는 (이름, 시간) - 한 달은 730시간
 PERIODS=[("1시간", 1), ("1일", 24), ("1주", 168), ("한 달", 730)]
+# 사용 기간 선택지 (이름, 시간) - 시간이 None 이면 계속 켜 둠
+PLANS=[("4시간", 4), ("하루", 24), ("일주일", 168), ("계속", None)]
+# 사용 시간 상한 - 1년
+MAX_PLANNED_HOURS=8760
 # 자동 증설 기준 지표 (docs/aws-notes.md 의 scalingTarget.autoScalingMetric)
 SCALING_METRICS=("AVERAGE_CPU", "AVERAGE_MEMORY", "REQUEST_COUNT_PER_TARGET")
 
@@ -240,3 +244,24 @@ class Pricing_Service:
                 "ECR 이미지 저장 요금",
             ],
         )
+
+
+    # 사용 기간 선택지 - 마지막 "계속"은 기간을 정하지 않은 경우 (hours 없음)
+    @staticmethod
+    def services_pricing_plans() -> list[Pricing_Plan]:
+        return [Pricing_Plan(label=label, hours=hours) for label, hours in PLANS]
+
+
+    # 비용 추정 요청 값 검사 - 문제가 있으면 한국어 안내 문구, 없으면 None (추정 함수는 범위를 검사하지 않는다)
+    @staticmethod
+    def services_pricing_request_error(cpu:str|None, memory:str|None, planned_hours:float|None, max_tasks:int|None, cap:int) -> str | None:
+        if not Pricing_Service.services_pricing_spec_valid(cpu, memory):
+            return "지원하지 않는 사양입니다. CPU와 메모리를 정해진 사양 중에서 함께 골라 주세요"
+        if planned_hours is not None:
+            if isinstance(planned_hours, float) and not math.isfinite(planned_hours):
+                return "사용 시간이 올바른 숫자가 아닙니다"
+            if not 0 < planned_hours <= MAX_PLANNED_HOURS:
+                return f"사용 시간은 0보다 크고 {MAX_PLANNED_HOURS}시간(1년) 이하여야 합니다"
+        if max_tasks is not None and not 1 <= max_tasks <= cap:
+            return f"최대 작업 수는 1 이상 {cap} 이하여야 합니다 (요금이 크게 늘지 않도록 정한 상한)"
+        return None

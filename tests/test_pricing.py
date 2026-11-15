@@ -2,6 +2,8 @@ import json
 from datetime import datetime, timedelta, timezone
 
 import pytest
+import pytest_asyncio
+from httpx import AsyncClient, ASGITransport
 
 from shared.settings import settings
 
@@ -298,3 +300,135 @@ def test_pricing_estimate_rejects_non_preset():
         Pricing_Service.services_pricing_estimate(make_table(), "300", "512")
     with pytest.raises(ValueError):
         Pricing_Service.services_pricing_estimate(make_table(), "256", None)
+
+
+# ---- 가격 API (GET /api/pricing/options, POST /api/pricing/estimate) ----
+
+@pytest_asyncio.fixture
+async def client():
+    import main
+
+    async with AsyncClient(transport=ASGITransport(app=main.app), base_url="http://test") as c:
+        yield c
+
+
+# 단가 표를 가짜로 바꾼다 - None 이면 가격을 못 얻은 경우
+def patch_table(monkeypatch, table):
+    async def fake_table(region=None, fetch=None, now=None):
+        return table
+
+    monkeypatch.setattr(Pricing_Service, "services_pricing_table", staticmethod(fake_table))
+
+
+@pytest.mark.asyncio
+async def test_pricing_options_endpoint(client):
+    response=await client.get("/api/pricing/options")
+
+    assert response.status_code == 200
+    body=response.json()
+    assert len(body["specs"]) == 4
+    assert body["specs"][0]["cpu"] == "256"
+    assert body["specs"][0]["memory"] == "512"
+    assert [p["label"] for p in body["plans"]] == ["4시간", "하루", "일주일", "계속"]
+    assert [p["hours"] for p in body["plans"]] == [4, 24, 168, None]
+
+
+@pytest.mark.asyncio
+async def test_pricing_estimate_endpoint_ok(client, monkeypatch):
+    patch_table(monkeypatch, make_table())
+
+    response=await client.post("/api/pricing/estimate", json={"cpu": "1024", "memory": "2048", "planned_hours": 24})
+
+    assert response.status_code == 200
+    body=response.json()
+    assert body["hourly_usd"] == 0.0793
+    # (0.04656 + 2 x 0.00511 + 0.0225) x 24 = 1.90272 -> 1.9
+    assert body["planned_usd"] == 1.9
+    assert body["planned_hours"] == 24
+    assert body["spec_is_default"] is False
+
+
+@pytest.mark.asyncio
+async def test_pricing_estimate_endpoint_defaults_and_max_tasks(client, monkeypatch):
+    patch_table(monkeypatch, make_table())
+
+    response=await client.post("/api/pricing/estimate", json={})
+    assert response.status_code == 200
+    assert response.json()["spec_is_default"] is True
+
+    # 빈 글자·공백만 있는 사양은 비어 있는 것으로 본다
+    response=await client.post("/api/pricing/estimate", json={"cpu": "", "memory": "  "})
+    assert response.status_code == 200
+    assert response.json()["spec_is_default"] is True
+
+    response=await client.post("/api/pricing/estimate", json={"max_tasks": settings.max_tasks_cap})
+    assert response.status_code == 200
+    assert response.json()["max_tasks"] == settings.max_tasks_cap
+    assert response.json()["max_hourly_usd"] is not None
+
+
+# 한국어 detail 인지 - 한글이 한 글자라도 있으면 된다
+def has_korean(detail):
+    return isinstance(detail, str) and any("가" <= ch <= "힣" for ch in detail)
+
+
+@pytest.mark.asyncio
+async def test_pricing_estimate_endpoint_bad_input(client, monkeypatch):
+    patch_table(monkeypatch, make_table())
+
+    bad_bodies=[
+        {"cpu": "300", "memory": "512"},
+        {"cpu": "256"},
+        {"memory": "512"},
+        {"cpu": "256", "memory": ""},
+        {"cpu": "256", "memory": "2048"},
+        {"planned_hours": 0},
+        {"planned_hours": -1},
+        {"planned_hours": 9000},
+        {"planned_hours": 8760.5},
+        {"planned_hours": 10**400},
+        {"max_tasks": 0},
+        {"max_tasks": -1},
+        {"max_tasks": settings.max_tasks_cap + 1},
+    ]
+    for body in bad_bodies:
+        response=await client.post("/api/pricing/estimate", json=body)
+        assert response.status_code == 400, body
+        assert has_korean(response.json()["detail"]), body
+
+    # 경계값은 통과한다
+    for body in ({"planned_hours": 8760}, {"planned_hours": 0.5}, {"max_tasks": 1}):
+        response=await client.post("/api/pricing/estimate", json=body)
+        assert response.status_code == 200, body
+
+
+@pytest.mark.asyncio
+async def test_pricing_estimate_endpoint_rejects_non_finite_hours(client, monkeypatch):
+    patch_table(monkeypatch, make_table())
+
+    for literal in ("NaN", "Infinity", "-Infinity"):
+        response=await client.post("/api/pricing/estimate", content=f'{{"planned_hours": {literal}}}'.encode(),
+                                   headers={"content-type": "application/json"})
+        assert response.status_code == 400, literal
+        assert has_korean(response.json()["detail"]), literal
+
+
+@pytest.mark.asyncio
+async def test_pricing_estimate_endpoint_rejects_wrong_json_types(client, monkeypatch):
+    patch_table(monkeypatch, make_table())
+
+    for body in ({"max_tasks": True}, {"max_tasks": 2.0}, {"max_tasks": "2"}, {"planned_hours": True},
+                 {"planned_hours": "24"}, {"cpu": 256, "memory": "512"}):
+        response=await client.post("/api/pricing/estimate", json=body)
+        assert 400 <= response.status_code < 500, body
+        assert response.status_code != 200, body
+
+
+@pytest.mark.asyncio
+async def test_pricing_estimate_endpoint_503_without_prices(client, monkeypatch):
+    patch_table(monkeypatch, None)
+
+    response=await client.post("/api/pricing/estimate", json={"cpu": "256", "memory": "512"})
+
+    assert response.status_code == 503
+    assert response.json()["detail"] == "가격 정보를 가져오지 못했습니다. 잠시 뒤 다시 시도하세요"

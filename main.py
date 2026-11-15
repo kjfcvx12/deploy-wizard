@@ -31,6 +31,7 @@ from features.accounts import router as accounts
 from features.watches import router as watches
 from features.incidents import router as incidents
 from features.notifications import router as notifications
+from features.pricing import router as pricing
 from features.notifications.services import Notification_Service
 from features.incidents.services import Incident_Service
 from features.incidents.recovery import Recovery_Service
@@ -104,6 +105,7 @@ app.include_router(accounts.router)
 app.include_router(watches.router)
 app.include_router(incidents.router)
 app.include_router(notifications.router)
+app.include_router(pricing.router)
 app.add_exception_handler(RequestValidationError, notifications.router_notification_validation_error)
 
 

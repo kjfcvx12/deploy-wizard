@@ -97,6 +97,8 @@ class Settings(BaseSettings):
 
     # 가격 - AWS 공개 가격 파일 캐시 시간(시간)
     pricing_cache_hours:int=Field(24, alias="PRICING_CACHE_HOURS")
+    # 가격 - 자동 증설 최대 작업 수 상한 (요금이 크게 늘지 않도록)
+    max_tasks_cap:int=Field(4, alias="MAX_TASKS_CAP")
 
     class Config:
         env_file=".env"
