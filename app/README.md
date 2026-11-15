@@ -50,8 +50,11 @@ src/accounts/     계정 연결 상수·문구(constants, notices), 고른 블�
 src/confirm.js    확인 창 (앱은 Alert, 웹은 브라우저 confirm)
 src/hooks/        usePolling (주기 호출, 백그라운드에서는 멈춤, STOP_POLLING 으로 중단), useOnForeground (앱이 다시 앞으로 올 때 한 번 부름), useUnreadCount (안 읽은 알림 수), usePushSetup, useNotificationRouting
 src/ops/          인시던트·알림 상수와 문구(constants), 시각·타임라인(format), 앱 링크 검사(links), 푸시(push, notifications, notifications.web), 알림 설정 문구(notificationSettings)
-src/components/ops/  HealthBar, HealthDot, ProblemBanner, IncidentCard, IncidentTimeline, NotificationItem, BellButton, QuickLinks, PushPermissionGuide, PushSetupCard
-src/components/SettingSwitch.js  설정 스위치 한 줄 (배포 설정·알림 설정이 같이 씀)
+src/components/ops/  HealthBar, HealthDot, ProblemBanner, IncidentCard, IncidentTimeline, NotificationItem, BellButton, QuickLinks, PushPermissionGuide, PushSetupCard, NotificationKinds (알림 종류 6개 2열 타일 + `설명 보기`)
+src/components/SettingSwitch.js  설정 스위치 한 줄 (배포 설정·알림 설정이 같이 씀, `compact` 로 여백·설명 글을 줄임)
+src/components/SettingTile.js    설정 타일 한 칸 (제목 + 스위치, 알림 종류가 씀)
+src/components/FitScreen.js      한 화면 틀 (화면 높이를 채우는 ScrollView, 안전망)
+src/components/FooterSlot.js     설정 화면 맨 아래 안내 자리 (아래 "한 화면 규칙")
 ```
 
 ## 화면 (C1·C2 2026-11-09, D2 2026-11-10)
@@ -61,15 +64,41 @@ src/components/SettingSwitch.js  설정 스위치 한 줄 (배포 설정·알림
 | `/` | 배포 목록 (진행 중 3초, 아니면 15초마다 갱신) | `/` 의 목록 |
 | `/new` | 새 배포: 주소 입력 → `분석` → 결과 패널 → `이 레포로 배포` | `/` 의 새 배포 폼 + 분석 패널 (S-20) |
 | `/deploys/[d_id]` | 배포 상세: 진행 단계, 주소, 로그, 해설, 이력, 다시 배포·멈춤·다시 켜기·삭제, 환경변수 카드 (S-19). 진행 중이거나 로그가 들어오면 1.5초, `running` 이면 30초마다 다시 받고(새 문제 카드·헬스 점이 나타나도록), 다른 화면에서 돌아오면 한 번 더 받는다. 404(지워진 배포)는 한국어 안내 + `돌아가기` 로 멈춘다 | `/deploys/:d_id` |
-| `/incidents/[i_id]` | 인시던트 상세 (D2): 상태 배지, 원인·고칠 곳(복사)·해야 할 일, `마법사가 한 일` 타임라인(감지, 재시작·되돌리기 시도와 결과, 해결·확인 필요), 최근 24시간 헬스체크 막대. 진행 중(`open`·`recovering`)이면 5초마다 갱신하고 `resolved`·`needs_action` 이 되면 멈춘다. 불러오기가 실패하면 404 일 때 멈추고, 그 밖의 실패는 5→10→20→30초로 늘려 가며 다시 시도한다. `needs_action` 이면 `다시 배포`·`멈춤`(확인 창)·`그대로 두기`. 앱이 스스로 하는 조치는 없고 모두 사용자가 누른 버튼이다 | 웹 대응은 계획 E 에서 만들었다 (`docs/ui-spec.md` "4. 운영 화면") |
+| `/incidents/[i_id]` | 인시던트 상세 (D2): 상태 배지, 원인·고칠 곳(복사)·해야 할 일, `마법사가 한 일` 타임라인(감지, 재시작·되돌리기 시도와 결과, 해결·확인 필요), 최근 24시간 헬스체크 막대. 진행 중(`open`·`recovering`)이면 5초마다 갱신하고 `resolved`·`needs_action` 이 되면 멈춘다. 불러오기가 실패하면 404 일 때 멈추고, 그 밖의 실패는 5→10→20→30초로 늘려 가며 다시 시도한다. `needs_action` 이면 `다시 배포`·`멈춤`(확인 창)·`그대로 두기`. 앱이 스스로 하는 조치는 없고 모두 사용자가 누른 버튼이다. 한 화면에 맞춤: 위 요약 고정, 가운데 상자(원인·타임라인)만 넘칠 때 스크롤, 아래 헬스 막대·버튼 고정. 아래로 당겨 새로고침은 그대로 (아래 "한 화면 규칙") | 웹 대응은 계획 E 에서 만들었다 (`docs/ui-spec.md` "4. 운영 화면") |
 | `/notifications` | 알림 목록 (D2): 안 읽은 것은 굵게, 누르면 읽음 처리(`POST /notifications/{n_id}/read`)하고 인시던트·배포 화면으로 이동, `모두 읽음`, `더 보기`(`after` 로 이어 받기), 아래로 당겨 새로고침 | 웹 `/notifications` |
-| `/notification-settings` | 알림 설정 (D2): 메일·푸시 스위치, 알림 종류 6개 스위치(바꾸면 전체 종류 배열을 `PATCH /notifications/settings` 로 보냄). 푸시 줄에서만 OS 권한을 묻는다 (아래 "푸시 알림") | 웹 `/notification-settings` |
-| `/deploy-settings/[d_id]` | 배포 설정 (D2): `새 커밋이 오면 자동 재배포`·`문제가 생기면 자동 복구` 스위치. 바꾼 항목만 `PATCH /deploys/{d_id}/settings` 로 보낸다 (실패하면 그 스위치만 되돌림). 배포 상세의 `설정` 버튼으로 들어간다 | 웹 `/deploys/:d_id/settings` |
+| `/notification-settings` | 알림 설정 (D2): 메일·푸시 스위치, 알림 종류 6개 스위치(바꾸면 전체 종류 배열을 `PATCH /notifications/settings` 로 보냄). 푸시 줄에서만 OS 권한을 묻는다 (아래 "푸시 알림"). 한 화면에 맞춤: 종류는 2열 타일이고 종류별 설명은 `설명 보기` 를 눌러야 펼친다 (스크린리더에는 항상 읽힘), 저장·오류 안내는 맨 아래 자리 (아래 "한 화면 규칙"). 360×740 에서는 설명을 펼치거나 오류 안내가 2줄이면 안 맞아 스크롤된다 | 웹 `/notification-settings` |
+| `/deploy-settings/[d_id]` | 배포 설정 (D2): `새 커밋이 오면 자동 재배포`·`문제가 생기면 자동 복구` 스위치. 바꾼 항목만 `PATCH /deploys/{d_id}/settings` 로 보낸다 (실패하면 그 스위치만 되돌림). 배포 상세의 `설정` 버튼으로 들어간다. 한 화면에 맞춤: 안내는 맨 아래 자리 (아래 "한 화면 규칙") | 웹 `/deploys/:d_id/settings` |
 | `/accounts` | 계정 연결 (C2): 블록 카드 목록(추가·삭제·`선택`), 블록마다 AWS 상자(7단계 안내, 역할 ARN, 연결 확인, 스택 업데이트 안내, 템플릿 파일 삭제, 연결 해제, 기존 계정 고르기)와 GitHub 상자(설치 열기, 돌아오면 확인, 연결 해제, 기존 계정 고르기). 아래로 당겨 새로고침 | `/accounts` (M6, B-01~B-07) |
 
 목록 머리줄에는 알림 종(`🔔`, 안 읽은 수 배지 `99+` 까지)과 `＋ 새 배포` 가 있고, 그 밑 줄에 `계정 연결`·`알림 설정` 칩이 있다. 끝나지 않은 인시던트가 있는 배포는 목록 위에 `{레포}에 문제가 있습니다 · 자동 복구 중` (자동 복구가 꺼져 있거나 인시던트가 `needs_action` 이면 `확인이 필요합니다`) 배너가 한 줄씩 나오고 누르면 인시던트 화면으로 간다. `running` 카드에는 헬스 점이 붙는다. 배포 상세에는 인시던트 카드가 있다. 목록은 화면에 다시 올 때마다 새로 읽는다. `/new` 는 `계정 연결` 에서 `선택`한 블록(없으면 쓸 수 있는 블록이 하나뿐일 때 그것)을 미리 고르고, 쓸 수 있는 연결이 없으면 `계정 연결 열기` 안내를 보여 준다. `계정 연결` 에 다녀와 다시 보이면 연결 목록을 다시 읽는다 (직접 고른 선택은 덮지 않고, 고른 블록이 사라지거나 쓸 수 없게 되면 선택과 분석 결과를 비운다).
 
 없는 것: 인시던트 목록 화면(상세만 있다), 로그인, 스토어 빌드(EAS), 운영 에이전트, 오프라인 저장, 생체 인식 잠금, GitHub·AWS 에서 앱으로 돌아오는 딥링크, 웹의 "PC에서 이어서 하기" 같은 링크. 앱 이름과 번들 ID(`app.json`)는 임시값이다.
+
+## 한 화면 규칙 (계획 F, 2026-11-15)
+
+내용이 정해진 화면 세 개(`/deploy-settings/[d_id]`, `/notification-settings`, `/incidents/[i_id]`)는 스크롤·슬라이드 없이 한 화면에 다 보이게 했다. 서버·API·문구·동작은 그대로이고 배치와 접기만 바꿨다.
+
+- **맞추는 화면 / 스크롤하는 화면**: 위 세 화면만 맞춘다. 목록(`/`), 알림 목록, 배포 상세(로그·환경변수), 새 배포(분석 결과), 계정 연결(7단계 안내)은 내용 길이가 데이터에 따라 정해지므로 그대로 스크롤한다.
+- **`FitScreen`** (`src/components/FitScreen.js`): 화면 높이를 채우는 `ScrollView`. 내용이 화면보다 작으면 스크롤되지 않고, 큰 글꼴·작은 화면에서 넘칠 때만 스크롤된다 (안전망 - 어떤 경우에도 글이 잘리지 않는다). 인시던트 상세는 여기에 끌어당겨 새로고침(`refreshControl`)을 그대로 단다.
+- **`FooterSlot`** (`src/components/FooterSlot.js`): 설정 두 화면의 맨 아래 안내 자리. 평소엔 `변경은 누르는 즉시 저장됩니다 ...` 글이고 저장 성공·오류 안내가 있으면 그 자리를 안내가 대신한다. 안내가 위쪽에 쌓이지 않아 내용이 밀리지 않는다. 안내가 뜨면 `scrollToEnd` 로 내린다 (넘칠 때만 의미가 있다).
+- **설정 화면 배치**: 알림 설정은 메일·푸시 줄을 `SettingSwitch compact`(안쪽 여백·설명 글을 줄임, 44pt 이상)로, 알림 종류 6개를 `ops/NotificationKinds` 의 2열 `SettingTile`(제목 + 스위치만, 줄 전체가 스위치)로 놓는다. 배포 설정은 기존 `SettingSwitch` 줄 그대로이고 안내만 맨 아래로 옮겼다.
+- **접는 것은 알림 종류 설명뿐**: 종류별 설명(`KIND_HINT`)은 처음엔 접혀 있고 `설명 보기` 를 누르면 펼쳐진다 (`설명 닫기` 로 다시 접음). 같은 설명이 스크린리더용 `accessibilityHint` 로는 늘 읽힌다. 다른 문구는 접지 않는다.
+- **인시던트 상세 배치**: 위 고정(요약·상태 배지·메타) / 가운데 상자(원인·고칠 곳·해야 할 일 + `마법사가 한 일` 타임라인 - 넘칠 때만 상자 안에서 스크롤) / 아래 고정(헬스 막대·오류·안내·버튼). 안내가 생기면 가운데 상자가 줄어들 뿐 화면은 넘치지 않는다. 가운데 상자에서는 원인 등을 카드로 나누지 않고 얇은 줄로 나눈다 (`IncidentExplain flat`).
+- **측정으로 찾은 문제**: 처음 배치(`flex: 1`)는 jest 로는 통과했지만 웹 번들에서 어디서도 맞지 않았다. `flex: 1` 의 기준 높이(`flex-basis: 0%`)가 높이가 정해지지 않은 스크롤 틀 안에서 내용 높이로 풀려 가운데 상자가 내용만큼 커졌다 (복구 중 1207/780, 가장 긴 경우 2132/780). 가운데 상자와 그 안의 `ScrollView` 를 `flexGrow: 1, flexShrink: 1, flexBasis: 0` 으로 바꿔 고쳤다. 레이아웃은 jest 로 증명할 수 없다.
+
+**측정 (웹 번들만)**: `npx expo export --platform web` 번들을 Playwright 로 열고 `/api` 를 모의해, `FitScreen` 의 `scrollHeight / clientHeight`(맞으면 `scrollHeight ≤ clientHeight`)를 쟀다. 390×844(안쪽 780)와 360×740(안쪽 676), 라이트·다크 숫자는 같았다. 긴 글(90자 ARN, 5-6줄 원인, 2줄 서버 오류)을 모의로 넣었다.
+
+| 화면 상태 | 390×844 | 360×740 |
+|---|---|---|
+| 배포 설정: 기본 / 스위치 오류(2줄) | 맞음 (780/780) | 맞음 (676/676) |
+| 알림 설정: 기본 / 저장 안내 | 맞음 (780/780) | 맞음 (676/676) |
+| 알림 설정: 설명 펼침 | 맞음 (780/780) | **안 맞음 (774/676)** |
+| 알림 설정: 오류 안내(2줄) | 맞음 (780/780) | **안 맞음 (690/676)** |
+| 인시던트: 복구 중 / `needs_action` / 아주 긴 경우 2가지 | 모두 맞음 (780/780), 가운데 상자만 스크롤 | 모두 맞음 (676/676) |
+
+안 맞은 두 칸은 안전망 스크롤이 받아 전부 보인다 (계획이 허용한 범위). 아주 긴 인시던트에서도 맨 아래 버튼의 아래쪽 끝이 화면 안이었다 (390 에서 828/844·778/844, 360 에서 724/740·674/740). 가로 넘침 없음(`scrollWidth ≤ innerWidth`), 44pt 미만 터치 대상 없음(헤더 뒤로 가기 제외), 콘솔 경고·오류는 의도한 모의 400 뿐. `npx jest` 33 파일 1023 테스트 통과. 자세한 숫자는 `docs/worklog/2026-11-15.md` "Plan F measurement".
+
+**확인 못 한 것**: 실제 iOS·안드로이드 기기와 에뮬레이터의 네이티브 레이아웃(`flexBasis: 0` 은 Yoga 의 표준 동작이지만 웹 번들만 쟀다), 글꼴 배율 1 초과, 가로 방향, 태블릿. 웹에서는 푸시 미지원 안내 상자가 알림 설정에 늘 있어서 위 숫자는 상자가 있는 쪽(더 엄격한 쪽)이다. 상자가 없는 네이티브 상태는 재지 않았다. 맞았을 때 `scrollHeight == clientHeight` 라서 남는 높이가 얼마인지는 이 숫자로 알 수 없다 (남는 칸은 `flexGrow` 가 채운다).
 
 ## 푸시 알림 (D2)
 
@@ -151,7 +180,7 @@ src/components/SettingSwitch.js  설정 스위치 한 줄 (배포 설정·알림
 - 알림 항목의 아이콘 뒤 `U+FE0E`(텍스트형 표시)는 기기에서 안 봤다 (소스에는 이스케이프로 적었다).
 - 목록 머리줄 테스트에 같은 헤더가 두 번 그려지는 구간이 있다 (테스트 목 한정).
 - 저장된 `p_d_id`(푸시 기기 번호)는 서버 DB 를 비우고 번호가 다시 쓰이면 다른 기기를 가리킬 수 있고, 이후 실행에서 다시 등록하지 않는다 (EAS·로그인 계획에서 다룸).
-- `app/notification-settings.js` 가 270줄이다.
+- `app/notification-settings.js` 가 255줄이다 (한 화면 개편 뒤 `wc -l`).
 - `services_incident_open_ids` 를 부르는 운영 코드가 없다 (서버).
 - 인시던트 화면에서 수동 새로고침이 실패하면 `forceHistoryRef` 가 켜진 채 남아 다음 갱신 때 헬스 이력을 한 번 더 받는다.
 - 알림 목록에서 `모두 읽음` 중에 `더 보기` 로 가져온 항목은 읽지 않은 모양으로 남는다.

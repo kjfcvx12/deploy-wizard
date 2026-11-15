@@ -76,6 +76,7 @@ class Deploy_Service:
 - 상태값 문자열은 `features/deploys/ui/constants.js`에서만 정의한다.
 - 폴링은 `useEffect` 안에서 `alive` 플래그와 `clearTimeout`으로 정리한다.
 - 글이 잘리거나 숨겨지지 않게 한다 — line-clamp, text-overflow, font-size:0, overflow:hidden 으로 내용을 가리지 않는다 (코드·로그 상자는 스크롤 가능).
+- 앱(`app/`): 내용이 정해진 화면은 `FitScreen` 위에서 한 화면에 맞추고, 목록·로그만 자기 상자에서 스크롤한다. 누르면 펼치는 설명은 `accessibilityHint` 에도 있으면 허용한다.
 
 ## Git
 
