@@ -5,13 +5,14 @@ import { Stack, useFocusEffect, useLocalSearchParams, useRouter } from 'expo-rou
 import { deployApi, healthApi, incidentApi } from '../../src/api'
 import FitScreen from '../../src/components/FitScreen'
 import HealthBar from '../../src/components/ops/HealthBar'
-import { IncidentBadge, IncidentExplain } from '../../src/components/ops/IncidentCard'
+import { IncidentExplain } from '../../src/components/ops/IncidentCard'
+import IncidentFacts from '../../src/components/ops/IncidentFacts'
+import IncidentTabs from '../../src/components/ops/IncidentTabs'
 import IncidentTimeline from '../../src/components/ops/IncidentTimeline'
 import { Button, Card, Notice } from '../../src/components/ui'
 import { confirmStopDeploy } from '../../src/deployConfirms'
 import { STOP_POLLING, usePolling } from '../../src/hooks/usePolling'
-import { INCIDENT_ACTIVE_STATUSES, INCIDENT_KIND_LABEL } from '../../src/ops/constants'
-import { durationText, formatTime } from '../../src/ops/format'
+import { INCIDENT_ACTIVE_STATUSES } from '../../src/ops/constants'
 import { spacing, useColors, wrapAnywhere } from '../../src/theme'
 
 // 갱신 간격(ms) - 복구 중에는 5초마다. 연결 실패가 이어지면 5, 10, 20초로 늘려 최대 30초까지, 성공하면 처음으로 (404 는 다시 부르지 않는다)
@@ -23,6 +24,8 @@ const HEALTH_REFRESH_MS = 60000
 // 가운데 상자의 최소 높이 - 위·아래 고정 부분이 커도 이 아래로는 줄이지 않고 바깥 스크롤이 받는다
 const MIDDLE_MIN = 160
 const NOT_FOUND_TEXT = '문제를 찾을 수 없습니다. 이미 삭제된 배포이거나 지워진 기록일 수 있습니다.'
+// 가운데 상자의 탭 - 문제(사실 줄·마법사가 한 일) / 원인(요약·원인·고칠 곳·해야 할 일)
+const TABS = [{ key: 'problem', label: '문제' }, { key: 'cause', label: '원인' }]
 
 // 인시던트 상세 화면 (S-13) - 주소의 i_id 가 바뀌면 화면을 새로 만들어 다른 인시던트의 상태가 남지 않게 한다
 export default function IncidentDetailScreen() {
@@ -30,7 +33,7 @@ export default function IncidentDetailScreen() {
   return <IncidentDetail key={i_id} i_id={i_id} />
 }
 
-// 인시던트 한 건: 원인·고칠 곳·마법사가 한 일·헬스 이력. 확인이 필요할 때만 사용자가 누르는 버튼이 있다
+// 인시던트 한 건: 문제 탭(사실 줄·마법사가 한 일)과 원인 탭(원인·고칠 곳·해야 할 일), 헬스 이력. 확인이 필요할 때만 사용자가 누르는 버튼이 있다
 function IncidentDetail({ i_id }) {
   const colors = useColors()
   const router = useRouter()
@@ -47,6 +50,8 @@ function IncidentDetail({ i_id }) {
   const [notice, setNotice] = useState('')
   const [acted, setActed] = useState(false)
   const [pulling, setPulling] = useState(false)
+  // 지금 보는 탭 - 화면 안에서만 기억한다 (다른 인시던트로 가면 화면을 새로 만들어 처음 탭으로)
+  const [tab, setTab] = useState('problem')
   // 가운데 상자의 최대 높이를 정하는 측정값 - 화면 내용 영역·위 고정 묶음·아래 고정 묶음의 높이 (아직 못 쟀으면 null)
   const [available, setAvailable] = useState(null)
   const [topH, setTopH] = useState(null)
@@ -164,32 +169,32 @@ function IncidentDetail({ i_id }) {
   } else {
     const label = (name) => `배포 #${incident.d_id} ${name}`
     const needsAction = incident.status === 'needs_action' && !acted
-    const finished = incident.resolved_at ? durationText(incident.detected_at, incident.resolved_at) : ''
     body = (
       <View style={[styles.stack, styles.fill]}>
         <View testID="incident-top" onLayout={onTopLayout}>
-          <Card style={styles.stack}>
-            <View style={styles.headTop}>
-              <Text accessibilityRole="header" style={[styles.summary, wrapAnywhere, { color: colors.text }]}>
-                {incident.summary || incident.explain?.summary || '문제가 감지되었습니다'}
-              </Text>
-              <IncidentBadge status={incident.status} />
-            </View>
-            <Text style={[styles.meta, { color: colors.muted }]}>
-              {`배포 #${incident.d_id} · ${INCIDENT_KIND_LABEL[incident.kind] || incident.kind} · 감지 ${formatTime(incident.detected_at)}`}
-              {incident.status === 'resolved' && incident.resolved_at ? ` · 해결 ${formatTime(incident.resolved_at)}${finished ? ` (${finished})` : ''}` : ''}
-            </Text>
-            {INCIDENT_ACTIVE_STATUSES.includes(incident.status) && (
-              <Text style={[styles.meta, { color: colors.muted }]}>마법사가 복구를 시도하고 있습니다. 이 화면은 5초마다 새로 고쳐집니다.</Text>
-            )}
-          </Card>
+          <IncidentTabs tabs={TABS} value={tab} onChange={setTab} />
         </View>
 
         <Card testID="incident-middle" style={[styles.middle, middleMax != null && { maxHeight: middleMax }]}>
-          <ScrollView testID="incident-body" nestedScrollEnabled bounces={false} alwaysBounceVertical={false} style={styles.grow} contentContainerStyle={styles.stack}>
-            <IncidentExplain flat explain={incident.explain} onError={setActionError} />
-            <View style={[styles.divider, { backgroundColor: colors.border }]} />
-            <IncidentTimeline incident={incident} />
+          {/* 탭마다 상자를 새로 만들어 스크롤이 맨 위로 돌아가게 한다 */}
+          <ScrollView key={tab} testID="incident-body" nestedScrollEnabled bounces={false} alwaysBounceVertical={false} style={styles.grow} contentContainerStyle={styles.stack}>
+            {tab === 'problem' ? (
+              <>
+                <IncidentFacts incident={incident} />
+                {INCIDENT_ACTIVE_STATUSES.includes(incident.status) && (
+                  <Text style={[styles.meta, { color: colors.muted }]}>마법사가 복구를 시도하고 있습니다. 이 화면은 5초마다 새로 고쳐집니다.</Text>
+                )}
+                <View style={[styles.divider, { backgroundColor: colors.border }]} />
+                <IncidentTimeline incident={incident} />
+              </>
+            ) : (
+              <>
+                <Text accessibilityRole="header" style={[styles.summary, wrapAnywhere, { color: colors.text }]}>
+                  {incident.summary || incident.explain?.summary || '문제가 감지되었습니다'}
+                </Text>
+                <IncidentExplain flat explain={incident.explain} onError={setActionError} />
+              </>
+            )}
           </ScrollView>
         </Card>
 
@@ -244,7 +249,6 @@ const styles = StyleSheet.create({
   middle: { flexGrow: 1, flexShrink: 1, flexBasis: 0, minHeight: MIDDLE_MIN },
   divider: { height: 1 },
   buttonRow: { flexDirection: 'row', gap: spacing.sm },
-  headTop: { flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between', gap: spacing.md },
-  summary: { flex: 1, minWidth: 0, fontSize: 17, fontWeight: '700', lineHeight: 24 },
+  summary: { fontSize: 17, fontWeight: '700', lineHeight: 24 },
   meta: { fontSize: 13, lineHeight: 19 },
 })
