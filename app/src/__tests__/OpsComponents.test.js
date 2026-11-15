@@ -3,13 +3,14 @@ import { act, render, screen, fireEvent } from '@testing-library/react-native'
 import { incidentApi } from '../api'
 import HealthBar, { healthBuckets } from '../components/ops/HealthBar'
 import HealthDot from '../components/ops/HealthDot'
-import IncidentCard from '../components/ops/IncidentCard'
+import IncidentCard, { IncidentExplain } from '../components/ops/IncidentCard'
 import IncidentTimeline from '../components/ops/IncidentTimeline'
 import ProblemBanner, { problemLabel } from '../components/ops/ProblemBanner'
 import { formatTime } from '../ops/format'
 import { darkColors, lightColors, toneColors } from '../theme'
 
 jest.mock('../api', () => ({ incidentApi: { getOne: jest.fn() } }))
+jest.mock('expo-clipboard', () => ({ setStringAsync: jest.fn().mockResolvedValue(true) }))
 
 beforeEach(() => {
   incidentApi.getOne.mockReset()
@@ -282,6 +283,38 @@ describe('IncidentCard', () => {
     await unmount()
     await act(async () => { finish({ i_id: 12, status: 'open', summary: 'x' }) })
     // 경고가 없어야 한다 (afterEach 가 console.error/warn 을 확인)
+  })
+})
+
+describe('IncidentExplain', () => {
+  const explain = { cause: '원인 글', fix_where: 'arn:aws:ecs:ap-northeast-2:123456789012:service/x', actions: ['첫째 할 일', '둘째 할 일'] }
+
+  test('flat 은 Card 없이도 원인·고칠 곳·해야 할 일 글과 복사 버튼을 모두 그린다', async () => {
+    const onError = jest.fn()
+    await render(<IncidentExplain flat explain={explain} onError={onError} />)
+    expect(screen.getAllByRole('header').map((h) => h.props.children)).toEqual(['원인', '고칠 곳', '해야 할 일'])
+    expect(screen.getByText('원인 글')).toBeTruthy()
+    expect(screen.getByText(explain.fix_where).props.selectable).toBe(true)
+    expect(screen.getByText('첫째 할 일')).toBeTruthy()
+    expect(screen.getByText('2.')).toBeTruthy()
+    await fireEvent.press(screen.getByRole('button', { name: '고칠 곳 복사' }))
+    expect(onError).not.toHaveBeenCalled()
+    // Card 의 테두리(borderWidth)를 가진 View 가 없다 - 구역 사이 줄만 있다
+    expect(screen.getByTestId('explain-flat')).toBeTruthy()
+    expect(screen.getAllByTestId('explain-divider')).toHaveLength(2)
+  })
+
+  test('flat 이어도 고칠 곳과 해야 할 일이 없으면 그 구역과 줄은 없다', async () => {
+    await render(<IncidentExplain flat explain={{ cause: '원인만' }} onError={() => {}} />)
+    expect(screen.getAllByRole('header').map((h) => h.props.children)).toEqual(['원인'])
+    expect(screen.queryAllByTestId('explain-divider')).toHaveLength(0)
+  })
+
+  test('flat 이 없으면 전과 같다 - 구역마다 카드 한 장, 줄 없음', async () => {
+    await render(<IncidentExplain explain={explain} onError={() => {}} />)
+    expect(screen.getAllByRole('header').map((h) => h.props.children)).toEqual(['원인', '고칠 곳', '해야 할 일'])
+    expect(screen.queryByTestId('explain-flat')).toBeNull()
+    expect(screen.queryAllByTestId('explain-divider')).toHaveLength(0)
   })
 })
 

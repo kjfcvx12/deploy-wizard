@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { ActivityIndicator, RefreshControl, ScrollView, StyleSheet, Text, View } from 'react-native'
-import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import { Stack, useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router'
 import { deployApi, healthApi, incidentApi } from '../../src/api'
+import FitScreen from '../../src/components/FitScreen'
 import HealthBar from '../../src/components/ops/HealthBar'
 import { IncidentBadge, IncidentExplain } from '../../src/components/ops/IncidentCard'
 import IncidentTimeline from '../../src/components/ops/IncidentTimeline'
@@ -31,7 +31,6 @@ export default function IncidentDetailScreen() {
 function IncidentDetail({ i_id }) {
   const colors = useColors()
   const router = useRouter()
-  const insets = useSafeAreaInsets()
   const scrollRef = useRef(null)
   const alive = useRef(false)
   const busyRef = useRef(false)
@@ -87,11 +86,6 @@ function IncidentDetail({ i_id }) {
     refresh()
   }, [refresh]))
 
-  // 동작 실패나 안내가 생기면 맨 위로 올려 보여 준다
-  useEffect(() => {
-    if (actionError || notice) scrollRef.current?.scrollTo?.({ y: 0, animated: true })
-  }, [actionError, notice])
-
   // 동작 하나를 실행한다 - 실행하는 동안 버튼을 잠그고, 성공하면 안내를 띄우고 다시 받고, 실패하면 빨간 알림을 띄운다
   const perform = async (call, doneMessage) => {
     if (busyRef.current) return
@@ -136,16 +130,16 @@ function IncidentDetail({ i_id }) {
   if (error?.status === 404) {
     // 인시던트나 배포가 지워졌다 - 처음 열 때든 보던 중이든 같은 안내
     body = (
-      <View style={styles.stack}>
+      <View style={[styles.stack, styles.center]}>
         <Notice>{NOT_FOUND_TEXT}</Notice>
         <Button label="돌아가기" onPress={leave} style={styles.self} />
       </View>
     )
   } else if (!incident) {
     body = loading
-      ? <ActivityIndicator accessibilityLabel="불러오는 중" size="large" color={colors.accent} style={styles.spinner} />
+      ? <ActivityIndicator accessibilityLabel="불러오는 중" size="large" color={colors.accent} style={styles.center} />
       : (
-        <View style={styles.stack}>
+        <View style={[styles.stack, styles.center]}>
           <Notice>{error?.message}</Notice>
           <View style={styles.row}>
             <Button label="다시 시도" onPress={refresh} />
@@ -158,11 +152,7 @@ function IncidentDetail({ i_id }) {
     const needsAction = incident.status === 'needs_action' && !acted
     const finished = incident.resolved_at ? durationText(incident.detected_at, incident.resolved_at) : ''
     body = (
-      <View style={styles.stack}>
-        {!!error && <Notice>{error.message}</Notice>}
-        {!!actionError && <Notice>{actionError}</Notice>}
-        {!!notice && <Notice tone="info">{notice}</Notice>}
-
+      <View style={[styles.stack, styles.fill]}>
         <Card style={styles.stack}>
           <View style={styles.headTop}>
             <Text accessibilityRole="header" style={[styles.summary, wrapAnywhere, { color: colors.text }]}>
@@ -179,15 +169,27 @@ function IncidentDetail({ i_id }) {
           )}
         </Card>
 
-        <IncidentExplain explain={incident.explain} onError={setActionError} />
-        <Card><IncidentTimeline incident={incident} /></Card>
+        <Card style={styles.middle}>
+          <ScrollView testID="incident-body" nestedScrollEnabled style={styles.flex} contentContainerStyle={styles.stack}>
+            <IncidentExplain flat explain={incident.explain} onError={setActionError} />
+            <View style={[styles.divider, { backgroundColor: colors.border }]} />
+            <IncidentTimeline incident={incident} />
+          </ScrollView>
+        </Card>
+
         {checks !== undefined && <Card><HealthBar checks={checks} hours={HEALTH_HOURS} /></Card>}
+
+        {!!error && <Notice>{error.message}</Notice>}
+        {!!actionError && <Notice>{actionError}</Notice>}
+        {!!notice && <Notice tone="info">{notice}</Notice>}
 
         {needsAction ? (
           <View style={styles.stack}>
-            <Button variant="primary" label="다시 배포" accessibilityLabel={label('다시 배포')} onPress={redeploy} disabled={busy} />
-            <Button label="멈춤" accessibilityLabel={label('멈춤')} onPress={askStop} disabled={busy} />
-            <Button label="그대로 두기" accessibilityLabel={label('그대로 두기')} onPress={leave} disabled={busy} />
+            <View style={styles.buttonRow}>
+              <Button variant="primary" label="다시 배포" accessibilityLabel={label('다시 배포')} onPress={redeploy} disabled={busy} style={styles.flex} />
+              <Button label="멈춤" accessibilityLabel={label('멈춤')} onPress={askStop} disabled={busy} style={styles.flex} />
+              <Button label="그대로 두기" accessibilityLabel={label('그대로 두기')} onPress={leave} disabled={busy} style={styles.flex} />
+            </View>
             <Text style={[styles.meta, { color: colors.muted }]}>아무것도 누르지 않으면 그대로 둡니다. 마법사가 자동으로 지우거나 바꾸지 않습니다.</Text>
           </View>
         ) : (
@@ -200,25 +202,27 @@ function IncidentDetail({ i_id }) {
   return (
     <>
       <Stack.Screen options={{ title: `문제 #${i_id}` }} />
-      <ScrollView
-        ref={scrollRef}
+      <FitScreen
+        scrollRef={scrollRef}
         testID="incident-scroll"
         refreshControl={<RefreshControl refreshing={pulling} onRefresh={onPull} tintColor={colors.accent} colors={[colors.accent]} />}
-        contentContainerStyle={[styles.content, { paddingBottom: spacing.xl * 2 + insets.bottom }]}
-        style={{ backgroundColor: colors.bg }}
       >
         {body}
-      </ScrollView>
+      </FitScreen>
     </>
   )
 }
 
 const styles = StyleSheet.create({
-  content: { padding: spacing.lg },
   stack: { gap: spacing.md },
   row: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.md },
   self: { alignSelf: 'flex-start' },
-  spinner: { marginTop: spacing.xl * 2 },
+  fill: { flex: 1 },
+  flex: { flex: 1 },
+  center: { flex: 1, justifyContent: 'center' },
+  middle: { flex: 1, minHeight: 160 },
+  divider: { height: 1 },
+  buttonRow: { flexDirection: 'row', gap: spacing.sm },
   headTop: { flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between', gap: spacing.md },
   summary: { flex: 1, minWidth: 0, fontSize: 17, fontWeight: '700', lineHeight: 24 },
   meta: { fontSize: 13, lineHeight: 19 },
