@@ -1,4 +1,5 @@
-import { StyleSheet, Text, View } from 'react-native'
+import { StyleSheet, View } from 'react-native'
+import { Text } from './Text'
 import { STEPS } from '../constants'
 import { formatTime } from '../ops/format'
 import { spacing, useColors } from '../theme'

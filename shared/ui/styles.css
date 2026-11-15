@@ -49,6 +49,9 @@ body {
   background: var(--bg);
   color: var(--text);
   font: 15px/1.6 'Pretendard', 'Noto Sans KR', system-ui, sans-serif;
+  /* 한글은 어절(띄어쓰기) 단위로 줄바꿈, 어절이 한 줄보다 길 때만 끊는다 */
+  word-break: keep-all;
+  overflow-wrap: break-word;
 }
 
 a { color: var(--accent); }

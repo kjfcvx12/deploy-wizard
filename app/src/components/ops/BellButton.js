@@ -1,4 +1,5 @@
-import { Pressable, StyleSheet, Text, View } from 'react-native'
+import { Pressable, StyleSheet, View } from 'react-native'
+import { Text } from '../Text'
 import { radius, useColors } from '../../theme'
 
 // 배지에 보일 글 - 99 를 넘으면 99+ (0 이하는 배지를 그리지 않는다)

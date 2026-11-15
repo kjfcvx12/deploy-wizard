@@ -3,7 +3,7 @@ import * as Clipboard from 'expo-clipboard'
 import { render, screen, fireEvent, act, within } from '@testing-library/react-native'
 import { deployApi, healthApi, incidentApi } from '../api'
 import IncidentDetail from '../../app/incidents/[i_id]'
-import { formatTime } from '../ops/format'
+import { formatClock, formatDate, formatTime } from '../ops/format'
 import { monoFont, spacing } from '../theme'
 
 const mockPush = jest.fn()
@@ -75,13 +75,20 @@ afterEach(() => {
   expect(noisy).toEqual([])
 })
 
+const RECOVERING_TEXT = '마법사가 복구를 시도하고 있습니다. 이 화면은 5초마다 새로 고쳐집니다.'
+
+// 처음 탭은 "문제" 라서 요약 글 대신 사실 줄(incident-fact)이 그려지기를 기다린다
 const open = async (incident = base) => {
   current = incident
   const view = await render(<IncidentDetail />)
-  await screen.findAllByText(incident.summary || '문제가 감지되었습니다', { exact: false })
+  await screen.findAllByTestId('incident-fact')
   return view
 }
 const tick = async (ms) => { await act(async () => { jest.advanceTimersByTime(ms) }) }
+// 탭을 누른다 ('문제' 또는 '원인')
+const pickTab = async (name) => { await fireEvent.press(screen.getByRole('tab', { name })) }
+const body = () => within(screen.getByTestId('incident-body'))
+const labeledButtons = () => screen.getAllByRole('button').filter((b) => /^배포 #3 /.test(b.props.accessibilityLabel)).map((b) => b.props.accessibilityLabel)
 const alertButton = (name) => Alert.alert.mock.calls[0][2].find((b) => b.text === name)
 
 describe('인시던트 상세 - 내용', () => {
@@ -89,40 +96,52 @@ describe('인시던트 상세 - 내용', () => {
     healthApi.getHistory.mockResolvedValue([{ h_c_id: 1, ok: true, checked_at: new Date(Date.now() - 60000).toISOString().replace('Z', '') }])
     await open()
     expect(screen.getByText('복구 중')).toBeTruthy()
-    expect(screen.getAllByText('앱이 오류로 응답하고 있습니다.').length).toBeGreaterThan(0)
-    expect(screen.getByText('원인')).toBeTruthy()
+    expect(screen.getByText('마법사가 한 일')).toBeTruthy()
+    expect(screen.getAllByTestId('timeline-title').map((t) => t.props.children)).toEqual(['문제를 감지했습니다', '재시작 시도'])
+    expect(await screen.findByLabelText('최근 24시간 정상 100%')).toBeTruthy()
+    await pickTab('원인')
+    expect(screen.getByRole('header', { name: '앱이 오류로 응답하고 있습니다.' })).toBeTruthy()
+    expect(screen.getByRole('header', { name: '원인' })).toBeTruthy()
     expect(screen.getByText('앱이 떠 있지만 헬스체크에 5xx 로 답하고 있습니다.')).toBeTruthy()
     expect(screen.getByText('고칠 곳')).toBeTruthy()
     expect(screen.getByText(FIX)).toBeTruthy()
     expect(screen.getByText('로그에서 마지막 오류 줄을 확인합니다.')).toBeTruthy()
     expect(screen.getByText('2.')).toBeTruthy()
-    expect(screen.getByText('마법사가 한 일')).toBeTruthy()
-    expect(screen.getAllByTestId('timeline-title').map((t) => t.props.children)).toEqual(['문제를 감지했습니다', '재시작 시도'])
-    expect(await screen.findByLabelText('최근 24시간 정상 100%')).toBeTruthy()
+    expect(screen.getByLabelText('최근 24시간 정상 100%')).toBeTruthy()
     expect(healthApi.getHistory).toHaveBeenCalledWith(3, 24)
     expect(incidentApi.getOne).toHaveBeenCalledWith('7')
     expect(screen.getByRole('button', { name: '배포 #3 보기' })).toBeTruthy()
     expect(screen.queryByText('다시 배포')).toBeNull()
   })
 
-  test('감지 시각과 해결 시각은 formatTime 으로 보여 준다 (서버 시각은 Z 없는 UTC)', async () => {
+  test('감지 시각은 날짜·시간 줄로, 해결 시각은 해결 줄로 보여 주고 타임라인은 formatTime (서버 시각은 Z 없는 UTC)', async () => {
     await open(resolved)
+    const rows = screen.getAllByTestId('incident-fact')
+    expect(within(rows[2]).getByText(formatDate('2026-11-09T03:12:30'))).toBeTruthy()
+    expect(within(rows[3]).getByText(formatClock('2026-11-09T03:12:30'))).toBeTruthy()
+    expect(within(rows[5]).getByText('해결')).toBeTruthy()
+    expect(within(rows[5]).getByText(`${formatDate('2026-11-09T03:20:00')} ${formatClock('2026-11-09T03:20:00')} (7분 30초)`)).toBeTruthy()
     expect(screen.getAllByText(formatTime('2026-11-09T03:12:30'), { exact: false }).length).toBeGreaterThan(0)
     expect(screen.getAllByText(formatTime('2026-11-09T03:20:00'), { exact: false }).length).toBeGreaterThan(0)
     expect(screen.getByText('해결됨')).toBeTruthy()
     expect(screen.getByText('정상으로 돌아왔습니다')).toBeTruthy()
+    // 해결되면 복구 안내 글은 없다
+    expect(screen.queryByText(RECOVERING_TEXT)).toBeNull()
   })
 
-  test('explain 이 null 이면 기본 안내 글, 고칠 곳과 조치 구역은 없고 죽지 않는다', async () => {
+  test('explain 이 null 이어도 원인 탭이 아직 원인을 확인하지 못했습니다 문구로 그려진다 (고칠 곳과 조치 구역은 없다)', async () => {
     await open({ ...base, explain: null })
+    expect(screen.getByText('마법사가 한 일')).toBeTruthy()
+    await pickTab('원인')
+    expect(screen.getByRole('header', { name: '앱이 오류로 응답하고 있습니다.' })).toBeTruthy()
     expect(screen.getByText('아직 원인을 확인하지 못했습니다')).toBeTruthy()
     expect(screen.queryByText('고칠 곳')).toBeNull()
     expect(screen.queryByText('해야 할 일')).toBeNull()
-    expect(screen.getByText('마법사가 한 일')).toBeTruthy()
   })
 
   test('explain 이 일부만 있어도(원인만, 조치 빈 배열, 고칠 곳 null) 그린다', async () => {
     await open({ ...base, explain: { cause: '원인만 있습니다', fix_where: null, actions: [] } })
+    await pickTab('원인')
     expect(screen.getByText('원인만 있습니다')).toBeTruthy()
     expect(screen.queryByText('고칠 곳')).toBeNull()
     expect(screen.queryByText('해야 할 일')).toBeNull()
@@ -130,7 +149,8 @@ describe('인시던트 상세 - 내용', () => {
 
   test('explain 이 비어 있고 요약도 없으면 기본 요약 글', async () => {
     await open({ ...base, summary: '', explain: {} })
-    expect(screen.getByText('문제가 감지되었습니다')).toBeTruthy()
+    await pickTab('원인')
+    expect(screen.getByRole('header', { name: '문제가 감지되었습니다' })).toBeTruthy()
     expect(screen.getByText('아직 원인을 확인하지 못했습니다')).toBeTruthy()
   })
 
@@ -148,7 +168,7 @@ describe('인시던트 상세 - 내용', () => {
     expect(screen.getByText('헬스 이력을 불러오지 못했습니다')).toBeTruthy()
     expect(screen.queryByLabelText('최근 24시간 확인 기록 없음')).toBeNull()
     expect(screen.queryByText('x')).toBeNull()
-    expect(screen.getAllByText('앱이 오류로 응답하고 있습니다.').length).toBeGreaterThan(0)
+    expect(screen.getAllByTestId('incident-fact')).toHaveLength(5)
   })
 
   test('헬스 이력을 받는 동안에는 막대도 실패 글도 그리지 않는다', async () => {
@@ -169,23 +189,29 @@ describe('인시던트 상세 - 내용', () => {
 })
 
 describe('인시던트 상세 - 한 화면 배치 (위 고정 · 가운데 상자 · 아래 고정)', () => {
-  test('가운데 상자(incident-body) 안에 원인·고칠 곳·해야 할 일·타임라인이 모두 있고 헬스 막대와 버튼은 상자 밖에 있다', async () => {
+  test('가운데 상자(incident-body) 안에 문제 탭은 줄·타임라인, 원인 탭은 원인·고칠 곳·해야 할 일이 있고 탭 줄·헬스 막대·버튼은 상자 밖에 있다', async () => {
     await open()
     await act(async () => {})
-    const box = within(screen.getByTestId('incident-body'))
-    expect(screen.getByTestId('incident-body').props.nestedScrollEnabled).toBe(true)
-    // 안쪽 상자가 iOS 의 끌어당겨 새로고침을 가로채지 않게 튕김을 끈다
-    expect(screen.getByTestId('incident-body').props.bounces).toBe(false)
-    expect(screen.getByTestId('incident-body').props.alwaysBounceVertical).toBe(false)
-    ;['원인', '고칠 곳', '해야 할 일', '마법사가 한 일'].forEach((title) => expect(box.getByText(title)).toBeTruthy())
-    expect(box.getByText(FIX)).toBeTruthy()
-    expect(box.getAllByTestId('timeline-item')).toHaveLength(2)
-    expect(box.queryByLabelText(/최근 24시간/)).toBeNull()
-    expect(box.queryByRole('button', { name: '배포 #3 보기' })).toBeNull()
-    expect(screen.getByLabelText(/최근 24시간/)).toBeTruthy()
-    expect(screen.getByRole('button', { name: '배포 #3 보기' })).toBeTruthy()
-    // 요약은 상자 밖(위 고정)
-    expect(box.queryByText('복구 중')).toBeNull()
+    for (const tab of ['문제', '원인']) {
+      await pickTab(tab)
+      const scroll = screen.getByTestId('incident-body')
+      expect(scroll.props.nestedScrollEnabled).toBe(true)
+      // 안쪽 상자가 iOS 의 끌어당겨 새로고침을 가로채지 않게 튕김을 끈다
+      expect(scroll.props.bounces).toBe(false)
+      expect(scroll.props.alwaysBounceVertical).toBe(false)
+      expect(body().queryByRole('tab')).toBeNull()
+      expect(body().queryByLabelText(/최근 24시간/)).toBeNull()
+      expect(body().queryByRole('button', { name: '배포 #3 보기' })).toBeNull()
+      expect(within(screen.getByTestId('incident-top')).getAllByRole('tab')).toHaveLength(2)
+      expect(screen.getByLabelText(/최근 24시간/)).toBeTruthy()
+      expect(screen.getByRole('button', { name: '배포 #3 보기' })).toBeTruthy()
+    }
+    ;['원인', '고칠 곳', '해야 할 일'].forEach((title) => expect(body().getByRole('header', { name: title })).toBeTruthy())
+    expect(body().getByText(FIX)).toBeTruthy()
+    await pickTab('문제')
+    expect(body().getAllByTestId('incident-fact')).toHaveLength(5)
+    expect(body().getByText('마법사가 한 일')).toBeTruthy()
+    expect(body().getAllByTestId('timeline-item')).toHaveLength(2)
   })
 
   test('가운데 상자의 maxHeight 는 측정이 모두 끝나면 사용 가능 높이 - 위 묶음 - 아래 묶음 - 간격 둘, 하나라도 없으면 제한하지 않는다', async () => {
@@ -220,7 +246,7 @@ describe('인시던트 상세 - 한 화면 배치 (위 고정 · 가운데 상�
     expect(labeled.map((b) => b.props.accessibilityLabel)).toEqual(['배포 #3 보기'])
     expect(screen.queryByText(/아무것도 누르지 않으면/)).toBeNull()
     expect(screen.getByTestId('incident-body')).toBeTruthy()
-    expect(within(screen.getByTestId('incident-body')).getByText('원인')).toBeTruthy()
+    expect(body().getAllByTestId('incident-fact')).toHaveLength(5)
   })
 
   test('동작 실패 오류가 버튼 위에 alert 로 전체 문장 보인다', async () => {
@@ -236,11 +262,136 @@ describe('인시던트 상세 - 한 화면 배치 (위 고정 · 가운데 상�
     expect(screen.getByRole('button', { name: '배포 #3 다시 배포' })).toBeTruthy()
   })
 
-  test('긴 공백 없는 fix_where 가 그대로 화면 글에 들어 있다', async () => {
+  test('긴 fix_where 가 원인 탭 글에 그대로 들어 있다 (공백 없는 ARN)', async () => {
     const arn = `arn:aws:ecs:ap-northeast-2:123456789012:service/${'very-long-cluster-name'.repeat(4)}/${'svc'.repeat(10)}`
     await open({ ...base, explain: { ...base.explain, fix_where: arn } })
-    expect(within(screen.getByTestId('incident-body')).getByText(arn)).toBeTruthy()
+    expect(screen.queryByText(arn)).toBeNull()
+    await pickTab('원인')
+    expect(body().getByText(arn)).toBeTruthy()
     expect(screen.getByRole('button', { name: '배포 #3 보기' })).toBeTruthy()
+  })
+})
+
+describe('인시던트 상세 - 문제·원인 탭', () => {
+  test('처음에는 문제 탭이 선택되고 배포·문제·날짜·시간·원인 줄과 타임라인이 가운데 상자 안에 있다', async () => {
+    await open()
+    expect(screen.getByRole('tab', { name: '문제' }).props.accessibilityState.selected).toBe(true)
+    expect(screen.getByRole('tab', { name: '원인' }).props.accessibilityState.selected).toBe(false)
+    const rows = body().getAllByTestId('incident-fact')
+    expect(rows).toHaveLength(5)
+    const expected = [['배포', '#3'], ['문제', '복구 중'], ['날짜', formatDate(base.detected_at)], ['시간', formatClock(base.detected_at)], ['원인', '응답 이상']]
+    expected.forEach(([name, value], i) => {
+      expect(within(rows[i]).getByText(name)).toBeTruthy()
+      expect(within(rows[i]).getByText(value)).toBeTruthy()
+    })
+    // 복구 중에는 줄 아래에 안내 글, 그 아래에 타임라인
+    expect(body().getByText(RECOVERING_TEXT)).toBeTruthy()
+    expect(body().getByText('마법사가 한 일')).toBeTruthy()
+    expect(body().getAllByTestId('timeline-item')).toHaveLength(2)
+    // 원인 탭 글은 아직 없다
+    expect(screen.queryByText(FIX)).toBeNull()
+    expect(screen.queryByRole('header', { name: '앱이 오류로 응답하고 있습니다.' })).toBeNull()
+  })
+
+  test('모르는 종류와 읽을 수 없는 감지 시각에도 줄은 그대로 그려진다', async () => {
+    await open({ ...base, kind: 'brand_new_kind', detected_at: 'not-a-date' })
+    const rows = body().getAllByTestId('incident-fact')
+    expect(within(rows[2]).getByText('확인 불가')).toBeTruthy()
+    expect(within(rows[3]).getByText('확인 불가')).toBeTruthy()
+    expect(within(rows[4]).getByText('brand_new_kind')).toBeTruthy()
+  })
+
+  test('원인 탭을 누르면 요약·원인·고칠 곳·해야 할 일이 보이고 문제 줄은 사라진다', async () => {
+    await open()
+    await pickTab('원인')
+    expect(screen.getByRole('tab', { name: '원인' }).props.accessibilityState.selected).toBe(true)
+    expect(screen.getByRole('tab', { name: '문제' }).props.accessibilityState.selected).toBe(false)
+    expect(body().getByRole('header', { name: '앱이 오류로 응답하고 있습니다.' })).toBeTruthy()
+    expect(body().getByText('앱이 떠 있지만 헬스체크에 5xx 로 답하고 있습니다.')).toBeTruthy()
+    expect(body().getByText(FIX)).toBeTruthy()
+    expect(body().getByText('환경변수를 점검합니다.')).toBeTruthy()
+    expect(screen.queryAllByTestId('incident-fact')).toHaveLength(0)
+    expect(screen.queryByText('마법사가 한 일')).toBeNull()
+    expect(screen.queryByText(RECOVERING_TEXT)).toBeNull()
+  })
+
+  test('다시 문제 탭을 누르면 돌아온다 (상자는 탭마다 새로 만든다)', async () => {
+    await open()
+    const first = screen.getByTestId('incident-body')
+    await pickTab('원인')
+    expect(screen.getByTestId('incident-body')).not.toBe(first)
+    await pickTab('문제')
+    expect(screen.getByRole('tab', { name: '문제' }).props.accessibilityState.selected).toBe(true)
+    expect(body().getAllByTestId('incident-fact')).toHaveLength(5)
+    expect(body().getByText('마법사가 한 일')).toBeTruthy()
+    expect(screen.queryByText(FIX)).toBeNull()
+  })
+
+  test('탭을 바꿔도 폴링 요청이 늘거나 다시 시작하지 않는다 (헬스 이력·안내·아래 묶음도 그대로)', async () => {
+    await open()
+    await act(async () => {})
+    expect(incidentApi.getOne).toHaveBeenCalledTimes(1)
+    expect(healthApi.getHistory).toHaveBeenCalledTimes(1)
+    const bottom = screen.getByTestId('incident-bottom')
+    await tick(3000)
+    await pickTab('원인')
+    await pickTab('문제')
+    await pickTab('원인')
+    expect(incidentApi.getOne).toHaveBeenCalledTimes(1)
+    // 원래 박자(5초) 그대로 - 탭을 누른 때부터 다시 세지 않는다
+    await tick(2000)
+    expect(incidentApi.getOne).toHaveBeenCalledTimes(2)
+    await tick(4999)
+    expect(incidentApi.getOne).toHaveBeenCalledTimes(2)
+    await tick(1)
+    expect(incidentApi.getOne).toHaveBeenCalledTimes(3)
+    expect(healthApi.getHistory).toHaveBeenCalledTimes(1)
+    expect(screen.getByLabelText(/최근 24시간/)).toBeTruthy()
+    expect(screen.getByTestId('incident-bottom')).toBe(bottom)
+    await pickTab('문제')
+    expect(body().getByText(RECOVERING_TEXT)).toBeTruthy()
+    expect(incidentApi.getOne).toHaveBeenCalledTimes(3)
+  })
+
+  test('헬스 막대와 버튼은 탭에 상관없이 상자 밖에 있고 needs_action 이면 버튼 3개, 동작 뒤에는 배포 보기 하나다', async () => {
+    await open(needsAction)
+    await act(async () => {})
+    for (const tab of ['문제', '원인']) {
+      await pickTab(tab)
+      expect(labeledButtons()).toEqual(['배포 #3 다시 배포', '배포 #3 멈춤', '배포 #3 그대로 두기'])
+      expect(body().queryAllByRole('button').filter((b) => /^배포 #3 /.test(b.props.accessibilityLabel))).toHaveLength(0)
+      expect(within(screen.getByTestId('incident-bottom')).getByLabelText(/최근 24시간/)).toBeTruthy()
+      expect(body().queryByLabelText(/최근 24시간/)).toBeNull()
+    }
+    await fireEvent.press(screen.getByRole('button', { name: '배포 #3 다시 배포' }))
+    expect(await screen.findByText(/다시 배포를 시작했습니다/)).toBeTruthy()
+    for (const tab of ['문제', '원인']) {
+      await pickTab(tab)
+      expect(labeledButtons()).toEqual(['배포 #3 보기'])
+      expect(within(screen.getByTestId('incident-bottom')).getByText(/다시 배포를 시작했습니다/)).toBeTruthy()
+    }
+  })
+
+  test('불러오는 중·오류·404 에서는 탭이 없다', async () => {
+    incidentApi.getOne.mockReset().mockReturnValue(new Promise(() => {}))
+    const loadingView = await render(<IncidentDetail />)
+    expect(screen.getByLabelText('불러오는 중')).toBeTruthy()
+    expect(screen.queryAllByRole('tab')).toHaveLength(0)
+    expect(screen.queryByTestId('incident-top')).toBeNull()
+    await loadingView.unmount()
+
+    incidentApi.getOne.mockReset().mockRejectedValue(new Error('서버에 연결할 수 없습니다'))
+    const errorView = await render(<IncidentDetail />)
+    expect(await screen.findByText('서버에 연결할 수 없습니다')).toBeTruthy()
+    expect(screen.queryAllByRole('tab')).toHaveLength(0)
+    expect(screen.queryByTestId('incident-top')).toBeNull()
+    await errorView.unmount()
+
+    incidentApi.getOne.mockReset().mockRejectedValue(notFound)
+    await render(<IncidentDetail />)
+    expect(await screen.findByText(NOT_FOUND_TEXT)).toBeTruthy()
+    expect(screen.queryAllByRole('tab')).toHaveLength(0)
+    expect(screen.queryByTestId('incident-top')).toBeNull()
   })
 })
 
@@ -248,6 +399,7 @@ describe('인시던트 상세 - 고칠 곳', () => {
   test('고칠 곳은 고정폭 글꼴의 선택 가능한 글자이고 길어도 그려진다', async () => {
     const long = `/app/${'very-long-directory-name/'.repeat(24)}config.py`
     await open({ ...base, explain: { ...base.explain, fix_where: long } })
+    await pickTab('원인')
     const text = screen.getByText(long)
     expect(text.props.selectable).toBe(true)
     expect(StyleSheet.flatten(text.props.style).fontFamily).toBe(monoFont)
@@ -255,6 +407,7 @@ describe('인시던트 상세 - 고칠 곳', () => {
 
   test('복사 버튼은 고칠 곳 전체를 복사하고 잠깐 복사됨으로 바뀐다', async () => {
     await open()
+    await pickTab('원인')
     await fireEvent.press(screen.getByRole('button', { name: '고칠 곳 복사' }))
     expect(Clipboard.setStringAsync).toHaveBeenCalledWith(FIX)
     expect(await screen.findByText('복사됨')).toBeTruthy()
@@ -265,6 +418,7 @@ describe('인시던트 상세 - 고칠 곳', () => {
   test('복사가 false 로 끝나거나 던지면 실패 알림 (복사됨으로 바꾸지 않는다)', async () => {
     Clipboard.setStringAsync.mockResolvedValueOnce(false)
     await open()
+    await pickTab('원인')
     await fireEvent.press(screen.getByRole('button', { name: '고칠 곳 복사' }))
     expect(await screen.findByText('고칠 곳을 복사하지 못했습니다')).toBeTruthy()
     expect(screen.queryByText('복사됨')).toBeNull()
@@ -334,7 +488,7 @@ describe('인시던트 상세 - 갱신', () => {
     incidentApi.getOne.mockRejectedValueOnce(new Error('서버에 연결할 수 없습니다'))
     await tick(5000)
     expect(await screen.findByText('서버에 연결할 수 없습니다')).toBeTruthy()
-    expect(screen.getByText('원인')).toBeTruthy()
+    expect(screen.getAllByTestId('incident-fact')).toHaveLength(5)
     await tick(5000)
     expect(incidentApi.getOne).toHaveBeenCalledTimes(3)
     expect(screen.queryByText('서버에 연결할 수 없습니다')).toBeNull()
@@ -432,6 +586,7 @@ describe('인시던트 상세 - 오류', () => {
     expect(await screen.findByText(NOT_FOUND_TEXT)).toBeTruthy()
     expect(screen.getByRole('button', { name: '돌아가기' })).toBeTruthy()
     expect(screen.queryByText('원인')).toBeNull()
+    expect(screen.queryAllByRole('tab')).toHaveLength(0)
     const calls = incidentApi.getOne.mock.calls.length
     await tick(120000)
     expect(incidentApi.getOne.mock.calls.length).toBe(calls)
@@ -443,7 +598,7 @@ describe('인시던트 상세 - 오류', () => {
     await act(async () => { mockFocus.regain() })
     expect(await screen.findByText(NOT_FOUND_TEXT)).toBeTruthy()
     await act(async () => { mockFocus.regain() })
-    expect(await screen.findByText('원인')).toBeTruthy()
+    expect(await screen.findAllByTestId('incident-fact')).toHaveLength(5)
     expect(screen.queryByText(NOT_FOUND_TEXT)).toBeNull()
   })
 
@@ -464,7 +619,7 @@ describe('인시던트 상세 - 오류', () => {
     await tick(29999); expect(calls()).toBe(6)
     incidentApi.getOne.mockImplementation(async () => base)
     await tick(1); expect(calls()).toBe(7)
-    expect(await screen.findByText('원인')).toBeTruthy()
+    expect(await screen.findAllByTestId('incident-fact')).toHaveLength(5)
     await tick(4999); expect(calls()).toBe(7)
     await tick(1); expect(calls()).toBe(8)
     expect(screen.queryByText('서버에 연결할 수 없습니다')).toBeNull()
@@ -503,8 +658,12 @@ describe('인시던트 상세 - 오류', () => {
     await act(async () => { mockFocus.regain() })
     await act(async () => { mockFocus.regain() })
     expect(await screen.findByText('해결됨')).toBeTruthy()
+    // 요약은 원인 탭에 있으므로 원인 탭에서 늦은 응답을 받는다
+    await pickTab('원인')
     await act(async () => { slow({ ...needsAction, summary: '오래된 응답' }) })
     expect(screen.queryByText('오래된 응답')).toBeNull()
+    expect(screen.getByRole('header', { name: '앱이 오류로 응답하고 있습니다.' })).toBeTruthy()
+    await pickTab('문제')
     expect(screen.getByText('해결됨')).toBeTruthy()
     expect(screen.queryByText('확인 필요')).toBeNull()
   })
@@ -523,7 +682,7 @@ describe('인시던트 상세 - 오류', () => {
     await render(<IncidentDetail />)
     expect(await screen.findByText('서버에 연결할 수 없습니다')).toBeTruthy()
     await fireEvent.press(screen.getByRole('button', { name: '다시 시도' }))
-    expect(await screen.findByText('원인')).toBeTruthy()
+    expect(await screen.findAllByTestId('incident-fact')).toHaveLength(5)
     expect(screen.queryByText('서버에 연결할 수 없습니다')).toBeNull()
   })
 

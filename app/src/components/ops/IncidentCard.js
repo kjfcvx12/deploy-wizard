@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
-import { Pressable, StyleSheet, Text, View } from 'react-native'
+import { Pressable, StyleSheet, View } from 'react-native'
+import { Text } from '../Text'
 import * as Clipboard from 'expo-clipboard'
 import { incidentApi } from '../../api'
 import { INCIDENT_STATUS_LABEL, INCIDENT_STATUS_TONE } from '../../ops/constants'

@@ -37,7 +37,7 @@
 │   ├── proc.py                 ← git·docker 실행
 │   └── ui/                     ← main.jsx, App.jsx, api.js, styles.css
 │
-├── app/                        ← Expo 모바일 앱 (독립 패키지, 서버·웹 코드를 가져오지 않음). src/components/ 에 한 화면 틀 FitScreen·FooterSlot, 설정 타일 SettingTile, ops/NotificationKinds (계획 F, app/README.md)
+├── app/                        ← Expo 모바일 앱 (독립 패키지, 서버·웹 코드를 가져오지 않음). src/components/ 에 한 화면 틀 FitScreen·FooterSlot, 설정 타일 SettingTile, ops/NotificationKinds (계획 F), 한글 어절 줄바꿈 `Text` 래퍼 `components/Text.js`, 인시던트 탭 `ops/IncidentTabs`·`ops/IncidentFacts` (계획 G, app/README.md)
 ├── scripts/                    ← setup_roles, m1_deploy, deploy_cli, cleanup
 └── tests/                      ← pytest(*.py) + web/ (화면 로직 node:test, 계획 E)
 ```

@@ -1,5 +1,6 @@
 import { useRef } from 'react'
-import { ScrollView, StyleSheet, Text, View, useWindowDimensions } from 'react-native'
+import { ScrollView, StyleSheet, View, useWindowDimensions } from 'react-native'
+import { Text } from './Text'
 import { monoFont, radius, spacing, useColors } from '../theme'
 
 export const MAX_LOG_LINES = 500

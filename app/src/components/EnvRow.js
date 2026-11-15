@@ -1,5 +1,6 @@
 import { memo, useState } from 'react'
-import { StyleSheet, Text, TextInput, View } from 'react-native'
+import { StyleSheet, TextInput, View } from 'react-native'
+import { Text } from './Text'
 import { ENV_KINDS, ENV_SECRET_KINDS, kindLabel } from '../constants'
 import { monoFont, radius, spacing, useColors, wrapAnywhere } from '../theme'
 import { Button } from './ui'

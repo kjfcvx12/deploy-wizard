@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
-import { Linking, Pressable, StyleSheet, Text, View } from 'react-native'
+import { Linking, Pressable, StyleSheet, View } from 'react-native'
+import { Text } from './Text'
 import * as Clipboard from 'expo-clipboard'
 import { HEALTH_STATE_LABEL } from '../ops/constants'
 import { radius, spacing, useColors } from '../theme'

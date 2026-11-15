@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
-import { StyleSheet, Text, TextInput, View } from 'react-native'
+import { StyleSheet, TextInput, View } from 'react-native'
+import { Text } from '../Text'
 import { accountApi } from '../../api'
 import { AWS_STATUS_LABEL, CLEANUP_TEXT, DELETE_TEXT } from '../../accounts/constants'
 import { awsVerifiedNotice, cleanupNotice, STACK_UPDATED_NOTICE } from '../../accounts/notices'

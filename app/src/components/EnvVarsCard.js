@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { AccessibilityInfo, Platform, Pressable, StyleSheet, Text, TextInput, View } from 'react-native'
+import { AccessibilityInfo, Platform, Pressable, StyleSheet, TextInput, View } from 'react-native'
+import { Text } from './Text'
 import { envApi } from '../api'
 import { ENV_KINDS, isProgress } from '../constants'
 import { canContinue, groupEnvVars } from '../envGroups'

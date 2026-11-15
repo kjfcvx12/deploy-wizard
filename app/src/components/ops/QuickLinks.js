@@ -1,4 +1,5 @@
-import { Pressable, StyleSheet, Text, View } from 'react-native'
+import { Pressable, StyleSheet, View } from 'react-native'
+import { Text } from '../Text'
 import { radius, spacing, useColors } from '../../theme'
 
 // 목록 헤더 바로 아래의 보조 줄 - 헤더에 다 못 담는 이동 링크(계정 연결 등)를 칩으로 둔다. 눌림 높이는 44pt 이상

@@ -1,4 +1,5 @@
-import { StyleSheet, Text, View } from 'react-native'
+import { StyleSheet, View } from 'react-native'
+import { Text } from './Text'
 import { STATUS_LABEL, isProgress } from '../constants'
 import { radius, spacing, useColors } from '../theme'
 
