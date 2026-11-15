@@ -505,3 +505,224 @@ async def test_mcp_connections_hides_sensitive():
     assert "role/x" not in text
     assert "someone" not in text
     assert result[0]["aws"]["account"] == "****9012"
+
+
+# 행동 도구 시험용 가짜 서버 - 요청을 모두 기록하고 경로별로 응답한다
+class Fake_Wizard:
+
+    def __init__(self, deploys:list[dict]|None=None, connections:list[dict]|None=None):
+        self.deploys=deploys if deploys is not None else []
+        self.connections=connections if connections is not None else []
+        self.requests:list[tuple[str, str, dict|None]]=[]
+        self.fail_detail:str|None=None
+
+    # 기록된 요청 중 메서드·경로가 같은 것의 개수
+    def count(self, method:str, path:str) -> int:
+        return sum(1 for m, p, _ in self.requests if m == method and p == path)
+
+    # 요청 본문 (처음 만난 것)
+    def body(self, method:str, path:str) -> dict|None:
+        return next(b for m, p, b in self.requests if m == method and p == path)
+
+    def handler(self, request:httpx.Request) -> httpx.Response:
+        body=json.loads(request.content) if request.content else None
+        path=request.url.path
+        self.requests.append((request.method, path, body))
+        if request.method in ("POST", "DELETE") and self.fail_detail and path != "/api/deploys/advice":
+            return httpx.Response(409, json={"detail":self.fail_detail})
+        if request.method == "GET" and path == "/api/deploys":
+            return httpx.Response(200, json=self.deploys)
+        if request.method == "GET" and path == "/api/accounts/connections":
+            return httpx.Response(200, json=self.connections)
+        if request.method == "GET" and path.startswith("/api/deploys/"):
+            return httpx.Response(200, json=raw_deploy(int(path.rsplit("/", 1)[1])))
+        if request.method == "POST" and path == "/api/deploys/advice":
+            return httpx.Response(200, json={
+                "tier":"small", "confidence":"high", "cpu":None, "memory":None,
+                "cost":{"note":"트래픽에 따라 늘어납니다"}, "reasons":[], "needs":[], "unknowns":[],
+                "language":"node", "support_level":"official", "app_dir":".",
+            })
+        if request.method == "POST" and path == "/api/deploys":
+            return httpx.Response(201, json=raw_deploy(9, "queued"))
+        if request.method == "POST" and path.endswith(("/stop", "/start", "/redeploy")):
+            return httpx.Response(200, json=raw_deploy(int(path.split("/")[3]), "stopped"))
+        if request.method == "DELETE":
+            return httpx.Response(200, json={"message":"배포 5를 삭제했습니다", "deleted":["service", "repo"]})
+        return httpx.Response(404, json={"detail":"없음"})
+
+
+# 연결 응답 한 건 (블록)
+def raw_connection(c_id:int=2, aws_status:str="verified", a_id:int=7, g_id:int|None=3) -> dict:
+    return {
+        "c_id":c_id, "label":"내 계정",
+        "aws":{"a_id":a_id, "status":aws_status, "region":"ap-northeast-2", "aws_account_id":"123456789012", "role_arn":"arn:aws:iam::123456789012:role/x"},
+        "github":None if g_id is None else {"g_id":g_id, "status":"active", "repository_selection":"all"},
+    }
+
+
+REPO="https://github.com/o/r"
+
+
+@pytest.mark.asyncio
+async def test_deploy_without_token_does_not_post():
+    fake=Fake_Wizard()
+    client=make_client(fake.handler)
+    store=Confirm_Store(300)
+    try:
+        result=await Mcp_Service.services_mcp_deploy(client, store, REPO)
+    finally:
+        await client.aclose()
+    assert fake.count("POST", "/api/deploys") == 0
+    assert result["status"] == "confirmation_required"
+    assert result["action"] == "deploy"
+    assert result["confirm_token"]
+    assert result["expires_in_seconds"] == 300
+    assert "승인" in result["instruction"]
+    text=result["summary"] + " ".join(result["warnings"])
+    assert "node" in text
+    assert "요금" in text
+    assert "ECR" in text and "ALB" in text
+    assert "123456789012" not in json.dumps(result, ensure_ascii=False)
+
+
+@pytest.mark.asyncio
+async def test_deploy_with_token_posts_once():
+    fake=Fake_Wizard()
+    client=make_client(fake.handler)
+    store=Confirm_Store(300)
+    try:
+        preview=await Mcp_Service.services_mcp_deploy(client, store, REPO, branch="dev")
+        result=await Mcp_Service.services_mcp_deploy(client, store, REPO, branch="dev", confirm_token=preview["confirm_token"])
+        with pytest.raises(Wizard_Error):
+            await Mcp_Service.services_mcp_deploy(client, store, REPO, branch="dev", confirm_token=preview["confirm_token"])
+    finally:
+        await client.aclose()
+    assert fake.count("POST", "/api/deploys") == 1
+    assert fake.body("POST", "/api/deploys") == {"repo_url":REPO, "branch":"dev"}
+    assert result["status"] == "done"
+    assert result["d_id"] == 9
+    assert result["deploy_status"] == "queued"
+    assert "dockerfile" not in result
+
+
+@pytest.mark.asyncio
+async def test_deploy_token_bound_to_args():
+    fake=Fake_Wizard()
+    client=make_client(fake.handler)
+    store=Confirm_Store(300)
+    try:
+        preview=await Mcp_Service.services_mcp_deploy(client, store, REPO)
+        with pytest.raises(Wizard_Error) as exc_info:
+            await Mcp_Service.services_mcp_deploy(client, store, "https://github.com/o/other", confirm_token=preview["confirm_token"])
+    finally:
+        await client.aclose()
+    assert "미리보기부터 다시" in exc_info.value.message
+    assert fake.count("POST", "/api/deploys") == 0
+
+
+@pytest.mark.asyncio
+async def test_deploy_with_connection_passes_ids():
+    fake=Fake_Wizard(connections=[raw_connection(2), raw_connection(3, aws_status="pending")])
+    client=make_client(fake.handler)
+    store=Confirm_Store(300)
+    try:
+        preview=await Mcp_Service.services_mcp_deploy(client, store, REPO, connection_id=2)
+        assert "arn:aws" not in json.dumps(preview, ensure_ascii=False)
+        await Mcp_Service.services_mcp_deploy(client, store, REPO, connection_id=2, confirm_token=preview["confirm_token"])
+        assert fake.body("POST", "/api/deploys")["aws_account_id"] == 7
+        assert fake.body("POST", "/api/deploys")["github_installation_id"] == 3
+        assert fake.body("POST", "/api/deploys/advice")["github_installation_id"] == 3
+        with pytest.raises(Wizard_Error) as pending:
+            await Mcp_Service.services_mcp_deploy(client, store, REPO, connection_id=3)
+        with pytest.raises(Wizard_Error) as missing:
+            await Mcp_Service.services_mcp_deploy(client, store, REPO, connection_id=99)
+    finally:
+        await client.aclose()
+    assert "확인되지 않았습니다" in pending.value.message
+    assert "99" in missing.value.message
+    assert fake.count("POST", "/api/deploys") == 1
+
+
+@pytest.mark.asyncio
+async def test_deploy_blocked_by_live_limit():
+    fake=Fake_Wizard(deploys=[raw_deploy(1, "running"), raw_deploy(2, "running"), raw_deploy(3, "building"), raw_deploy(4, "stopped")])
+    client=make_client(fake.handler)
+    store=Confirm_Store(300)
+    try:
+        with pytest.raises(Wizard_Error) as exc_info:
+            await Mcp_Service.services_mcp_deploy(client, store, REPO, max_live=3)
+        assert len(store.tokens) == 0
+        # stopped 는 세지 않으므로 한도 4면 통과
+        preview=await Mcp_Service.services_mcp_deploy(client, store, REPO, max_live=4)
+    finally:
+        await client.aclose()
+    assert "한도" in exc_info.value.message
+    assert "멈추거나 삭제" in exc_info.value.message
+    assert preview["status"] == "confirmation_required"
+    assert len(store.tokens) == 1
+
+
+@pytest.mark.asyncio
+async def test_deploy_limit_rechecked_on_confirm():
+    fake=Fake_Wizard(deploys=[raw_deploy(1, "running")])
+    client=make_client(fake.handler)
+    store=Confirm_Store(300)
+    try:
+        preview=await Mcp_Service.services_mcp_deploy(client, store, REPO, max_live=2)
+        fake.deploys.append(raw_deploy(2, "running"))
+        with pytest.raises(Wizard_Error) as exc_info:
+            await Mcp_Service.services_mcp_deploy(client, store, REPO, max_live=2, confirm_token=preview["confirm_token"])
+    finally:
+        await client.aclose()
+    assert "한도" in exc_info.value.message
+    assert fake.count("POST", "/api/deploys") == 0
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("name, tool, method, path, must_have", [
+    ("services_mcp_stop", "stop_deploy", "POST", "/api/deploys/5/stop", "요금"),
+    ("services_mcp_start", "start_deploy", "POST", "/api/deploys/5/start", "요금"),
+    ("services_mcp_delete", "delete_deploy", "DELETE", "/api/deploys/5", "되돌릴 수 없"),
+    ("services_mcp_redeploy", "redeploy", "POST", "/api/deploys/5/redeploy", "빌드"),
+])
+async def test_stop_start_delete_redeploy_preview_then_execute(name, tool, method, path, must_have):
+    fake=Fake_Wizard()
+    client=make_client(fake.handler)
+    store=Confirm_Store(300)
+    action=getattr(Mcp_Service, name)
+    try:
+        preview=await action(client, store, 5)
+        assert fake.count(method, path) == 0
+        assert preview["status"] == "confirmation_required"
+        assert preview["action"] == tool
+        assert must_have in " ".join(preview["warnings"])
+        result=await action(client, store, 5, confirm_token=preview["confirm_token"])
+        with pytest.raises(Wizard_Error):
+            await action(client, store, 5, confirm_token=preview["confirm_token"])
+        other=await action(client, store, 6)
+        with pytest.raises(Wizard_Error):
+            await action(client, store, 5, confirm_token=other["confirm_token"])
+    finally:
+        await client.aclose()
+    assert fake.count(method, path) == 1
+    assert result["status"] == "done"
+    if tool == "delete_deploy":
+        assert result["deleted_count"] == 2
+        assert result["message"] == "배포 5를 삭제했습니다"
+    else:
+        assert result["d_id"] == 5
+
+
+@pytest.mark.asyncio
+async def test_action_conflict_message_passthrough():
+    fake=Fake_Wizard()
+    fake.fail_detail="진행 중인 배포는 멈출 수 없습니다"
+    client=make_client(fake.handler)
+    store=Confirm_Store(300)
+    try:
+        preview=await Mcp_Service.services_mcp_stop(client, store, 5)
+        with pytest.raises(Wizard_Error) as exc_info:
+            await Mcp_Service.services_mcp_stop(client, store, 5, confirm_token=preview["confirm_token"])
+    finally:
+        await client.aclose()
+    assert exc_info.value.message == "진행 중인 배포는 멈출 수 없습니다"
