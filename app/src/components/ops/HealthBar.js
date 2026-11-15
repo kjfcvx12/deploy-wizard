@@ -1,4 +1,5 @@
-import { StyleSheet, Text, View } from 'react-native'
+import { StyleSheet, View } from 'react-native'
+import { Text } from '../Text'
 import { toMs } from '../../ops/format'
 import { radius, spacing, useColors } from '../../theme'
 

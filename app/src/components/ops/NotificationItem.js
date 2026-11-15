@@ -1,4 +1,5 @@
-import { Pressable, StyleSheet, Text, View } from 'react-native'
+import { Pressable, StyleSheet, View } from 'react-native'
+import { Text } from '../Text'
 import { NOTIFICATION_KIND_ICON, NOTIFICATION_KIND_LABEL } from '../../ops/constants'
 import { formatTime } from '../../ops/format'
 import { radius, spacing, toneColors, useColors } from '../../theme'

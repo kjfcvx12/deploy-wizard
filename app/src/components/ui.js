@@ -1,5 +1,6 @@
 import { useState } from 'react'
-import { Pressable, StyleSheet, Text, View } from 'react-native'
+import { Pressable, StyleSheet, View } from 'react-native'
+import { Text } from './Text'
 import { radius, spacing, useColors } from '../theme'
 
 // 카드 - 웹 .card 와 같은 면

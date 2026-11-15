@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { ActivityIndicator, RefreshControl, ScrollView, StyleSheet, Text, View } from 'react-native'
+import { ActivityIndicator, RefreshControl, ScrollView, StyleSheet, View } from 'react-native'
+import { Text } from '../../src/components/Text'
 import { Stack, useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router'
 import { deployApi, healthApi, incidentApi } from '../../src/api'
 import FitScreen from '../../src/components/FitScreen'

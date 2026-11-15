@@ -1,4 +1,5 @@
-import { Pressable, StyleSheet, Text, View } from 'react-native'
+import { Pressable, StyleSheet, View } from 'react-native'
+import { Text } from './Text'
 import { radius, spacing, useColors } from '../theme'
 
 // 쓸 수 있는 블록 - AWS 가 확인됐거나 GitHub 가 살아 있는 것 (웹 AccountPicker 와 같다)

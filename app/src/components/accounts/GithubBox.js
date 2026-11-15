@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
-import { StyleSheet, Text, View } from 'react-native'
+import { StyleSheet, View } from 'react-native'
+import { Text } from '../Text'
 import { accountApi } from '../../api'
 import { GITHUB_STATUS_LABEL } from '../../accounts/constants'
 import { openLink } from '../../accounts/external'

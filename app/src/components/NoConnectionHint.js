@@ -1,4 +1,5 @@
-import { StyleSheet, Text } from 'react-native'
+import { StyleSheet } from 'react-native'
+import { Text } from './Text'
 import { useRouter } from 'expo-router'
 import { spacing, useColors } from '../theme'
 import { Button, Card } from './ui'

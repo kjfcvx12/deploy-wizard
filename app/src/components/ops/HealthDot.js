@@ -1,4 +1,5 @@
-import { StyleSheet, Text, View } from 'react-native'
+import { StyleSheet, View } from 'react-native'
+import { Text } from '../Text'
 import { HEALTH_STATE_LABEL } from '../../ops/constants'
 import { spacing, useColors } from '../../theme'
 

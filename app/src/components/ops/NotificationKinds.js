@@ -1,5 +1,6 @@
 import { useState } from 'react'
-import { Pressable, StyleSheet, Text, View } from 'react-native'
+import { Pressable, StyleSheet, View } from 'react-native'
+import { Text } from '../Text'
 import SettingTile from '../SettingTile'
 import { NOTIFICATION_KIND_LABEL, NOTIFICATION_KINDS } from '../../ops/constants'
 import { KIND_HINT } from '../../ops/notificationSettings'

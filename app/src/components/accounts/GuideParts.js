@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
-import { KeyboardAvoidingView, Modal, Platform, ScrollView, StyleSheet, Text, View } from 'react-native'
+import { KeyboardAvoidingView, Modal, Platform, ScrollView, StyleSheet, View } from 'react-native'
+import { Text } from '../Text'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import { copyText, openLink } from '../../accounts/external'
 import { monoFont, radius, spacing, useColors, wrapAnywhere } from '../../theme'

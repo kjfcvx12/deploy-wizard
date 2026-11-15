@@ -1,4 +1,5 @@
-import { Pressable, StyleSheet, Switch, Text, View } from 'react-native'
+import { Pressable, StyleSheet, Switch, View } from 'react-native'
+import { Text } from './Text'
 import { radius, spacing, useColors } from '../theme'
 
 // 설정 한 줄 (compact 면 안쪽 여백과 설명 글을 줄인다) - 줄 전체가 하나의 스위치 요소(이름·설명·상태). 안쪽 Switch 는 보이기만 하고 따로 읽히거나 눌리지 않는다

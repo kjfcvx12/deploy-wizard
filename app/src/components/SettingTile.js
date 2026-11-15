@@ -1,4 +1,5 @@
-import { Pressable, StyleSheet, Switch, Text, View } from 'react-native'
+import { Pressable, StyleSheet, Switch, View } from 'react-native'
+import { Text } from './Text'
 import { radius, spacing, useColors } from '../theme'
 
 // 설정 타일 한 칸 - 제목과 스위치만 있는 한 줄. 줄 전체가 하나의 스위치 요소이고 안쪽 Switch 는 보이기만 한다
