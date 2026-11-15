@@ -405,3 +405,122 @@ async def test_pipeline_issue_history_accumulates(client, monkeypatch):
     # 배포 자체에는 최신 실패만 보인다
     body=(await client.get(f"/api/deploys/{d_id}")).json()
     assert body["error_step"] == "cloning"
+
+
+# 사양·예정 시간 - 만들 때 받은 값이 그대로 저장되고 응답에 나온다
+@pytest.mark.asyncio
+async def test_deploy_create_stores_spec_and_plan(client):
+    response=await client.post("/api/deploys", json={"repo_url": "https://github.com/o/r", "cpu": "512", "memory": "1024", "planned_hours": 4})
+
+    assert response.status_code == 201
+    body=response.json()
+    assert body["cpu"] == "512" and body["memory"] == "1024" and body["planned_hours"] == 4
+    assert body["running_since"] is None and body["plan_notified_at"] is None
+
+    fetched=(await client.get(f"/api/deploys/{body['d_id']}")).json()
+    assert fetched["cpu"] == "512" and fetched["memory"] == "1024" and fetched["planned_hours"] == 4
+
+
+# 잘못된 사양·시간은 400 + 한국어 안내, 배포가 생기지 않는다
+@pytest.mark.asyncio
+@pytest.mark.parametrize("options", [
+    {"cpu": "512"},
+    {"memory": "1024"},
+    {"cpu": "300", "memory": "512"},
+    {"planned_hours": 0},
+    {"planned_hours": -3},
+    {"planned_hours": 9000},
+    {"planned_hours": float("nan")},
+    {"planned_hours": float("inf")},
+])
+async def test_deploy_create_rejects_bad_spec_and_plan(client, options):
+    import json
+
+    response=await client.post("/api/deploys", content=json.dumps({"repo_url": "https://github.com/o/r", **options}),
+                               headers={"content-type": "application/json"})
+
+    assert response.status_code == 400
+    assert any("가" <= ch <= "힣" for ch in response.json()["detail"])
+    assert client.started == []
+    assert (await client.get("/api/deploys")).json() == []
+
+
+# 옵션 없이 만들면 새 필드는 모두 null (기존 동작 그대로)
+@pytest.mark.asyncio
+async def test_deploy_create_without_options_unchanged(client):
+    body=(await client.post("/api/deploys", json={"repo_url": "https://github.com/o/r"})).json()
+
+    for key in ("cpu", "memory", "min_tasks", "max_tasks", "scale_metric", "scale_target", "planned_hours", "running_since", "plan_notified_at"):
+        assert key in body and body[key] is None
+
+
+# 증설 설정 - 유효하면 저장, 아니면 400 한국어, 아무것도 없으면 통과
+@pytest.mark.asyncio
+async def test_deploy_create_scaling_validation(client):
+    url="https://github.com/o/r"
+    good={"min_tasks": 1, "max_tasks": 3, "scale_metric": "AVERAGE_CPU", "scale_target": 60}
+
+    response=await client.post("/api/deploys", json={"repo_url": url, **good})
+    assert response.status_code == 201
+    body=response.json()
+    assert (body["min_tasks"], body["max_tasks"], body["scale_metric"], body["scale_target"]) == (1, 3, "AVERAGE_CPU", 60)
+
+    bad_cases=[
+        {**good, "min_tasks": 4, "max_tasks": 2},
+        {**good, "max_tasks": 9},
+        {**good, "scale_metric": "FOO"},
+        {**good, "scale_target": 0},
+        {**good, "scale_target": 101},
+        {"min_tasks": 1, "max_tasks": 3},
+        {"scale_metric": "AVERAGE_CPU"},
+    ]
+    for bad in bad_cases:
+        response=await client.post("/api/deploys", json={"repo_url": url, **bad})
+        assert response.status_code == 400, bad
+        assert any("가" <= ch <= "힣" for ch in response.json()["detail"])
+
+    # 글자 숫자·불리언·소수는 타입 단계에서 거절한다
+    for bad in ({**good, "min_tasks": "1"}, {**good, "max_tasks": True}, {**good, "scale_target": 60.5}):
+        assert (await client.post("/api/deploys", json={"repo_url": url, **bad})).status_code == 422
+
+    assert len((await client.get("/api/deploys")).json()) == 1
+
+
+# 예정 시간 변경 - 보내면 바뀌고, null 이면 계획을 지우고, 바뀔 때마다 알림을 다시 켠다(plan_notified_at 비움)
+@pytest.mark.asyncio
+async def test_deploy_settings_planned_hours(client):
+    from datetime import datetime
+    from features.deploys.crud import Deploy_Crud
+    from shared.database import AsyncSessionLocal
+
+    d_id=(await client.post("/api/deploys", json={"repo_url": "https://github.com/o/r", "planned_hours": 2})).json()["d_id"]
+
+    async def mark_notified():
+        async with AsyncSessionLocal() as db:
+            await Deploy_Crud.crud_deploy_update(db, d_id, {"plan_notified_at": datetime(2026, 11, 16, 9, 0, 0)})
+            await db.commit()
+
+    await mark_notified()
+    body=(await client.patch(f"/api/deploys/{d_id}/settings", json={"planned_hours": 6})).json()
+    assert body["planned_hours"] == 6 and body["plan_notified_at"] is None
+
+    await mark_notified()
+    response=await client.patch(f"/api/deploys/{d_id}/settings", json={"planned_hours": None})
+    assert response.status_code == 200
+    assert response.json()["planned_hours"] is None and response.json()["plan_notified_at"] is None
+
+    # 계획과 상관없는 설정만 바꾸면 알림 기록은 그대로
+    await mark_notified()
+    body=(await client.patch(f"/api/deploys/{d_id}/settings", json={"auto_redeploy": False})).json()
+    assert body["plan_notified_at"] is not None
+
+    for bad in (0, -1, 9000):
+        response=await client.patch(f"/api/deploys/{d_id}/settings", json={"planned_hours": bad})
+        assert response.status_code == 400
+        assert any("가" <= ch <= "힣" for ch in response.json()["detail"])
+
+    # 사양·증설은 여기서 못 바꾼다 (확인을 거친 재배포 몫)
+    assert (await client.patch(f"/api/deploys/{d_id}/settings", json={"cpu": "512"})).status_code == 422
+    assert (await client.patch(f"/api/deploys/{d_id}/settings", json={"max_tasks": 2})).status_code == 422
+
+

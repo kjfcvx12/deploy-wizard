@@ -30,7 +30,8 @@ async def get_db():
 
 # 기존 표에 뒤늦게 늘어난 열 - create_all 은 이미 있는 표에 열을 더하지 않는다 (SQLite). 모델의 열 정의가 기준이다
 ENSURE_COLUMNS={
-    "deploys": ["auto_recover", "health_state", "last_health_at", "bad_commit_sha"],
+    "deploys": ["auto_recover", "health_state", "last_health_at", "bad_commit_sha",
+                "cpu", "memory", "min_tasks", "max_tasks", "scale_metric", "scale_target", "planned_hours", "running_since", "plan_notified_at"],
 }
 
 

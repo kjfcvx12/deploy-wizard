@@ -27,7 +27,7 @@ def test_ensure_columns_adds_missing_columns_once(tmp_path):
         assert NEW_COLUMNS.isdisjoint(c["name"] for c in inspect(conn).get_columns("deploys"))
         added=ensure_columns(conn)
 
-    assert set(added) == {f"deploys.{name}" for name in NEW_COLUMNS}
+    assert {f"deploys.{name}" for name in NEW_COLUMNS} <= set(added)
 
     with engine.begin() as conn:
         assert NEW_COLUMNS <= {c["name"] for c in inspect(conn).get_columns("deploys")}
@@ -66,4 +66,24 @@ def test_ensure_columns_keeps_existing_rows_usable(tmp_path):
         rows=conn.execute(text("SELECT auto_recover, health_state FROM deploys ORDER BY d_id")).all()
 
     assert [tuple(r) for r in rows] == [(1, 'unknown'), (1, 'unknown')]
+    engine.dispose()
+
+
+# 사양·증설·예정 시간 열 9개가 옛 DB 에도 더해지고, 기존 행은 모두 null
+def test_ensure_columns_adds_new_deploy_columns(tmp_path):
+    new_columns={'cpu', 'memory', 'min_tasks', 'max_tasks', 'scale_metric', 'scale_target', 'planned_hours', 'running_since', 'plan_notified_at'}
+    engine=create_engine(make_old_db(tmp_path / "old3.db"))
+
+    with engine.begin() as conn:
+        assert new_columns.isdisjoint(c["name"] for c in inspect(conn).get_columns("deploys"))
+        added=ensure_columns(conn)
+
+        assert {f"deploys.{name}" for name in new_columns} <= set(added)
+        assert new_columns <= {c["name"] for c in inspect(conn).get_columns("deploys")}
+
+        row=conn.execute(text("SELECT cpu, memory, min_tasks, max_tasks, scale_metric, scale_target, planned_hours, running_since, plan_notified_at FROM deploys")).one()
+        assert all(value is None for value in row)
+
+        assert ensure_columns(conn) == []
+
     engine.dispose()

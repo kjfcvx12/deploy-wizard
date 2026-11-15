@@ -46,6 +46,11 @@ Base URL: `http://localhost:8081` · 전부 JSON · 인증 없음(로컬 전용)
 - `branch`: 생략하면 레포의 기본 브랜치.
 - `aws_account_id`(M6, 선택): 생략하면 개발 세션으로 배포(M1~M5 동작). `/api/accounts/aws`로 연결한 계정의 `a_id`.
 - `github_installation_id`(M6, 선택): 넣으면 클론·브랜치 조회에 그 설치의 토큰을 쓴다 (private 레포 가능). 생략하면 지금까지처럼 public 클론.
+- 비용 확인용 옵션(모두 선택, 생략하면 지금까지처럼 기본 사양·증설 없음·계획 없음). 타입은 엄격하다 - 숫자 칸에 글자·불리언·소수를 넣으면 422:
+  - `cpu`·`memory`(문자열): `GET /api/pricing/options`의 사양 프리셋 조합이어야 한다. 둘 다 생략하거나 둘 다 보낸다 (한쪽만·프리셋이 아닌 조합은 400 `사양이 올바르지 않습니다 ...`).
+  - `planned_hours`(숫자): 0보다 크고 8760 이하의 유한한 수 (아니면 400 `예정 사용 시간은 ...`).
+  - `min_tasks`·`max_tasks`(정수)·`scale_metric`(`AVERAGE_CPU`|`AVERAGE_MEMORY`|`REQUEST_COUNT_PER_TARGET`)·`scale_target`(정수, CPU·메모리는 1~100, 요청 수는 1~100000): 자동 증설. 4개를 모두 보내거나 모두 생략한다. `1 ≤ min ≤ max ≤ MAX_TASKS_CAP`(기본 4). 위반하면 400 + 한국어 `detail`. 4개가 다 있을 때만 Express 서비스를 만들 때 `scalingTarget`으로 보낸다.
+  - 이 값들은 서비스를 **처음 만들 때** 적용된다. 이미 떠 있는 서비스를 다시 배포(`redeploy`)할 때는 사양·증설을 바꾸지 않는다.
 
 ### `Deploy_Read`
 
@@ -88,6 +93,15 @@ Base URL: `http://localhost:8081` · 전부 JSON · 인증 없음(로컬 전용)
   "last_health_at": null,
   "open_incident_id": null,
   "open_incident_status": null,
+  "cpu": null,
+  "memory": null,
+  "min_tasks": null,
+  "max_tasks": null,
+  "scale_metric": null,
+  "scale_target": null,
+  "planned_hours": null,
+  "running_since": null,
+  "plan_notified_at": null,
   "created_at": "2026-09-21T06:10:00",
   "updated_at": "2026-09-21T06:11:02"
 }
@@ -96,6 +110,8 @@ Base URL: `http://localhost:8081` · 전부 JSON · 인증 없음(로컬 전용)
 `env_pending`: 값이 비어 있는 필수 환경변수 수 (`required`이고 `status`가 `detected`인 것). DB 열이 아니라 조회할 때마다 센다. 환경변수가 없으면 0. `needs_input` 배포를 화면에 알리는 용도다.
 
 `auto_recover`: 배포별 자동 복구 스위치 (기본 `true`). `health_state`: `healthy` `unhealthy` `unknown` — 마지막 헬스체크 요약이며 아직 한 번도 확인하지 않았으면 `unknown`. `last_health_at`: 마지막 헬스체크 시각(없으면 null). `open_incident_id`: 아직 끝나지 않은(`open`·`recovering`·`needs_action`) 인시던트 번호, 없으면 null (배포마다 끝나지 않은 인시던트는 하나뿐). `open_incident_status`: 그 인시던트의 `status`(`open` `recovering` `needs_action`), 없으면 null. 둘 다 DB 열이 아니라 조회할 때마다 같은 조회로 채운다. 앞의 셋은 `deploys` 열이다 (옛 DB는 서버 시작 때 `ensure_columns`가 열을 더한다). 같은 때 더해지는 네 번째 열 `bad_commit_sha`(자동 되돌리기가 기억해 둔 나쁜 커밋, 감시가 같은 커밋을 다시 배포하지 않게 하는 내부용)는 응답에 싣지 않는다.
+
+`cpu` `memory` `min_tasks` `max_tasks` `scale_metric` `scale_target` `planned_hours`: 만들 때 고른 사양·자동 증설·예정 사용 시간 (고르지 않았으면 모두 null = 기본 사양). `running_since`: `running`이 된 시각(UTC, 시간대 표시 없음) - 멈춤·삭제·실패로 `running`을 벗어나면 null. `plan_notified_at`: 예정 사용 시간을 넘겼다는 알림을 보낸 시각 (아직 안 보냈으면 null, `running`이 될 때와 `planned_hours`를 바꿀 때 비운다). 모두 `deploys` 열이며 옛 DB는 서버 시작 때 `ensure_columns`가 더한다.
 
 ### 값 목록
 
@@ -140,10 +156,12 @@ Base URL: `http://localhost:8081` · 전부 JSON · 인증 없음(로컬 전용)
 ### PATCH `/api/deploys/{d_id}/settings`
 
 ```json
-{ "auto_redeploy": false, "auto_recover": true }
+{ "auto_redeploy": false, "auto_recover": true, "planned_hours": 6 }
 ```
 
-- 두 항목 모두 선택. 보내지 않은(또는 `null`) 항목은 그대로 둔다. 하나도 없으면(빈 본문) 400 `변경할 설정을 하나 이상 보내 주세요`.
+- 세 항목 모두 선택. `auto_redeploy`·`auto_recover`는 보내지 않은(또는 `null`) 항목을 그대로 둔다. 하나도 없으면(빈 본문) 400 `변경할 설정을 하나 이상 보내 주세요`.
+- `planned_hours`(예정 사용 시간): 숫자를 보내면 바뀌고 **`null`을 보내면 계획을 지운다**. 보내지 않으면 그대로. 값은 생성 때와 같은 검사(0 초과 8760 이하, 아니면 400 한국어). 보낼 때마다 `plan_notified_at`을 null로 비워 시간 초과 알림을 다시 켠다.
+- 사양(`cpu`·`memory`)과 증설 값은 여기서 바꿀 수 없다 (422) - 확인을 거친 재배포 몫이다.
 - 모르는 항목은 422 (`extra=forbid`) - `status` 같은 값은 여기서 못 바꾼다.
 - 없는 `d_id`, 삭제된 배포는 404. 응답은 바뀐 `Deploy_Read`.
 

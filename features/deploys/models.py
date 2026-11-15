@@ -56,6 +56,20 @@ class Deploy(Base):
     last_health_at: Mapped[Optional[datetime]] = mapped_column(TIMESTAMP)
     bad_commit_sha: Mapped[Optional[str]] = mapped_column(String(40))
 
+    # 비용 확인 - 만들 때 고른 사양·자동 증설·예정 사용 시간, 지금 떠 있는 시작 시각, 시간 초과 알림을 보낸 시각 (모두 비면 지금까지처럼 기본 사양)
+    # 이 열들도 shared/database.py 의 ENSURE_COLUMNS 와 같아야 한다
+    cpu: Mapped[Optional[str]] = mapped_column(String(10))
+    memory: Mapped[Optional[str]] = mapped_column(String(10))
+    min_tasks: Mapped[Optional[int]] = mapped_column()
+    max_tasks: Mapped[Optional[int]] = mapped_column()
+    scale_metric: Mapped[Optional[str]] = mapped_column(String(30))
+    # AVERAGE_CPU|AVERAGE_MEMORY|REQUEST_COUNT_PER_TARGET
+    scale_target: Mapped[Optional[int]] = mapped_column()
+    planned_hours: Mapped[Optional[float]] = mapped_column()
+    # running 이 된 시각 (UTC) - 멈춤·삭제·실패로 running 을 벗어나면 비운다
+    running_since: Mapped[Optional[datetime]] = mapped_column(TIMESTAMP)
+    plan_notified_at: Mapped[Optional[datetime]] = mapped_column(TIMESTAMP)
+
     created_at: Mapped[datetime] = mapped_column(TIMESTAMP, server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(TIMESTAMP, server_default=func.now(), onupdate=func.now())
 
