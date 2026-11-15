@@ -130,7 +130,7 @@ service.activeConfigurations[].ingressPaths[]  { accessType: PUBLIC|PRIVATE, end
 ### 멈춤 / 다시 켜기 (2026-10-06, 실제 AWS 미검증)
 
 - 멈춤 = `delete_express_gateway_service`만. ECR 이미지·기록은 남긴다. 다시 켜기 = 저장된 `image_uri`로 `create_express_gateway_service` (같은 `serviceName`).
-- [ ] 서비스 삭제 직후(DRAINING) 같은 이름으로 다시 만들 수 있는가, 얼마나 기다려야 하는가
+- [x] 서비스 삭제 직후(DRAINING) 같은 이름으로 다시 만들 수 있는가 — **못 만든다** (`InvalidParameterException: Unable to Start a service that is still Draining`, 2026-11-15). 멈춤 뒤 다시 켜기까지 약 10분 걸렸다. `services_express_create` 가 이 메시지면 `deploy_timeout`(1200초) 안에서 다시 시도한다. 서비스 삭제 뒤 ALB(`ecs-express-gateway-alb-*`)는 약 8분 뒤 저절로 사라진다
 - [ ] 다시 켠 뒤 주소가 전과 같은가 (`https://<service-name>.ecs.<region>.on.aws/`)
 - [ ] 마지막 서비스를 내리면 ALB 요금이 실제로 멈추는가 (위 "M1에서 확인할 것"의 ALB 회수 시간과 같은 질문)
 - [ ] 삭제 후 남는 것이 있는가 — CloudWatch 로그 그룹, 보안그룹. `python scripts/cleanup.py`로 확인

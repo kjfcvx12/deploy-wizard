@@ -1,5 +1,6 @@
 import time
 import boto3
+from botocore.exceptions import ClientError
 from typing import Callable
 
 from shared.settings import settings
@@ -36,7 +37,8 @@ class Express_Service:
     @staticmethod
     def services_express_create(session:boto3.Session, service_name:str, image_uri:str, port:int,
                                 health_check_path:str="/", environment:dict[str, str]|None=None,
-                                role_arns:tuple[str, str]|None=None) -> Express_Status:
+                                role_arns:tuple[str, str]|None=None,
+                                on_progress:Callable[[str], None]|None=None) -> Express_Status:
         execution_role_arn, infrastructure_role_arn=role_arns or Express_Service.services_express_check_roles()
         ecs=session.client("ecs")
 
@@ -58,7 +60,24 @@ class Express_Service:
         if settings.ecs_memory:
             params["memory"]=settings.ecs_memory
 
-        result=ecs.create_express_gateway_service(**params)
+        # 멈춤·삭제 직후에는 같은 이름의 옛 서비스가 DRAINING 이라 만들 수 없다 - 끝날 때까지 기다렸다가 다시 만든다 (2026-11-15 실제 확인)
+        deadline=time.monotonic() + settings.deploy_timeout
+        announced=False
+
+        while True:
+            try:
+                result=ecs.create_express_gateway_service(**params)
+                break
+
+            except ClientError as e:
+                if "still Draining" not in str(e) or time.monotonic() >= deadline:
+                    raise
+
+                if on_progress and not announced:
+                    on_progress("같은 이름의 이전 서비스가 아직 정리 중입니다. 끝날 때까지 기다립니다")
+                    announced=True
+
+                time.sleep(settings.deploy_poll_seconds)
 
         return Express_Service.services_express_to_status(result["service"])
 

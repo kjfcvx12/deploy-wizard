@@ -118,3 +118,71 @@ def test_express_to_status_endpoint():
 
     assert status.status_code == "ACTIVE"
     assert status.endpoint == "https://dw-x-1.ecs.ap-northeast-2.on.aws"
+
+
+class Draining_Ecs(Fake_Ecs):
+    def __init__(self, drains:int):
+        self.drains=drains
+        self.calls=0
+
+    def create_express_gateway_service(self, **params):
+        self.calls+=1
+        if self.calls <= self.drains:
+            from botocore.exceptions import ClientError
+            raise ClientError({"Error": {"Code": "InvalidParameterException",
+                                         "Message": "Unable to Start a service that is still Draining."}},
+                              "CreateExpressGatewayService")
+        return super().create_express_gateway_service(**params)
+
+
+# 같은 이름의 옛 서비스가 DRAINING 이면 기다렸다가 다시 만든다 - 안내는 한 번만
+def test_express_create_waits_while_draining(monkeypatch):
+    from features.express import services as express_module
+
+    monkeypatch.setattr(express_module.settings, "deploy_poll_seconds", 0)
+    session=Fake_Session()
+    session.ecs=Draining_Ecs(drains=3)
+    messages=[]
+
+    result=Express_Service.services_express_create(session, "dw-x-1", "img:1", 8000,
+                                                   role_arns=("arn:e", "arn:i"), on_progress=messages.append)
+
+    assert result.service_arn == "arn:svc"
+    assert session.ecs.calls == 4
+    assert len(messages) == 1
+
+
+# DRAINING 이 시간 안에 안 끝나면 그 오류를 그대로 올린다
+def test_express_create_gives_up_when_draining_too_long(monkeypatch):
+    from botocore.exceptions import ClientError
+    from features.express import services as express_module
+
+    monkeypatch.setattr(express_module.settings, "deploy_poll_seconds", 0)
+    monkeypatch.setattr(express_module.settings, "deploy_timeout", 0)
+    session=Fake_Session()
+    session.ecs=Draining_Ecs(drains=99)
+
+    with pytest.raises(ClientError):
+        Express_Service.services_express_create(session, "dw-x-1", "img:1", 8000, role_arns=("arn:e", "arn:i"))
+
+
+# 다른 오류는 기다리지 않고 바로 올린다
+def test_express_create_other_errors_not_retried(monkeypatch):
+    from botocore.exceptions import ClientError
+    from features.express import services as express_module
+
+    class Other_Ecs(Fake_Ecs):
+        calls=0
+
+        def create_express_gateway_service(self, **params):
+            Other_Ecs.calls+=1
+            raise ClientError({"Error": {"Code": "AccessDeniedException", "Message": "nope"}}, "CreateExpressGatewayService")
+
+    monkeypatch.setattr(express_module.settings, "deploy_poll_seconds", 0)
+    session=Fake_Session()
+    session.ecs=Other_Ecs()
+
+    with pytest.raises(ClientError):
+        Express_Service.services_express_create(session, "dw-x-1", "img:1", 8000, role_arns=("arn:e", "arn:i"))
+
+    assert Other_Ecs.calls == 1
