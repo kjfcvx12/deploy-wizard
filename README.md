@@ -98,7 +98,7 @@ Claude Code·Claude Desktop 같은 MCP 클라이언트에서 말로 분석·배�
 
 ```bash
 # 프로젝트 폴더에서 실행 (모듈 경로와 .env 를 현재 폴더 기준으로 찾는다)
-claude mcp add --env PYTHONPATH=<프로젝트 경로> deploy-wizard -- <프로젝트 경로>/.venv/Scripts/python.exe -m features.mcp
+claude mcp add deploy-wizard -e PYTHONPATH=<프로젝트 경로> -- <프로젝트 경로>/.venv/Scripts/python.exe -m features.mcp
 ```
 
 Claude Desktop 은 설정 JSON 의 `mcpServers` 에 같은 내용을 넣는다. 작업 폴더가 프로젝트가 아닐 수 있으니 `PYTHONPATH` 를 프로젝트 경로로 주고, 환경변수는 `env` 에 직접 적는다.
