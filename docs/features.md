@@ -12,6 +12,7 @@
 | `explains` | 한국어 에러 해설 (규칙 → LLM) | scheme · services · ui | M5 |
 | `envvars` | 소스에서 환경변수 이름 찾기(스캐너), 종류 분류(규칙 → AI 선택), 값 입력·건너뛰기, 컨테이너에 넣을 값, 실행 중 에러에서 이름 찾기 | models · scheme · crud · scan · services · router · ui | 백엔드 + 화면 (실제 AWS 검증 전) |
 | `advice` | 배포 전 분석 - 사양 수준·필요한 것·확신도 (읽기 전용, 숫자는 검증 전이라 비움) | scheme · services · router · ui | 백엔드 + 화면 (실제 AWS 검증 전) |
+| `pricing` | 비용 확인 - AWS 공개 가격 파일 읽기(24시간 캐시), 사양 프리셋 4개, 비용 추정(Fargate + ALB 고정분, ARM64 비교는 표시만), 자동 증설 값 검사 | scheme · services · router | 백엔드 (가짜 가격·Express 로만 확인, 프리셋·`scalingTarget`·기본 사양 실제 AWS 미검증), 화면은 다음 계획 |
 | `accounts` | 사용자 AWS 계정 연결(CloudFormation+AssumeRole) · GitHub App 연결 - 연결·파이프라인 배선(private 클론 포함) 완료 | models · scheme · crud · services · router · cloudformation/ · ui | M6 (진행 중) |
 | `watches` | 코드 변경 감지 - 폴링(백그라운드) + 웹훅(서명 검증 + 디바운스) 둘 다 코드 완료 | services | M6 (코드 완료, 실제 검증 남음) |
 | `health` | 떠 있는 배포를 1분마다 점검해 이력을 남기는 감시 루프, 이력 정리(7일) | models · scheme · crud · services | D1 (코드 완료, 실제 AWS 미검증) |
@@ -40,6 +41,8 @@
                                                                         ▲                   │
                           [deploys.pipeline / watches] ── 배포 완료·실패·새 커밋 알림 ─────┘ (자동 조치 결과도 알림)
 ```
+
+비용 확인(`pricing`)은 `advice`·`deploys`가 services 로만 부르고, 예정 사용 시간 초과 알림은 `health` 감시 루프가 `deploys`의 점검 함수를 불러 `notifications`로 보낸다 (알림만, 자동 멈춤·삭제 없음).
 
 새 코드를 둘 곳: 점검 방식·주기·이력 → `health`, 인시던트 열기·닫기·원인 규칙 → `incidents/services.py`, 자동 조치와 한도 → `incidents/recovery.py`, 알림 글·발송 채널·설정 → `notifications`(`compose` 글, `dispatch` SMTP·Expo, `inbox` 조회용). 자동 조치를 늘리려면 CLAUDE.md Hard rule 3 을 먼저 고쳐야 한다 (지금은 재시작과 되돌리기 둘뿐).
 

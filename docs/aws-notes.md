@@ -22,8 +22,11 @@ Express Mode는 2025년 11월 신규 기능이라 AI가 없는 파라미터를 �
 - `tags`: **소문자** `[{key, value}]` (ECR은 대문자 `Key`/`Value` — 섞지 말 것)
 - `cpuArchitecture`: `X86_64` | `ARM64`
 - `scalingTarget`: `minTaskCount` `maxTaskCount` `autoScalingMetric`(`AVERAGE_CPU`|`AVERAGE_MEMORY`|`REQUEST_COUNT_PER_TARGET`) `autoScalingTargetValue`
+  - 우리는 서비스를 **처음 만들 때만** 보낸다 (사용자가 고른 값, 4개가 다 있을 때만). 재배포·복구의 `update`에는 보내지 않는다. 허용 범위(최대 작업 수, 목표값 등)는 **미검증** — 우리 쪽 상한은 `MAX_TASKS_CAP`(기본 4), 목표값은 CPU·메모리 1~100, 요청 수 1~100000으로 직접 막은 값이다. 서비스 모델의 기본: 지표 `CPUUtilization`, 목표값 60.
+- `cpu`·`memory` 표기 (botocore 1.43.126 서비스 모델로 확인, 2026-11-16): `cpu` = **CPU 단위 문자열**(`"256"` = 0.25 vCPU), `memory` = **MiB 문자열**(`"512"`). 우리는 프리셋 4개(256/512, 512/1024, 1024/2048, 2048/4096)만 서비스를 **처음 만들 때** 보낸다 (우선순위: 배포별 값 → `.env`의 `ECS_CPU`/`ECS_MEMORY` → 보내지 않음).
 - `taskDefinitionArn`은 `primaryContainer`·`executionRoleArn`·`taskRoleArn`·`cpu`·`memory`와 함께 쓸 수 없다.
-- 기본값: 1 vCPU / 2 GB, 포트 80, CPU 기준 오토스케일, 기본 VPC의 퍼블릭 서브넷에 인터넷 연결 ALB.
+- 기본값: 포트 80, CPU 기준 오토스케일, 기본 VPC의 퍼블릭 서브넷에 인터넷 연결 ALB.
+- ⚠ **기본 사양 충돌 (2026-11-16)**: 예전 메모(개발 안내서 기준)는 기본값을 1 vCPU / 2 GB 라고 적었지만, botocore 1.43.126 서비스 모델은 `cpu` 기본 **256 (.25 vCPU)**, `memory` 기본 **512 MiB**라고 적는다. 어느 쪽이 맞는지 **미검증** — 사양을 안 정하고 만든 실제 서비스를 `describe`로 읽어 보기 전까지 믿지 않는다. 비용 추정은 모델 값(256/512)으로 계산하고 "확인 전"이라고 밝힌다.
 
 ### 응답에서 읽는 것
 
@@ -79,7 +82,11 @@ service.activeConfigurations[].ingressPaths[]  { accessType: PUBLIC|PRIVATE, end
 ## M1에서 확인할 것
 
 - [ ] `services_express_wait`의 완료 판정이 실제 상태 흐름과 맞는가 — 생성 직후 배포 기록이 언제부터 보이는가
-- [ ] `cpu` / `memory` 최소값과 표기 (`"0.25"`? `"256"`?) — 지금은 비워 두고 기본값(1 vCPU / 2 GB)을 쓴다
+- [x] `cpu` / `memory` 표기 — CPU 단위 문자열(`"256"`)과 MiB 문자열 (botocore 1.43.126 모델, 2026-11-16). 기본 사양은 위 "기본 사양 충돌" 참고
+- [ ] 프리셋 4개(256/512, 512/1024, 1024/2048, 2048/4096)를 Express 가 모두 받는가 (작업 크기 조합 제한이 있는가)
+- [ ] `cpu`·`memory`를 안 정하고 만든 서비스의 **실제 기본 크기** (`describe` 결과로 256/512 인지 1024/2048 인지)
+- [ ] ALB 가 서비스마다 하나 생기는가, 여러 서비스가 공유하는가 (아래 "비용"의 "같은 VPC에서 25개 서비스까지 1개 공유"는 문서 기준이고 실제 확인 전. 비용 추정은 서비스마다 하나라고 가정한다)
+- [ ] `scalingTarget`의 허용 범위 — `minTaskCount=0`이 되는가, 최대 작업 수·목표값 한계는 얼마인가 (우리는 최소 1 이상, 최대 `MAX_TASKS_CAP`로 막는다)
 - [ ] 배포 서킷 브레이커 + 카나리 + 5XX 알람이 **롤백을 대신해 주는가**. 된다면 롤백을 직접 구현하지 않는다 (기획서 03장)
 - [ ] Express Mode가 자동 생성한 ALB·보안그룹에 우리 `managed-by` 태그가 전파되는가 — M6의 "태그 기준 권한 한정"이 여기에 달려 있다
 - [ ] 서비스 삭제 후 ALB가 실제로 회수되기까지 걸리는 시간
@@ -131,7 +138,7 @@ service.activeConfigurations[].ingressPaths[]  { accessType: PUBLIC|PRIVATE, end
 
 - 멈춤 = `delete_express_gateway_service`만. ECR 이미지·기록은 남긴다. 다시 켜기 = 저장된 `image_uri`로 `create_express_gateway_service` (같은 `serviceName`).
 - [x] 서비스 삭제 직후(DRAINING) 같은 이름으로 다시 만들 수 있는가 — **못 만든다** (`InvalidParameterException: Unable to Start a service that is still Draining`, 2026-11-15). 멈춤 뒤 다시 켜기까지 약 10분 걸렸다. `services_express_create` 가 이 메시지면 `deploy_timeout`(1200초) 안에서 다시 시도한다. 서비스 삭제 뒤 ALB(`ecs-express-gateway-alb-*`)는 약 8분 뒤 저절로 사라진다
-- [ ] 다시 켠 뒤 주소가 전과 같은가 (`https://<service-name>.ecs.<region>.on.aws/`)
+- [x] 다시 켠 뒤 주소가 전과 같은가 — **다르다** (2026-11-15 실제 확인: 서비스를 다시 만들면 주소가 새로 생긴다)
 - [ ] 마지막 서비스를 내리면 ALB 요금이 실제로 멈추는가 (위 "M1에서 확인할 것"의 ALB 회수 시간과 같은 질문)
 - [ ] 삭제 후 남는 것이 있는가 — CloudWatch 로그 그룹, 보안그룹. `python scripts/cleanup.py`로 확인
 
@@ -158,5 +165,26 @@ service.activeConfigurations[].ingressPaths[]  { accessType: PUBLIC|PRIVATE, end
 - [ ] 이미지만 바꾼 `update`가 `ROLLBACK_*` 배포 상태를 거치지 않고 끝나는가 (`services_express_wait`가 실패로 읽는 상태)
 
 ## 비용
+
+### 가격 출처와 기준 (2026-11-16)
+
+코드는 실행할 때 AWS **공개 가격 파일**(인증 없음)을 읽는다: `https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/{AmazonECS|AWSELB}/current/{region}/index.json` (`features/pricing/services.py`, 서버 파일 캐시 24시간 `PRICING_CACHE_HOURS`). Fargate x86 vCPU·GB, ALB 시간당(`LoadBalancerUsage`)·LCU 행을 고른다. 아래 값은 **2026-11-16에 서울 리전(ap-northeast-2)에서 본 값**일 뿐 코드에 박혀 있지 않다 (바뀔 수 있음):
+
+| 항목 | 단가 (USD) |
+|------|-----------|
+| Fargate x86 vCPU | 0.04656 / 시간 |
+| Fargate x86 메모리 | 0.00511 / GB·시간 |
+| ALB 고정 | 0.0225 / 시간 |
+| ALB LCU | 0.008 / LCU·시간 (추정에는 넣지 않는다) |
+
+기본 사양(0.25 vCPU / 0.5 GB) 시간당 약 $0.0367 (Fargate 0.0142 + ALB 0.0225), 한 달(730시간) 약 $26.79. 계산식과 빠지는 요금은 [`architecture.md`](./architecture.md) "비용 확인". 이 값들은 추정치이고 실제 청구서와 대조한 적 없다.
+
+### 실제로 본 것 (2026-11-15, 실제 AWS)
+
+- 서비스를 멈춘(삭제한) 직후 같은 이름으로 다시 만들면 `Unable to Start a service that is still Draining`으로 실패한다. 다시 켜기까지 약 10분 걸렸다 (코드가 이 메시지면 `deploy_timeout` 안에서 다시 시도한다).
+- 서비스를 지우면 ALB(`ecs-express-gateway-alb-*`, `managed-by` 태그 있음)는 약 8분 뒤 저절로 사라진다.
+- 서비스를 다시 만들면 주소(`endpoint`)가 새로 바뀐다.
+
+### 일반
 
 ALB는 떠 있는 동안 계속 과금된다 (같은 VPC에서 25개 서비스까지 1개를 공유). 작업을 끝낼 때 "오늘 만든 리소스 다 지웠나"를 확인한다. AWS Budgets 예산 알림을 가장 먼저 걸어 둔다.

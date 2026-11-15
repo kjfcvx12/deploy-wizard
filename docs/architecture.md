@@ -22,6 +22,7 @@
 │   ├── explains/               ← scheme.py  services.py  ui/
 │   ├── envvars/                ← models.py  scheme.py  crud.py  scan.py  services.py  router.py  (환경변수 이름 감지·입력)
 │   ├── advice/                 ← scheme.py  services.py  router.py  (배포 전 분석, DB 없음)
+│   ├── pricing/                ← scheme.py  services.py  router.py  (비용 확인 - AWS 공개 가격 파일 읽기·캐시·추정, DB·AWS 호출 없음)
 │   ├── accounts/               ← scheme.py  crud.py  services.py  router.py  cloudformation/  ui/  (M6, 진행 중)
 │   ├── watches/                ← services.py 만 (DB 없음, 상태는 Deploy에)  (M6, 진행 중 - 폴링만 완료)
 │   ├── health/                 ← models.py  scheme.py  crud.py  services.py  (D1 - 1분마다 헬스체크 이력, 감시 루프)
@@ -58,7 +59,7 @@ features/A  → features/B    services 끼리만 ✅ (B의 crud·models 를 직�
 ui/         → 같은 기능의 api.js, shared/ui, 다른 기능의 ui 컴포넌트 ✅
 ```
 
-기능 조립은 `features/deploys/pipeline.py` 한 곳에서만 한다. `repos`·`dockerfiles`·`builds`·`express`·`explains`는 서로를 모른다 (예외: `dockerfiles`는 레포 요약을 위해 `repos`의 services 를 쓴다). `envvars`는 `deploys`가 파이프라인(분석 단계 저장, 배포 직전 값 확인, 컨테이너에 넣을 값)과 목록의 `env_pending`을 채우려고 services 로만 부른다. 반대로 `envvars`가 배포 존재를 확인하려고 `deploys`의 services 를 부르는데, 순환 임포트라 `envvars/services.py`에서는 함수 안에서 지연 임포트한다. `advice`는 DB에 쓰지 않고 `repos`·`envvars`·`accounts`(GitHub 토큰)의 services 만 부르며, 아무도 `advice`를 부르지 않는다 — 라우터만 있다. `accounts`·`watches`는 예외 — `deploys`가 배포에 쓸 AWS/GitHub 세션을 얻으려고 `accounts`의 services 를 부르고(M6, `pipeline.py`·`services_deploy_delete`·`services_deploy_get_remote`에 배선됨), `accounts`도 계정 삭제 시 연결을 끊으려고 `deploys`의 services 를 부른다(순환 임포트라 `accounts/services.py`에서는 함수 안에서 지연 임포트한다). `watches`는 `deploys`(폴링 대상 조회, 재배포 트리거)와 `accounts`(GitHub 토큰)의 services 만 부르고, 아무도 `watches`를 부르지 않는다 — `main.py`가 백그라운드 태스크로 직접 돌린다.
+기능 조립은 `features/deploys/pipeline.py` 한 곳에서만 한다. `repos`·`dockerfiles`·`builds`·`express`·`explains`는 서로를 모른다 (예외: `dockerfiles`는 레포 요약을 위해 `repos`의 services 를 쓴다). `envvars`는 `deploys`가 파이프라인(분석 단계 저장, 배포 직전 값 확인, 컨테이너에 넣을 값)과 목록의 `env_pending`을 채우려고 services 로만 부른다. 반대로 `envvars`가 배포 존재를 확인하려고 `deploys`의 services 를 부르는데, 순환 임포트라 `envvars/services.py`에서는 함수 안에서 지연 임포트한다. `advice`는 DB에 쓰지 않고 `repos`·`envvars`·`accounts`(GitHub 토큰)·`pricing`(비용 채우기)의 services 만 부르며, 아무도 `advice`를 부르지 않는다 — 라우터만 있다. `pricing`은 `shared/settings`만 쓰고 다른 기능을 모른다 — `advice`(비용 채우기)와 `deploys`(만들 때 사양·증설 검사)가 `pricing`의 services 만 부른다 (MCP 는 REST 로 부른다). `accounts`·`watches`는 예외 — `deploys`가 배포에 쓸 AWS/GitHub 세션을 얻으려고 `accounts`의 services 를 부르고(M6, `pipeline.py`·`services_deploy_delete`·`services_deploy_get_remote`에 배선됨), `accounts`도 계정 삭제 시 연결을 끊으려고 `deploys`의 services 를 부른다(순환 임포트라 `accounts/services.py`에서는 함수 안에서 지연 임포트한다). `watches`는 `deploys`(폴링 대상 조회, 재배포 트리거)와 `accounts`(GitHub 토큰)의 services 만 부르고, 아무도 `watches`를 부르지 않는다 — `main.py`가 백그라운드 태스크로 직접 돌린다.
 
 (D1) 운영 복구·알림 세 기능도 services 끼리만 부른다. `health.services`는 `deploys`(점검 대상 조회, 결과 반영)와 `incidents`(점검 결과 훅)를 부른다. `incidents.services`는 `express`(상태 조회)·`accounts`(세션)·`notifications`를, `incidents.recovery`는 거기에 `envvars`(복구 때도 환경변수를 같이 보낸다)를 더해 부르고, 필요할 때 `deploys`·`health`를 부른다. `deploys.services`는 목록의 `open_incident_id`를 채우려고 `incidents`를, `deploys.pipeline`과 `watches`는 알림을 보내려고 `notifications`를 부른다. `notifications.services`는 인시던트·배포를 읽으려고 `incidents`·`deploys`를 부른다. 순환 임포트가 되는 쪽(`incidents`↔`deploys`/`health`, `notifications`↔`incidents`/`deploys`)은 쓰는 함수 안에서 지연 임포트한다. 조립은 원래 `pipeline.py` 한 곳이라는 원칙의 예외가 하나 있다 — `incidents/recovery.py`가 복구 때 `express`의 갱신을 직접 부른다 (배포 파이프라인과 별개로, 이미 떠 있는 서비스에 두 가지 조치만 하는 자리라서).
 
@@ -69,6 +70,7 @@ Claude 같은 MCP 클라이언트가 stdio 로 붙는 별도 프로세스(`pytho
 - `services.py`: 도구 로직 (첫 인자 `Wizard_Client`). 응답을 허용 목록 요약으로 줄이고, 로그·오류·해설은 `guard.py`로 마스킹·자른 뒤 "신뢰할 수 없는 데이터" 표시로 감싼다.
 - `server.py`: 도구 13개 등록(읽기 8, 행동 5). 행동 도구는 `confirm_token` 이 없으면 미리보기를 만든 뒤, 클라이언트가 elicitation 을 지원하면 사용자에게 직접 묻고, 아니면 미리보기와 확인 토큰(`Confirm_Store`, 5분·1회용·도구와 인자에 묶임)을 돌려준다. 살아 있는 배포 한도(기본 3)는 서비스 한 곳에서 검사한다.
 - 자동 조치는 늘리지 않는다 — 확인 없이 AWS 를 바꾸는 도구가 없다 (하드 규칙 3).
+- `deploy` 도구는 사양(`cpu`·`memory`)·예정 시간(`planned_hours`)·자동 증설(`min_tasks`·`max_tasks`·`scale_metric`·`scale_target`) 인자를 받고, 미리보기에 `POST /api/pricing/estimate` 결과로 만든 비용 줄(시간당·한 달·예정 시간 금액, 증설 최대치, ARM64 비교, 포함되지 않는 것)을 붙인다. 가격을 못 얻으면 "가격을 가져오지 못했습니다" 한 줄을 넣고 미리보기는 그대로 만든다.
 - 한계: elicitation 도 확인 토큰도 사람이 승인했다는 증거가 아니다 (에이전트형 클라이언트가 elicitation 에 스스로 답할 수 있고, 토큰 경로는 모델에게 주는 지시일 뿐이다). 실제 관문은 호스트의 도구별 승인 창이므로 행동 도구 5개를 자동 허용 목록에 넣지 않는다. 서버가 강제하는 것은 살아 있는 배포 한도(`deploy`·`start_deploy`·멈춘/실패한 배포의 `redeploy`)와 토큰 바인딩·만료뿐이다.
 
 ## 계층
@@ -126,7 +128,7 @@ DB가 없는 기능(`repos`, `builds` …)은 `services.py`만 있다.
                                                                               resolved + incident_recovered / needs_action + 알림
 ```
 
-- **감시 루프**: `Health_Service.services_health_monitor_loop`가 `HEALTH_INTERVAL_SECONDS`(60초)마다 `running`이면서 주소가 있는 배포를 점검한다. 동시 점검 수 제한, 점검마다 제한 시간, 한 배포의 오류가 다른 배포나 루프를 멈추지 않는다. 점검하는 사이 멈추거나 지워진 배포는 기록하지 않는다. 가끔 `HEALTH_RETENTION_DAYS`(7일)보다 오래된 기록을 지운다. 점검 대상 주소는 배포 자신의 `endpoint + health_check_path`뿐이다. `HEALTH_MONITOR_ENABLED=false`면 루프를 띄우지 않는다. 정상이 처음 확인되면 현재 릴리스의 `healthy_since`를 채운다 (되돌리기 대상이 되려면 필요).
+- **감시 루프**: `Health_Service.services_health_monitor_loop`가 `HEALTH_INTERVAL_SECONDS`(60초)마다 `running`이면서 주소가 있는 배포를 점검한다. 동시 점검 수 제한, 점검마다 제한 시간, 한 배포의 오류가 다른 배포나 루프를 멈추지 않는다. 점검하는 사이 멈추거나 지워진 배포는 기록하지 않는다. 가끔 `HEALTH_RETENTION_DAYS`(7일)보다 오래된 기록을 지운다. 점검 대상 주소는 배포 자신의 `endpoint + health_check_path`뿐이다. `HEALTH_MONITOR_ENABLED=false`면 루프를 띄우지 않는다 — 그러면 예정 사용 시간 초과 알림(아래 "비용 확인")도 같이 멈춘다. 정상이 처음 확인되면 현재 릴리스의 `healthy_since`를 채운다 (되돌리기 대상이 되려면 필요).
 - **인시던트 처리 태스크**: 훅은 모니터의 세션 안이라 DB 만 쓰고 끝낸다. AWS 조회·설명·알림·복구는 `Incident_Service.services_incident_spawn`이 띄운 태스크가 자기 세션으로 한다. 참조를 `INCIDENT_TASKS`에 쥐고 있고 서버를 끌 때 cancel 한다. 상태 전환은 조건부 UPDATE 라 모니터의 해제와 태스크의 마무리가 서로 덮어쓰지 않는다. 배포마다 하나의 끝나지 않은 인시던트(`open` `recovering` `needs_action`)만 둔다.
 - **복구 한도**(코드가 AWS 호출 직전마다 다시 확인): 인시던트당 2회(재시작 1 + 되돌리기 1), 배포당 24시간 6회, 배포별 잠금, 조치 뒤 120초 기다린 다음 300초 안에 3번 연속 정상이어야 성공. 자세한 순서와 규칙은 [`api-spec.md`](./api-spec.md) "자동 복구". 복구 중 사용자가 배포를 바꾸면 기록을 덮어쓰지 않고 `needs_action`.
 - **루프 방지**: 되돌린 배포는 나쁜 커밋을 `deploys.bad_commit_sha`에 기억한다. 감시 폴링·웹훅이 같은 커밋을 보면 다시 배포하지 않고 표시만 한다.
@@ -134,6 +136,30 @@ DB가 없는 기능(`repos`, `builds` …)은 `services.py`만 있다.
 - **서버 재시작**: `services_recovery_resume`이 `recovering` 인시던트는 `needs_action`(진행 중이던 조치는 `failed`)으로, 처리 중이던 `open`은 배포가 `running`이고 `auto_recover`가 켜져 있으면 처리를 다시 띄우고 아니면 `needs_action`으로 정리한다.
 - **아직 없는 것**: 컨테이너 로그·ECS 이벤트 수집(AWS 호출 미검증), 운영 에이전트(`docs/app-web` D12, 읽기 도구 + 조치 도구 둘을 LLM이 고르는 루프), 로그인별 알림(`u_id`는 로그인이 생길 때까지 null). 지금 원인 설명은 규칙 표뿐이다.
 - **미검증**: 같은 이미지로 서비스를 갱신하면 실제로 작업이 다시 시작되는지, 이미지 갱신으로 되돌리기가 실제로 되는지(`docs/aws-notes.md` "운영 복구"), 실제 SMTP 서버와 Expo 푸시 서버로의 발송. 시험은 전부 가짜(점검기·갱신기·잠자기·메일·푸시)로 돌렸다.
+
+## 비용 확인 (`features/pricing`)
+
+배포를 만들기 전에 "얼마가 드는가"를 보여 주고, 떠 있는 동안 예정한 시간을 넘기면 알린다. 백엔드만 있다 (화면은 다음 계획). 계약은 [`api-spec.md`](./api-spec.md) "Pricing", 설계는 [`superpowers/specs/2026-11-16-cost-confirm-design.md`](./superpowers/specs/2026-11-16-cost-confirm-design.md).
+
+```
+AWS 공개 가격 파일 (AmazonECS, AWSELB; 인증 없음, 리전별 index.json)
+        │  Pricing_Service.services_pricing_table  (httpx, 읽기 실패 시 낡은 캐시, 그것도 없으면 None)
+        ▼
+data/cache/pricing-<리전>.json   ← 단가 표 + 저장 시각, PRICING_CACHE_HOURS(24시간) 안이면 그대로 쓴다
+        │
+        ▼  services_pricing_estimate (순수 함수)
+   Cost_Estimate ──▶ POST /api/pricing/estimate (표가 없으면 503)
+        └──────────▶ advice 의 cost (분석 결과 캐시를 건드리지 않고 복사본에 매번 채운다, 표가 없으면 숫자 None)
+        └──────────▶ MCP deploy 미리보기 (REST 로 부른다)
+```
+
+- **계산**: 시간당 = Fargate(vCPU 수 x vCPU 단가 + GB 수 x GB 단가) + ALB 고정 시간당. 기간별 금액은 1시간·1일(24)·1주(168)·한 달(730시간). 사양은 프리셋 4개(256/512, 512/1024, 1024/2048, 2048/4096)만 받는다. 사양을 안 정하면 기본 사양 256/512로 계산하고 "실제 배포에서 아직 확인하지 않은 값"이라고 밝힌다. 가정은 "서비스마다 ALB 가 하나씩 생긴다"(공유 여부 미확인이라 가장 비싼 경우).
+- **들어 있지 않은 것**: ALB 사용량(LCU) 요금, 데이터 전송, CloudWatch Logs, ECR 저장. 응답의 `not_included`에 그대로 적는다. 금액은 온디맨드 USD 추정치이고 실제 청구서가 아니다.
+- **ARM64**: 시간당 금액과 절감률을 비교용으로만 보여 준다. 이 마법사는 항상 `linux/amd64`로 빌드하므로(하드 규칙 9) ARM64 로 배포하지 않는다.
+- **자동 증설 = 사용자가 고른 AWS 설정**: 만들 때 `min_tasks`·`max_tasks`·`scale_metric`·`scale_target`을 모두 정하면 Express 서비스를 **처음 만들 때만** `scalingTarget`으로 보낸다 (`cpu`·`memory`도 마찬가지, 이미 있는 서비스의 재배포·복구는 보내지 않는다). 늘고 주는 것은 AWS 가 하며 우리 시스템이 자동으로 조치하는 것이 아니다 (하드 규칙 3 의 자동 조치에 해당하지 않음). 최대 작업 수는 `MAX_TASKS_CAP`(기본 4)으로 막는다.
+- **예정 사용 시간 알림 (알림만)**: `deploys.running_since`가 `running`이 될 때 비어 있으면 채워지고(재배포는 이어서 센다), 멈춤·삭제·서비스 없는 실패에서 비워진다. 헬스 감시 루프(60초)가 점검 뒤 `Health_Service.services_health_plan_notify`를 불러, `planned_hours`가 있고 `running_since`로부터 그 시간이 지났고 `plan_notified_at`이 비어 있는 `running` 배포에 `plan_exceeded` 알림을 한 번 보내고 `plan_notified_at`을 채운다. **멈추거나 지우지는 않는다.** 예정 시간을 PATCH 로 바꾸면 알림이 다시 켜진다. 헬스 점검 쪽 실패와 서로 막지 않도록 따로 감싼다. 한계: 이미 있는 `notification_settings` 줄의 `kinds`에는 `plan_exceeded`가 없어서 설정에서 켜기 전까지 이 알림은 꺼진 상태다 (마이그레이션 없음 — 사용자가 끈 것과 옛 설정을 구분할 수 없어서). 열이 생기기 전부터 떠 있던 배포는 `running_since`가 비어 있어 알림 대상이 아니다.
+- **미검증**: 프리셋 4개를 Express 가 모두 받는지, 사양을 안 정했을 때의 실제 기본 크기, `scalingTarget` 허용 범위, ALB 가 서비스마다 하나인지 (`docs/aws-notes.md`). 시험은 전부 가짜 가격 파일·가짜 Express 로 돌렸다.
+- **설계만 있고 만들지 않은 것**: 시간대 스케줄 자동 절전, 유휴 휴면, Kubernetes (스펙 7절).
 
 ## 웹 운영 화면 (계획 E)
 
@@ -166,6 +192,7 @@ tests/web/                   node:test 로직 테스트 (npm run test:web)
 | 빌드 실패 | Dockerfile 자가수정 (우리가 만든 파일만) | — |
 | 배포 실패 | 멈춘다 | 해설 + [다시 배포] [리소스 정리] [그대로 두기] |
 | 재배포 실패 | Express Mode의 카나리·알람 롤백에 맡긴다 *(M1에서 동작 확인 필요)* | 해설 |
+| 예정 사용 시간 초과 | 알림만 (멈추거나 지우지 않는다) | 멈추거나 삭제하세요 / 예정 시간 늘리기 |
 | 리소스 삭제 | 하지 않는다 | 확인 대화상자 |
 
 ## 데이터베이스
@@ -179,13 +206,14 @@ tests/web/                   node:test 로직 테스트 (npm run test:web)
 - `aws_accounts` (M6) — 연결된 AWS 계정. `role_arn`, 암호화된 `external_id_encrypted`, 검증 상태
 - `github_installations` (M6) — 연결된 GitHub App 설치. 토큰은 저장하지 않는다 (매번 새로 발급)
 - (D1) `deploys`에 열 넷이 더해졌다: `auto_recover`(기본 켜짐), `health_state`, `last_health_at`, `bad_commit_sha`
+- (비용 확인) `deploys`에 열 아홉이 더해졌다 (모두 nullable): `cpu`, `memory`, `min_tasks`, `max_tasks`, `scale_metric`, `scale_target`, `planned_hours`, `running_since`, `plan_notified_at`
 - (D1) `health_checks` — 점검 한 건 (`h_c_id`, `d_id` FK CASCADE). 7일 지나면 지운다
 - (D1) `incidents` — 인시던트 (`i_id`, `d_id`). `kind`·`status`·`summary`·`explain`(JSON)·`evidence`
 - (D1) `recovery_actions` — 자동 조치 한 건 (`r_a_id`, `i_id` FK, `action` `restart|rollback`, `result` `running|ok|failed`)
 - (D1) `deploy_releases` — running 에 닿을 때마다 한 줄 (`d_r_id`, `d_id`, `commit_sha`, `image_uri`, `state` `current|previous|old|failed`, `healthy_since`)
 - (D1) `notifications`(`n_id`) · `push_devices`(`p_d_id`) · `notification_settings` — 알림 줄, 푸시 기기, 한 줄짜리 설정. `u_id`는 로그인이 생길 때까지 null
 
-테이블은 시작할 때 `create_all`로 만든다 — SQLite `create_all`은 없는 테이블만 만들고, 있는 테이블에 컬럼을 추가하지 않는다. (D1) 그래서 `lifespan()`이 `create_all` 뒤에 `shared/database.py`의 `ensure_columns`를 부른다: `ENSURE_COLUMNS`에 적힌 열(지금은 `deploys`의 위 네 열)이 실제 표에 없으면 `ALTER TABLE ... ADD COLUMN`으로 더한다 (여러 번 불러도 안전, NOT NULL 열은 기본값이 있어야 한다). 새 열을 늘릴 때는 모델과 `ENSURE_COLUMNS`를 같이 고친다. 열을 지우거나 바꾸는 일은 여전히 못 한다 — 그런 일이 잦아지면 alembic을 붙인다. 시험에서는 옛 모양의 표로 보정이 되는 것을 확인했지만, 실제 `data/wizard.db`에서의 첫 실행은 아직 해 보지 않았다.
+테이블은 시작할 때 `create_all`로 만든다 — SQLite `create_all`은 없는 테이블만 만들고, 있는 테이블에 컬럼을 추가하지 않는다. (D1) 그래서 `lifespan()`이 `create_all` 뒤에 `shared/database.py`의 `ensure_columns`를 부른다: `ENSURE_COLUMNS`에 적힌 열(지금은 `deploys`의 D1 네 열과 비용 확인 아홉 열)이 실제 표에 없으면 `ALTER TABLE ... ADD COLUMN`으로 더한다 (여러 번 불러도 안전, NOT NULL 열은 기본값이 있어야 한다). 새 열을 늘릴 때는 모델과 `ENSURE_COLUMNS`를 같이 고친다. 열을 지우거나 바꾸는 일은 여전히 못 한다 — 그런 일이 잦아지면 alembic을 붙인다. 시험에서는 옛 모양의 표로 보정이 되는 것을 확인했지만, 실제 `data/wizard.db`에서의 첫 실행은 아직 해 보지 않았다.
 
 ## 보안 메모
 
