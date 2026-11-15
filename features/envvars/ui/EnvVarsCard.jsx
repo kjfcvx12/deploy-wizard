@@ -69,7 +69,7 @@ function EnvRow({ row, busy, onPut, onClear }) {
   )
 }
 
-// 같은 성격의 변수 묶음 - fold 이면 접어 둔다
+// 같은 성격의 변수 묶음 - fold 이면 접을 수 있게 하되 처음부터 펼쳐 두어 내용이 가려지지 않게 한다
 function EnvGroup({ title, rows, fold, ...rowProps }) {
   if (rows.length === 0) return null
 
@@ -77,7 +77,7 @@ function EnvGroup({ title, rows, fold, ...rowProps }) {
 
   if (fold) {
     return (
-      <details className="env-group">
+      <details className="env-group" open>
         <summary>{title} <span className="muted small">({rows.length})</span></summary>
         {list}
       </details>

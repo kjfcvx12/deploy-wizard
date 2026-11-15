@@ -103,7 +103,7 @@ button.danger { color: var(--err); border-color: var(--err); }
 
 /* 상태 배지 */
 .badge {
-  display: inline-flex; align-items: center; gap: 6px; white-space: nowrap;
+  display: inline-flex; align-items: center; gap: 6px; max-width: 100%; overflow-wrap: anywhere;
   padding: 2px 10px; border-radius: 999px; font-size: 12px; font-weight: 700;
   background: var(--surface-2); color: var(--muted);
 }
@@ -216,7 +216,7 @@ button.account-arrow { padding: 6px 12px; font-size: 18px; line-height: 1; }
   border: 1px solid var(--border); border-radius: 6px; background: var(--surface); font-family: var(--mono);
 }
 .shot-option {
-  display: inline-flex; align-items: center; gap: 6px; padding: 5px 10px;
+  display: inline-flex; align-items: center; gap: 6px; padding: 5px 10px; min-width: 0; overflow-wrap: anywhere;
   border: 1px solid var(--border); border-radius: 6px; background: var(--surface);
 }
 .shot-dot, .shot-box { flex: none; width: 12px; height: 12px; border: 2px solid var(--muted); }
@@ -224,7 +224,7 @@ button.account-arrow { padding: 6px 12px; font-size: 18px; line-height: 1; }
 .shot-box { border-radius: 3px; }
 .shot-option.on .shot-dot, .shot-option.on .shot-box { border-color: var(--accent); background: var(--accent); }
 .shot-mark { outline: 2px solid var(--warn); outline-offset: 2px; }
-.shot-file { font-family: var(--mono); color: var(--muted); }
+.shot-file { font-family: var(--mono); color: var(--muted); min-width: 0; overflow-wrap: anywhere; }
 .shot-btn {
   margin-left: auto; padding: 5px 14px; border-radius: 6px; font-weight: 700;
   background: var(--accent); color: var(--accent-text);
@@ -294,10 +294,11 @@ details.env-group > summary { font-size: 14px; }
 }
 
 @media (max-width: 640px) {
-  .topbar-note { display: none; }
+  .topbar nav { display: contents; }
+  .topbar-note { flex: 1 1 100%; }
   .account-boxes { grid-template-columns: 1fr; }
-  .step { font-size: 0; }
-  .step.now, .step.fail, .step.wait { font-size: 11px; }
+  .steps { flex-wrap: wrap; gap: 8px 4px; }
+  .step { flex: 1 0 calc(25% - 3px); min-width: 0; font-size: 11px; overflow-wrap: anywhere; word-break: keep-all; }
 }
 
 /* 배포 상세 폰 폭 - 되돌아가기 링크·펼침 제목 터치 크기, 해설 카드 버튼 쌓기, 터미널 높이 */
@@ -328,7 +329,7 @@ details.env-group > summary { font-size: 14px; }
 /* 운영 화면 - 인시던트 상세 (타임라인·헬스 막대·고칠 곳). 색은 위의 토큰만 쓴다 */
 .incident-head { align-items: flex-start; flex-wrap: nowrap; gap: 12px; }
 .incident-title { margin: 0; font-size: 18px; line-height: 1.4; min-width: 0; overflow-wrap: anywhere; }
-.incident-head .badge { flex: none; margin-top: 3px; }
+.incident-head .badge { flex: none; max-width: 60%; margin-top: 3px; }
 .incident-meta { margin: 8px 0 0; overflow-wrap: anywhere; }
 .body-text { margin: 0; overflow-wrap: anywhere; }
 .todo-list { margin: 0; padding-left: 22px; }
@@ -393,7 +394,7 @@ details.env-group > summary { font-size: 14px; }
 .incident-card:hover { background: var(--surface-2); }
 .incident-card-head { flex-wrap: nowrap; margin-bottom: 6px; }
 .incident-card-title { color: var(--warn); min-width: 0; }
-.incident-card-head .badge { flex: none; }
+.incident-card-head .badge { flex: none; max-width: 60%; }
 .incident-card-more { display: inline-block; margin-top: 6px; color: var(--accent); font-size: 13px; font-weight: 700; }
 
 /* 배포 상세 윗줄 - 왼쪽 되돌아가기, 오른쪽 [설정] 링크 */
@@ -457,10 +458,11 @@ details.env-group > summary { font-size: 14px; }
 .notif-title { overflow-wrap: anywhere; line-height: 1.4; }
 .notif-item.unread .notif-title { font-weight: 700; }
 .notif-text {
-  color: var(--muted); font-size: 13px; line-height: 1.5; overflow-wrap: anywhere;
-  display: -webkit-box; -webkit-line-clamp: 2; line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+  color: var(--muted); font-size: 13px; line-height: 1.5; overflow-wrap: anywhere; white-space: pre-wrap;
 }
 .notif-time { color: var(--muted); font-size: 12px; }
+/* 화면에는 안 보이고 스크린 리더만 읽는 글 (내용을 가리는 용도가 아니다) */
+.sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
 .notif-dot { flex: none; width: 10px; height: 10px; margin-top: 6px; border-radius: 50%; background: var(--accent); }
 .notif-empty { padding: 32px 0; text-align: center; }
 .notif-error { display: grid; gap: 4px; justify-items: start; }

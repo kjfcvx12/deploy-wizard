@@ -5,5 +5,5 @@ export default function HealthDot({ state }) {
   if (!Object.hasOwn(HEALTH_STATE_LABEL, state)) return null
   const label = HEALTH_STATE_LABEL[state]
   const tone = state === 'healthy' ? 'ok' : state === 'unhealthy' ? 'err' : 'muted'
-  return <span className={`health-dot ${tone}`} role="img" aria-label={`헬스체크: ${label}`} />
+  return <span className={`health-dot ${tone}`} role="img" aria-label={`헬스체크: ${label}`} title={label} />
 }
