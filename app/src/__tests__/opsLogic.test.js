@@ -3,6 +3,7 @@ import {
   NOTIFICATION_KIND_LABEL, NOTIFICATION_KIND_ICON, NOTIFICATION_KINDS,
   RECOVERY_ACTION_LABEL, RECOVERY_RESULT_LABEL, RECOVERY_RESULT_TONE, HEALTH_STATE_LABEL,
 } from '../ops/constants'
+import { KIND_HINT } from '../ops/notificationSettings'
 import { parseAppLink } from '../ops/links'
 import { formatTime, formatDate, formatClock, durationText, incidentTimeline, toMs } from '../ops/format'
 
@@ -10,7 +11,7 @@ import { formatTime, formatDate, formatClock, durationText, incidentTimeline, to
 const SERVER = {
   incidentStatus: ['open', 'recovering', 'resolved', 'needs_action'],
   incidentKind: ['unhealthy', 'crash_loop', 'bad_release', 'unknown'],
-  notificationKind: ['incident_opened', 'incident_recovered', 'incident_needs_action', 'deploy_succeeded', 'deploy_failed', 'new_commit'],
+  notificationKind: ['incident_opened', 'incident_recovered', 'incident_needs_action', 'deploy_succeeded', 'deploy_failed', 'new_commit', 'plan_exceeded'],
   recoveryAction: ['restart', 'rollback'],
   recoveryResult: ['running', 'ok', 'failed'],
   health: ['healthy', 'unhealthy', 'unknown'],
@@ -36,6 +37,17 @@ describe('라벨은 서버 값을 빠짐없이, 더도 덜도 없이 덮는다',
 
   test('NOTIFICATION_KINDS 는 서버 순서 그대로', () => {
     expect(NOTIFICATION_KINDS).toEqual(SERVER.notificationKind)
+  })
+
+  test('NOTIFICATION_KINDS 는 일곱 종류 고정 순서이고 plan_exceeded 라벨은 예정 사용 시간 초과', () => {
+    expect(NOTIFICATION_KINDS).toEqual([
+      'incident_opened', 'incident_recovered', 'incident_needs_action', 'deploy_succeeded', 'deploy_failed', 'new_commit', 'plan_exceeded',
+    ])
+    expect(NOTIFICATION_KIND_LABEL.plan_exceeded).toBe('예정 사용 시간 초과')
+    expect(NOTIFICATION_KIND_ICON.plan_exceeded).toBe(NOTIFICATION_KIND_ICON.deploy_failed)
+    expect(Object.keys(NOTIFICATION_KIND_LABEL)).toEqual(NOTIFICATION_KINDS)
+    NOTIFICATION_KINDS.forEach((k) => expect(KIND_HINT[k].length).toBeGreaterThan(0))
+    expect(KIND_HINT.plan_exceeded).toContain('자동으로 끄지 않습니다')
   })
 
   test('톤은 테마 색 이름만 쓴다', () => {

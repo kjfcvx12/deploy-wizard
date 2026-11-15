@@ -150,6 +150,7 @@ describe('알림 목록 - 누르기', () => {
     ['deploy_succeeded', '/deploys/3'],
     ['deploy_failed', '/deploys/3'],
     ['new_commit', '/deploys/3'],
+    ['plan_exceeded', '/deploys/3'],
   ])('%s 는 %s 로 간다', async (kind, route) => {
     notificationApi.getAll.mockResolvedValue([make(2, { kind })])
     await render(<Notifications />)

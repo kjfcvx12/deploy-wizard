@@ -76,7 +76,7 @@
 | E-05 | 푸시 토큰 등록 | - | ● | 신규 | 로그인 후 기기 토큰을 서버에 등록. 로그아웃·기기 변경 때 해제 |
 | E-06 | 알림 탭 이동 | - | ● | 신규 | 알림을 누르면 해당 인시던트 화면. 앱이 꺼져 있어도 동작 (딥링크) |
 
-알림 종류: `incident_opened`(문제 감지) · `incident_recovered`(자동 복구됨) · `incident_needs_action`(자동으로 못 고침) · `deploy_succeeded` · `deploy_failed` · `new_commit`.
+알림 종류: `incident_opened`(문제 감지) · `incident_recovered`(자동 복구됨) · `incident_needs_action`(자동으로 못 고침) · `deploy_succeeded` · `deploy_failed` · `new_commit` · `plan_exceeded`(예정 사용 시간 초과: 실행 중 배포가 예정한 사용 시간을 넘기면 알린다. 자동으로 끄지 않는다).
 
 ## F. 앱 전용
 

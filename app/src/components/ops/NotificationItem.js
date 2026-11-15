@@ -12,6 +12,7 @@ const KIND_TONE = {
   deploy_succeeded: 'ok',
   deploy_failed: 'err',
   new_commit: 'accent',
+  plan_exceeded: 'err',
 }
 
 // 알림 한 줄 - 종류 아이콘, 제목, 한 줄 본문, 시각. 읽지 않은 것은 굵은 제목과 점. 라벨에 종류와 제목을 넣어 반복되는 줄을 구분한다

@@ -251,7 +251,7 @@ erDiagram
 | `id` | int PK | N | 항상 1 |
 | `notify_email` | bool | N | 기본 true. 메일은 `.env`의 `MAIL_HOST`·`MAIL_TO`가 있어야 실제로 나간다 |
 | `notify_push` | bool | N | 기본 true. 등록된 기기가 있어야 실제로 나간다 |
-| `kinds` | text | N | 받을 알림 종류 JSON 배열 (기본 여섯 가지 전부) |
+| `kinds` | text | N | 받을 알림 종류 JSON 배열 (기본 일곱 가지 전부) |
 
 ### notifications — 알림 (2단계)
 한 사건당 채널별로 한 줄씩 쌓는다 (앱 안 목록·메일·푸시).
@@ -261,7 +261,7 @@ erDiagram
 | `u_id` | int FK, nullable(3단계 전), index | Y | |
 | `d_id` | int | Y | 바로가기용 |
 | `i_id` | int FK → incidents | Y | |
-| `kind` | varchar(30) | N | `incident_opened\|incident_recovered\|incident_needs_action\|deploy_succeeded\|deploy_failed\|new_commit` |
+| `kind` | varchar(30) | N | `incident_opened\|incident_recovered\|incident_needs_action\|deploy_succeeded\|deploy_failed\|new_commit\|plan_exceeded` |
 | `channel` | varchar(10) | N | `inapp\|email\|push` |
 | `title` | varchar(200) | N | |
 | `body` | text | N | 마스킹 후 |

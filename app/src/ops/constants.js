@@ -19,7 +19,7 @@ export const INCIDENT_KIND_LABEL = {
 
 // 알림 종류 (서버 순서 그대로) - 설정 화면의 종류 목록도 이 순서를 쓴다
 export const NOTIFICATION_KINDS = [
-  'incident_opened', 'incident_recovered', 'incident_needs_action', 'deploy_succeeded', 'deploy_failed', 'new_commit',
+  'incident_opened', 'incident_recovered', 'incident_needs_action', 'deploy_succeeded', 'deploy_failed', 'new_commit', 'plan_exceeded',
 ]
 
 // 알림 종류 이름 - 기획 글
@@ -30,6 +30,7 @@ export const NOTIFICATION_KIND_LABEL = {
   deploy_succeeded: '배포 성공',
   deploy_failed: '배포 실패',
   new_commit: '새 커밋',
+  plan_exceeded: '예정 사용 시간 초과',
 }
 
 // 알림 종류별 아이콘 글자 - 기획 글
@@ -40,6 +41,7 @@ export const NOTIFICATION_KIND_ICON = {
   deploy_succeeded: '✔',
   deploy_failed: '✖',
   new_commit: '⇡',
+  plan_exceeded: '✖',
 }
 
 // 자동으로 한 조치 (재시작 / 이전 버전으로 되돌리기)

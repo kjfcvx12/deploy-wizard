@@ -23,6 +23,12 @@ export function notificationRoute(item) {
   return id === null ? null : `/deploys/${id}`
 }
 
+// 종류 스위치 하나를 바꾼 뒤의 목록 - 지금 값에서 서버 순서로 다시 만든다 (목록에 없는 종류는 버린다)
+export const kindsAfterToggle = (current, kind) => {
+  const has = current.includes(kind)
+  return NOTIFICATION_KINDS.filter((k) => (k === kind ? !has : current.includes(k)))
+}
+
 // 서버 응답에서 화면 값을 읽는다 - 모르는 종류는 버리고 서버 순서(NOTIFICATION_KINDS)로 맞춘다
 export function readSettingValues(settings) {
   return {

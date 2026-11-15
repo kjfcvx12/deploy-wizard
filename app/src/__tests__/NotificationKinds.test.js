@@ -16,9 +16,9 @@ const draw = async (props = {}) => {
 const tile = (label) => screen.getByRole('switch', { name: `${label} 알림` })
 
 describe('알림 종류 - 타일', () => {
-  test('6개 종류가 switch 로 그려지고 이름은 "<라벨> 알림" 이다', async () => {
+  test('7개 종류가 switch 로 그려지고 이름은 "<라벨> 알림" 이다', async () => {
     await draw()
-    expect(screen.getAllByRole('switch')).toHaveLength(6)
+    expect(screen.getAllByRole('switch')).toHaveLength(7)
     for (const label of LABELS) expect(tile(label)).toBeTruthy()
     expect(screen.getByRole('header', { name: '받을 알림' })).toBeTruthy()
   })
@@ -57,7 +57,7 @@ describe('알림 종류 - 설명 접기', () => {
     expect(screen.getByRole('button', { name: '설명 보기' }).props.accessibilityState.expanded).toBe(false)
   })
 
-  test('설명 보기 를 누르면 6줄 설명이 모두 보이고 버튼 글이 설명 닫기 로 바뀌며 expanded 가 true', async () => {
+  test('설명 보기 를 누르면 7줄 설명이 모두 보이고 버튼 글이 설명 닫기 로 바뀌며 expanded 가 true', async () => {
     await draw()
     await fireEvent.press(screen.getByRole('button', { name: '설명 보기' }))
     for (const kind of NOTIFICATION_KINDS) {
