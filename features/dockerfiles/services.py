@@ -203,6 +203,23 @@ class Dockerfile_Service:
         )
 
 
+    # 실행 사용자 블록 - 설치·빌드는 root 로 끝낸 뒤 /app 소유권을 넘기고 일반 사용자로 바꾼다. 1024 미만 포트는 root 만 열 수 있어 그대로 둔다
+    @staticmethod
+    def services_dockerfile_user_block(language:str, port:int) -> str:
+        if port < 1024:
+            return ""
+
+        if language == "node":
+            # node 공식 이미지에는 node 사용자(uid 1000)가 이미 있다
+            return "RUN chown -R node:node /app\nUSER node\n"
+
+        return (
+            "RUN useradd --system --create-home --uid 10001 app \\\n"
+            "    && chown -R app:app /app\n"
+            "USER app\n"
+        )
+
+
     # 템플릿 렌더링
     @staticmethod
     def services_dockerfile_render(language:str, fill:Dockerfile_Fill) -> str:
@@ -218,6 +235,7 @@ class Dockerfile_Service:
             )
 
         build_block=f"RUN {fill.build_command}\n" if fill.build_command else ""
+        user_block=Dockerfile_Service.services_dockerfile_user_block(language, fill.port)
 
         dockerfile=template.format(
             runtime_version=fill.runtime_version,
@@ -225,6 +243,7 @@ class Dockerfile_Service:
             system_packages_block=system_packages_block,
             install_command=fill.install_command,
             build_block=build_block,
+            user_block=user_block,
             cmd_json=json.dumps(["sh", "-c", fill.start_command], ensure_ascii=False),
         )
 

@@ -120,3 +120,46 @@ async def test_dockerfile_generate_experimental_needs_llm(tmp_path):
 
     with pytest.raises(ValueError):
         await Dockerfile_Service.services_dockerfile_generate(tmp_path, detect, "https://github.com/o/r", "d" * 40)
+
+
+# 정식 템플릿은 빌드가 끝난 뒤 root 가 아닌 사용자로 바꿔 실행한다 - 설치·빌드는 root 로 하고 /app 소유권만 넘긴다
+def test_dockerfile_render_python_runs_as_non_root():
+    fill=Dockerfile_Fill(runtime_version="3.12", install_command="pip install --no-cache-dir -r requirements.txt",
+                         start_command="uvicorn main:app --host 0.0.0.0 --port 8000", port=8000)
+
+    dockerfile=Dockerfile_Service.services_dockerfile_render("python", fill)
+
+    assert "useradd --system --create-home --uid 10001 app" in dockerfile
+    assert "chown -R app:app /app" in dockerfile
+    assert "\nUSER app\n" in dockerfile
+    assert dockerfile.index("pip install") < dockerfile.index("USER app") < dockerfile.index("CMD ")
+
+
+def test_dockerfile_render_node_runs_as_non_root_after_build():
+    fill=Dockerfile_Fill(runtime_version="22", install_command="npm ci --include=dev",
+                         build_command="npm run build", start_command="npm start", port=3000)
+
+    dockerfile=Dockerfile_Service.services_dockerfile_render("node", fill)
+
+    assert "chown -R node:node /app" in dockerfile
+    assert "\nUSER node\n" in dockerfile
+    assert dockerfile.index("RUN npm run build") < dockerfile.index("USER node") < dockerfile.index("CMD ")
+
+
+# 1024 미만 포트는 root 가 아니면 열 수 없다 - 정식 언어는 끝까지 가야 하므로 이때는 root 로 둔다
+@pytest.mark.parametrize("language, version, install", [("python", "3.12", "pip install ."), ("node", "22", "npm install")])
+def test_dockerfile_render_privileged_port_stays_root(language, version, install):
+    fill=Dockerfile_Fill(runtime_version=version, install_command=install, start_command="run", port=80)
+
+    dockerfile=Dockerfile_Service.services_dockerfile_render(language, fill)
+
+    assert "USER " not in dockerfile
+    assert "chown" not in dockerfile
+    assert "{" not in dockerfile.replace('["sh"', "")
+
+
+# 경계: 1024 는 일반 사용자도 열 수 있다
+def test_dockerfile_render_port_1024_is_non_root():
+    fill=Dockerfile_Fill(runtime_version="22", install_command="npm install", start_command="npm start", port=1024)
+
+    assert "USER node" in Dockerfile_Service.services_dockerfile_render("node", fill)

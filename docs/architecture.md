@@ -94,7 +94,7 @@ DB가 없는 기능(`repos`, `builds` …)은 `services.py`만 있다.
 |---|--------|---------|------|
 | 1 | `cloning` | `git clone --depth 1` → 커밋 해시. GitHub 연결 있으면 설치 토큰으로 (M6) | `repos`(+`accounts`) |
 | 2 | `analyzing` | 매니페스트로 언어 판별(규칙), 인코딩 정리. 이어서 소스에서 환경변수 **이름**만 찾아 `deploy_env_vars`에 저장 (규칙으로 종류 분류, 모르는 것만 AI가 목록 중 하나 선택) | `repos` + `envvars` |
-| 3 | `generating` | 정식: 템플릿+LLM 빈칸 / 실험: LLM 순수 생성 / 레포에 Dockerfile 있으면 그대로 | `dockerfiles` |
+| 3 | `generating` | 정식: 템플릿+LLM 빈칸 (빌드 뒤 **root 가 아닌 사용자**로 실행: Node `node`, Python `app`(uid 10001). 1024 미만 포트는 root 만 열 수 있어 root 유지) / 실험: LLM 순수 생성 / 레포에 Dockerfile 있으면 그대로 (둘 다 사용자 변경 없음) | `dockerfiles` |
 | 4 | `building` | `docker build --platform linux/amd64`. 실패 시 Dockerfile 자가수정 (정식 2회·실험 1회) | `builds` + `dockerfiles` |
 | 5 | `pushing` | ECR 리포지토리 생성, 로그인(매번 새 토큰), 푸시 | `builds` |
 | ⏸ | `needs_input` | 첫 배포에서 값이 빈 필수 환경변수가 있으면 `deploying` 직전에 멈춰 사용자 입력을 기다린다. 실패가 아니라 대기다 — `PROGRESS_STATUSES`에 넣지 않아 재시작 복구(`pipeline_recover`)가 건드리지 않는다. `POST /env/continue`로 `deploying`부터 이어 간다 | `envvars` |
