@@ -77,7 +77,7 @@
 
 - [ ] **Step 1: 실패하는 테스트** (표는 테스트 안의 `Price_Table(region="ap-northeast-2", basis_date="2026-11-11", fargate_vcpu_hour=0.04656, fargate_gb_hour=0.00511, fargate_arm_vcpu_hour=0.03725, fargate_arm_gb_hour=0.00403, alb_hour=0.0225, lcu_hour=0.008)`):
   - `test_pricing_spec_options_and_valid` — 4개, 라벨 위 값 그대로. `valid(None,None)`, `valid("256","512")`, `valid("512","1024")` True; `valid("256",None)`, `valid("256","2048")`(프리셋 아님), `valid("300","512")` False.
-  - `test_pricing_estimate_default_spec` — 기본: `hourly_usd == 0.0367` (0.25×0.04656 + 0.5×0.00511 + 0.0225 = 0.03669), `spec_is_default` True, 구성 요소 합 = 시간당, 기간 `한 달` usd `26.78`, `1일` usd `0.88`, `assumptions`에 `기본 사양` 문구, `not_included`에 `LCU`·`데이터 전송`·`로그`·`ECR` 가 각각 들어 있다.
+  - `test_pricing_estimate_default_spec` — 기본: `hourly_usd == 0.0367` (0.25×0.04656 + 0.5×0.00511 + 0.0225 = 0.03669), `spec_is_default` True, 구성 요소 합 = 시간당, 기간 `한 달` usd `26.79`, `1일` usd `0.88`, `assumptions`에 `기본 사양` 문구, `not_included`에 `LCU`·`데이터 전송`·`로그`·`ECR` 가 각각 들어 있다.
   - `test_pricing_estimate_1024_2048` — `("1024","2048")` → `hourly_usd == 0.0793`, `spec_label == "1 vCPU / 2 GB"`, `spec_is_default` False.
   - `test_pricing_estimate_planned_hours` — `planned_hours=8` + 기본 사양 → `planned_usd == 0.29`; `None`이면 `planned_usd is None`.
   - `test_pricing_estimate_max_tasks` — 기본 사양 `max_tasks=4` → `max_hourly_usd == round(4*0.01419+0.0225, 4)`(=0.0793), `max_monthly_usd == round((4*0.01419+0.0225)*730, 2)`; `max_tasks=None`이면 둘 다 `None`; `max_tasks=1`이면 시간당 합계와 같다.
@@ -106,7 +106,7 @@
   - `test_pricing_estimate_endpoint_ok` — `Pricing_Service.services_pricing_table`를 가짜 표를 돌려주게 패치 → `{"cpu":"1024","memory":"2048","planned_hours":24}` → 200, `hourly_usd == 0.0793`, `planned_usd`는 24시간 금액.
   - `test_pricing_estimate_endpoint_bad_input` — 프리셋 밖(400), 한쪽만(400), `planned_hours` 0/-1/9000(400, 422가 아니라 400으로 통일할 수 없으면 기존 앱의 검증 오류 관례를 따른다: **어느 쪽이든 4xx이고 `detail`이 한국어**를 단언).
   - `test_pricing_estimate_endpoint_503_without_prices` — 표가 `None` → 503.
-  - `test_advice_cost_filled_from_prices` — 분석 결과의 `cost.hourly_usd == 0.0367`, `cost.monthly_min == 26.78`, `components` 2개, `not_included`에 `LCU`; 가격 표 `None`이면 `monthly_min is None`.
+  - `test_advice_cost_filled_from_prices` — 분석 결과의 `cost.hourly_usd == 0.0367`, `cost.monthly_min == 26.79`, `components` 2개, `not_included`에 `LCU`; 가격 표 `None`이면 `monthly_min is None`.
 - [ ] **Step 2:** 실패 확인. **Step 3:** 구현 + `docs/api-spec.md`에 두 엔드포인트와 `Advice_Cost` 새 필드를 기존 표 형식으로 추가. **Step 4:** 통과. **Step 5:** 커밋 `feat(pricing): 가격 API와 분석 비용`.
 
 ### Task 4: 배포 옵션 저장과 사양 적용
