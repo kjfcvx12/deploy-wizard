@@ -57,5 +57,5 @@ const styles = StyleSheet.create({
   grid: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm },
   cell: { flexBasis: '48%', flexGrow: 1 },
   hints: { gap: spacing.xs },
-  small: { fontSize: 12, lineHeight: 17 },
+  small: { fontSize: 12, lineHeight: 16 },
 })

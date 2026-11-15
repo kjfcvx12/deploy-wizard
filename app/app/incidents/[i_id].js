@@ -170,7 +170,7 @@ function IncidentDetail({ i_id }) {
         </Card>
 
         <Card style={styles.middle}>
-          <ScrollView testID="incident-body" nestedScrollEnabled style={styles.flex} contentContainerStyle={styles.stack}>
+          <ScrollView testID="incident-body" nestedScrollEnabled style={styles.grow} contentContainerStyle={styles.stack}>
             <IncidentExplain flat explain={incident.explain} onError={setActionError} />
             <View style={[styles.divider, { backgroundColor: colors.border }]} />
             <IncidentTimeline incident={incident} />
@@ -217,10 +217,12 @@ const styles = StyleSheet.create({
   stack: { gap: spacing.md },
   row: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.md },
   self: { alignSelf: 'flex-start' },
-  fill: { flex: 1 },
+  // 화면 높이가 정해져 있지 않은 틀 안이라 flex: 1 (기준 0%) 은 내용 높이로 풀린다 - 기준을 0 으로 못박아야 가운데 상자가 남는 높이만 차지한다
+  fill: { flexGrow: 1 },
   flex: { flex: 1 },
+  grow: { flexGrow: 1, flexShrink: 1, flexBasis: 0 },
   center: { flex: 1, justifyContent: 'center' },
-  middle: { flex: 1, minHeight: 160 },
+  middle: { flexGrow: 1, flexShrink: 1, flexBasis: 0, minHeight: 160 },
   divider: { height: 1 },
   buttonRow: { flexDirection: 'row', gap: spacing.sm },
   headTop: { flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between', gap: spacing.md },
