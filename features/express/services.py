@@ -14,6 +14,8 @@ from features.express.scheme import Express_Status, Express_Resource
 
 DEPLOY_DONE={"SUCCESSFUL"}
 DEPLOY_FAILED={"STOPPED", "ROLLBACK_SUCCESSFUL", "ROLLBACK_FAILED"}
+# scalingTarget 에 들어가는 항목 - 4개가 다 있을 때만 보낸다
+SCALING_KEYS=("minTaskCount", "maxTaskCount", "autoScalingMetric", "autoScalingTargetValue")
 
 
 class Express_Error(Exception):
@@ -34,11 +36,13 @@ class Express_Service:
 
 
     # 서비스 생성 - role_arns 는 연결된 사용자 계정(M6)에 배포할 때만 넘긴다. 없으면 .env 의 개발 계정 역할
+    # cpu·memory 는 인자 > .env 값 > 보내지 않음. scaling 은 SCALING_KEYS 4개가 모두 있을 때만 scalingTarget 으로 보낸다 (처음 만들 때만 - 갱신은 사양을 바꾸지 않는다)
     @staticmethod
     def services_express_create(session:boto3.Session, service_name:str, image_uri:str, port:int,
                                 health_check_path:str="/", environment:dict[str, str]|None=None,
                                 role_arns:tuple[str, str]|None=None,
-                                on_progress:Callable[[str], None]|None=None) -> Express_Status:
+                                on_progress:Callable[[str], None]|None=None,
+                                cpu:str|None=None, memory:str|None=None, scaling:dict|None=None) -> Express_Status:
         execution_role_arn, infrastructure_role_arn=role_arns or Express_Service.services_express_check_roles()
         ecs=session.client("ecs")
 
@@ -55,10 +59,16 @@ class Express_Service:
             "tags": settings.managed_tags,
         }
 
-        if settings.ecs_cpu:
-            params["cpu"]=settings.ecs_cpu
-        if settings.ecs_memory:
-            params["memory"]=settings.ecs_memory
+        cpu=cpu or settings.ecs_cpu
+        memory=memory or settings.ecs_memory
+
+        if cpu:
+            params["cpu"]=cpu
+        if memory:
+            params["memory"]=memory
+
+        if scaling and all(scaling.get(key) is not None for key in SCALING_KEYS):
+            params["scalingTarget"]={key: scaling[key] for key in SCALING_KEYS}
 
         # 멈춤·삭제 직후에는 같은 이름의 옛 서비스가 DRAINING 이라 만들 수 없다 - 끝날 때까지 기다렸다가 다시 만든다 (2026-11-15 실제 확인)
         deadline=time.monotonic() + settings.deploy_timeout

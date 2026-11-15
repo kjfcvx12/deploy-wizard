@@ -266,7 +266,7 @@ class Deploy_Service:
             session=await Aws_Account_Service.services_aws_account_build_session(db, deploy.aws_account_id)
             await asyncio.to_thread(Express_Service.services_express_delete, session, deploy.service_arn)
 
-            update_deploy=await Deploy_Crud.crud_deploy_update(db, d_id, {"status": "stopped", "service_arn": None, "endpoint": None})
+            update_deploy=await Deploy_Crud.crud_deploy_update(db, d_id, {"status": "stopped", "service_arn": None, "endpoint": None, "running_since": None})
 
             await db.commit()
             await db.refresh(update_deploy)
@@ -343,7 +343,7 @@ class Deploy_Service:
 
                     update_data.update({"service_arn": None, "endpoint": None})
                     if deploy.status == 'running':
-                        update_data["status"]='stopped'
+                        update_data.update({"status": 'stopped', "running_since": None})
                     report["stopped"].append(name)
 
                 if purge:
@@ -393,7 +393,7 @@ class Deploy_Service:
                     await asyncio.to_thread(Express_Service.services_express_delete_repository, session, repository_name)
                     deleted.append(repository_name)
 
-            await Deploy_Crud.crud_deploy_update(db, d_id, {"status": "deleted", "endpoint": None})
+            await Deploy_Crud.crud_deploy_update(db, d_id, {"status": "deleted", "endpoint": None, "running_since": None})
 
             # 저장소를 지웠으면 직전 버전(previous)의 이미지도 없다 - 되돌리기 대상에서 뺀다
             if repository_name:

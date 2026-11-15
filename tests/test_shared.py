@@ -186,3 +186,65 @@ def test_express_create_other_errors_not_retried(monkeypatch):
         Express_Service.services_express_create(session, "dw-x-1", "img:1", 8000, role_arns=("arn:e", "arn:i"))
 
     assert Other_Ecs.calls == 1
+
+
+# 증설 설정은 4개가 다 있을 때만 scalingTarget 으로 보낸다 - 없으면 키 자체가 없다
+def test_express_create_scaling_target():
+    scaling={"minTaskCount": 1, "maxTaskCount": 3, "autoScalingMetric": "AVERAGE_CPU", "autoScalingTargetValue": 60}
+
+    session=Fake_Session()
+    Express_Service.services_express_create(session, "dw-x-1", "img:1", 8000, role_arns=("arn:e", "arn:i"), scaling=scaling)
+    assert session.ecs.params["scalingTarget"] == scaling
+
+    session=Fake_Session()
+    Express_Service.services_express_create(session, "dw-x-1", "img:1", 8000, role_arns=("arn:e", "arn:i"))
+    assert "scalingTarget" not in session.ecs.params
+
+    # 일부만 있으면 보내지 않는다
+    session=Fake_Session()
+    Express_Service.services_express_create(session, "dw-x-1", "img:1", 8000, role_arns=("arn:e", "arn:i"), scaling={"minTaskCount": 1})
+    assert "scalingTarget" not in session.ecs.params
+
+
+# cpu·memory - 인자 > .env 값 > 보내지 않음
+def test_express_create_passes_cpu_memory(monkeypatch):
+    from features.express import services as express_module
+
+    monkeypatch.setattr(express_module.settings, "ecs_cpu", None)
+    monkeypatch.setattr(express_module.settings, "ecs_memory", None)
+
+    session=Fake_Session()
+    Express_Service.services_express_create(session, "dw-x-1", "img:1", 8000, role_arns=("arn:e", "arn:i"), cpu="512", memory="1024")
+    assert session.ecs.params["cpu"] == "512" and session.ecs.params["memory"] == "1024"
+
+    monkeypatch.setattr(express_module.settings, "ecs_cpu", "256")
+    monkeypatch.setattr(express_module.settings, "ecs_memory", "512")
+
+    session=Fake_Session()
+    Express_Service.services_express_create(session, "dw-x-1", "img:1", 8000, role_arns=("arn:e", "arn:i"))
+    assert session.ecs.params["cpu"] == "256" and session.ecs.params["memory"] == "512"
+
+    session=Fake_Session()
+    Express_Service.services_express_create(session, "dw-x-1", "img:1", 8000, role_arns=("arn:e", "arn:i"), cpu="1024", memory="2048")
+    assert session.ecs.params["cpu"] == "1024" and session.ecs.params["memory"] == "2048"
+
+    monkeypatch.setattr(express_module.settings, "ecs_cpu", None)
+    monkeypatch.setattr(express_module.settings, "ecs_memory", None)
+
+    session=Fake_Session()
+    Express_Service.services_express_create(session, "dw-x-1", "img:1", 8000, role_arns=("arn:e", "arn:i"))
+    assert "cpu" not in session.ecs.params and "memory" not in session.ecs.params
+
+
+# 기존 서비스 갱신은 사양·증설을 건드리지 않는다 (확인을 거친 재배포 몫) - 보내는 키는 그대로
+def test_express_update_params_unchanged():
+    class Update_Ecs:
+        def update_express_gateway_service(self, **params):
+            self.params=params
+
+    session=Fake_Session()
+    session.ecs=Update_Ecs()
+
+    Express_Service.services_express_update(session, "arn:svc", "img:2", 8000, "/health", environment={"A": "1"})
+
+    assert set(session.ecs.params) == {"serviceArn", "healthCheckPath", "primaryContainer"}

@@ -524,3 +524,99 @@ async def test_deploy_settings_planned_hours(client):
     assert (await client.patch(f"/api/deploys/{d_id}/settings", json={"max_tasks": 2})).status_code == 422
 
 
+
+
+# 멈추면 running_since 를 비운다
+@pytest.mark.asyncio
+async def test_stop_clears_running_since(client, monkeypatch):
+    from datetime import datetime
+    from features.deploys import services as deploys_services_module
+    from features.deploys.crud import Deploy_Crud
+    from shared.database import AsyncSessionLocal
+
+    d_id=(await client.post("/api/deploys", json={"repo_url": "https://github.com/o/r"})).json()["d_id"]
+
+    async with AsyncSessionLocal() as db:
+        await Deploy_Crud.crud_deploy_update(db, d_id, {"status": "running", "service_arn": "arn:svc:1", "running_since": datetime(2026, 11, 16, 9, 0, 0)})
+        await db.commit()
+
+    async def fake_build_session(db, aws_account_id):
+        return object()
+
+    monkeypatch.setattr(deploys_services_module.Aws_Account_Service, "services_aws_account_build_session", staticmethod(fake_build_session))
+    monkeypatch.setattr(deploys_services_module.Express_Service, "services_express_delete", staticmethod(lambda *a, **kw: None))
+
+    body=(await client.post(f"/api/deploys/{d_id}/stop")).json()
+    assert body["status"] == "stopped" and body["running_since"] is None
+
+
+# 삭제하면 running_since 를 비운다
+@pytest.mark.asyncio
+async def test_delete_clears_running_since(client, monkeypatch):
+    from datetime import datetime
+    from features.deploys.crud import Deploy_Crud
+    from shared.database import AsyncSessionLocal
+
+    d_id=(await client.post("/api/deploys", json={"repo_url": "https://github.com/o/r"})).json()["d_id"]
+
+    async with AsyncSessionLocal() as db:
+        await Deploy_Crud.crud_deploy_update(db, d_id, {"status": "failed", "running_since": datetime(2026, 11, 16, 9, 0, 0)})
+        await db.commit()
+
+    assert (await client.delete(f"/api/deploys/{d_id}")).status_code == 200
+
+    async with AsyncSessionLocal() as db:
+        assert (await Deploy_Crud.crud_deploy_get_by_d_id(db, d_id)).running_since is None
+
+
+# 작업 종료로 서비스를 내리면(running -> stopped) running_since 를 비운다
+@pytest.mark.asyncio
+async def test_session_end_clears_running_since(client, monkeypatch):
+    from datetime import datetime
+    from features.deploys import services as deploys_services_module
+    from features.deploys.services import Deploy_Service
+    from features.deploys.crud import Deploy_Crud
+    from shared.database import AsyncSessionLocal
+
+    d_id=(await client.post("/api/deploys", json={"repo_url": "https://github.com/o/r"})).json()["d_id"]
+
+    async with AsyncSessionLocal() as db:
+        await Deploy_Crud.crud_deploy_update(db, d_id, {"status": "running", "service_arn": "arn:svc:1", "running_since": datetime(2026, 11, 16, 9, 0, 0)})
+        await db.commit()
+
+    async def fake_build_session(db, aws_account_id):
+        return object()
+
+    monkeypatch.setattr(deploys_services_module.Aws_Account_Service, "services_aws_account_build_session", staticmethod(fake_build_session))
+    monkeypatch.setattr(deploys_services_module.Express_Service, "services_express_delete", staticmethod(lambda *a, **kw: None))
+
+    async with AsyncSessionLocal() as db:
+        await Deploy_Service.services_deploy_session_end(db)
+
+    async with AsyncSessionLocal() as db:
+        deploy=await Deploy_Crud.crud_deploy_get_by_d_id(db, d_id)
+        assert deploy.status == "stopped" and deploy.running_since is None
+
+
+# 파이프라인이 실패하면 running_since 를 비운다
+@pytest.mark.asyncio
+async def test_pipeline_failure_clears_running_since(client, monkeypatch):
+    from datetime import datetime
+    from features.deploys.crud import Deploy_Crud
+    from shared.database import AsyncSessionLocal
+
+    d_id=(await client.post("/api/deploys", json={"repo_url": "https://github.com/o/r"})).json()["d_id"]
+
+    async with AsyncSessionLocal() as db:
+        await Deploy_Crud.crud_deploy_update(db, d_id, {"running_since": datetime(2026, 11, 16, 9, 0, 0)})
+        await db.commit()
+
+    def fake_clone(repo_url, branch, dest, on_line=None, token=None):
+        raise pipeline_module.Proc_Error("명령 실패 (exit 128) :git clone", "remote: Repository not found.")
+
+    monkeypatch.setattr(pipeline_module.Repo_Service, "services_repo_clone", staticmethod(fake_clone))
+
+    await Deploy_Pipeline.pipeline_run(d_id)
+
+    body=(await client.get(f"/api/deploys/{d_id}")).json()
+    assert body["status"] == "failed" and body["running_since"] is None
