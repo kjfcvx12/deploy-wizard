@@ -333,7 +333,7 @@ class Deploy_Pipeline:
             role_arns=await Deploy_Pipeline.pipeline_get_role_arns(deploy.aws_account_id)
             created=await asyncio.to_thread(Express_Service.services_express_create, session, service_name, image_uri,
                                             result.port, result.health_check_path, environment=environment,
-                                            role_arns=role_arns)
+                                            role_arns=role_arns, on_progress=buffer.buffer_add)
             service_arn=created.service_arn
             # arn은 받자마자 저장한다. 이후에 실패해도 정리할 수 있어야 한다
             await Deploy_Pipeline.pipeline_update(d_id, service_name=created.service_name or service_name,
