@@ -32,6 +32,8 @@ tests/.data/
 
 # Claude Code 로컬 상태
 .claude/
+.playwright-mcp/
+.superpowers/
 
 # 개인 메모
 1.txt

@@ -17,6 +17,7 @@
 | `health` | 떠 있는 배포를 1분마다 점검해 이력을 남기는 감시 루프, 이력 정리(7일) | models · scheme · crud · services | D1 (코드 완료, 실제 AWS 미검증) |
 | `incidents` | 연속 실패로 인시던트 열고 닫기, 규칙 표 원인 설명, 자동 복구(재시작·이전 정상 이미지로 되돌리기), 한도, 서버 재시작 때 정리, 조회 API | models · scheme · crud · services · recovery · router · ui | D1 (코드 완료, 실제 AWS 미검증), 화면은 계획 E |
 | `notifications` | 앱 안·메일·Expo 푸시 알림, 기기 등록, 알림 설정, 알림 조회 API | models · scheme · crud · services · compose · dispatch · inbox · router · ui | D1 (코드 완료, 실제 SMTP·Expo 미검증), 화면은 계획 E |
+| `mcp` | 로컬 MCP 서버 — Claude 에서 분석·배포·로그·멈춤·삭제 (REST 클라이언트, 확인 흐름, 살아 있는 배포 한도, 출력 마스킹) | client · guard · scheme · services · server | 로컬 MCP (코드 완료, 실제 Claude 연결·배포 검증 전) |
 
 ## 기능 사이의 흐름
 
@@ -120,7 +121,6 @@
 
 | 기능 | 내용 | 마일스톤 |
 |------|------|----------|
-| `mcp` | 로컬 MCP 서버 — Claude 에서 분석·배포·로그·멈춤·삭제. REST 클라이언트, 행동 도구 확인 흐름(elicitation 또는 확인 토큰), 살아 있는 배포 한도, 출력 마스킹 | client · guard · scheme · services · server | 로컬 MCP (코드 완료, 실제 Claude 연결·배포 검증 전) |
 | `databases` | RDS 생성, 서브넷 그룹, 보안그룹 인바운드, 접속정보 주입 | M7 |
 | `stacks` | 백엔드 → 주소 → 프론트 빌드 순서 배포 | M8 |
 | `monitors` | 로그 감시(규칙) → 이상 감지 → 해설 → 조치안 | M9 |

@@ -64,11 +64,12 @@ ui/         → 같은 기능의 api.js, shared/ui, 다른 기능의 ui 컴포�
 
 ## 로컬 MCP 서버 (`features/mcp`)
 
-Claude 같은 MCP 클라이언트가 stdio 로 붙는 별도 프로세스(`python -m features.mcp`)다. 서버 모듈(`deploys`·`accounts` 등)을 **임포트하지 않고** `client.py`의 `Wizard_Client`가 REST API 를 HTTP 로 부른다 (주소 `WIZARD_API_URL`, 토큰 `WIZARD_API_TOKEN` 은 2단계용). 그래서 의존 방향은 `features/mcp -> shared/settings` 하나뿐이고, 아무도 `mcp`를 부르지 않는다. 같은 REST 를 웹·앱과 함께 쓰므로 API 스펙은 바뀌지 않는다.
+Claude 같은 MCP 클라이언트가 stdio 로 붙는 별도 프로세스(`python -m features.mcp`)다. 서버 모듈(`deploys`·`accounts` 등)을 **임포트하지 않고** `client.py`의 `Wizard_Client`가 REST API 를 HTTP 로 부른다 (주소 `WIZARD_API_URL`, 토큰 `WIZARD_API_TOKEN` 은 2단계용). 그래서 의존 방향은 `features/mcp -> shared/settings`(설정)와 `shared/masking`(`guard.py`의 마스킹) 둘뿐이고, 아무도 `mcp`를 부르지 않는다. 같은 REST 를 웹·앱과 함께 쓰므로 API 스펙은 바뀌지 않는다.
 
 - `services.py`: 도구 로직 (첫 인자 `Wizard_Client`). 응답을 허용 목록 요약으로 줄이고, 로그·오류·해설은 `guard.py`로 마스킹·자른 뒤 "신뢰할 수 없는 데이터" 표시로 감싼다.
 - `server.py`: 도구 13개 등록(읽기 8, 행동 5). 행동 도구는 `confirm_token` 이 없으면 미리보기를 만든 뒤, 클라이언트가 elicitation 을 지원하면 사용자에게 직접 묻고, 아니면 미리보기와 확인 토큰(`Confirm_Store`, 5분·1회용·도구와 인자에 묶임)을 돌려준다. 살아 있는 배포 한도(기본 3)는 서비스 한 곳에서 검사한다.
 - 자동 조치는 늘리지 않는다 — 확인 없이 AWS 를 바꾸는 도구가 없다 (하드 규칙 3).
+- 한계: elicitation 도 확인 토큰도 사람이 승인했다는 증거가 아니다 (에이전트형 클라이언트가 elicitation 에 스스로 답할 수 있고, 토큰 경로는 모델에게 주는 지시일 뿐이다). 실제 관문은 호스트의 도구별 승인 창이므로 행동 도구 5개를 자동 허용 목록에 넣지 않는다. 서버가 강제하는 것은 살아 있는 배포 한도(`deploy`·`start_deploy`·멈춘/실패한 배포의 `redeploy`)와 토큰 바인딩·만료뿐이다.
 
 ## 계층
 
