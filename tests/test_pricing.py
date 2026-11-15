@@ -5,6 +5,7 @@ import pytest
 
 from shared.settings import settings
 
+from features.pricing.scheme import Price_Table
 from features.pricing.services import Pricing_Service
 
 # 가격 파일 읽기와 캐시 시험 - 가짜 가격 JSON 과 가짜 fetch 만 쓴다 (진짜 네트워크 없음)
@@ -180,3 +181,120 @@ async def test_pricing_table_future_cache_is_stale(cache_tmp):
     fetch=Fake_Fetch()
     await Pricing_Service.services_pricing_table(fetch=fetch, now=now - timedelta(hours=2))
     assert len(fetch.urls) == 2
+
+
+# 비용 추정 시험용 가짜 단가 표 - 값은 시험 안에서만 쓴다 (코드에는 가격 상수가 없다)
+def make_table(arm=True):
+    return Price_Table(
+        region="ap-northeast-2", basis_date="2026-11-11",
+        fargate_vcpu_hour=0.04656, fargate_gb_hour=0.00511,
+        fargate_arm_vcpu_hour=0.03725 if arm else None, fargate_arm_gb_hour=0.00403 if arm else None,
+        alb_hour=0.0225, lcu_hour=0.008,
+    )
+
+
+def test_pricing_spec_options_and_valid():
+    options=Pricing_Service.services_pricing_spec_options()
+    assert [(o.cpu, o.memory, o.label) for o in options] == [
+        ("256", "512", "0.25 vCPU / 0.5 GB"),
+        ("512", "1024", "0.5 vCPU / 1 GB"),
+        ("1024", "2048", "1 vCPU / 2 GB"),
+        ("2048", "4096", "2 vCPU / 4 GB"),
+    ]
+    assert [(o.vcpu, o.memory_gb) for o in options] == [(0.25, 0.5), (0.5, 1.0), (1.0, 2.0), (2.0, 4.0)]
+    assert Pricing_Service.services_pricing_spec_valid(None, None) is True
+    assert Pricing_Service.services_pricing_spec_valid("256", "512") is True
+    assert Pricing_Service.services_pricing_spec_valid("512", "1024") is True
+    assert Pricing_Service.services_pricing_spec_valid("256", None) is False
+    assert Pricing_Service.services_pricing_spec_valid(None, "512") is False
+    assert Pricing_Service.services_pricing_spec_valid("256", "2048") is False
+    assert Pricing_Service.services_pricing_spec_valid("300", "512") is False
+
+
+def test_pricing_estimate_default_spec():
+    estimate=Pricing_Service.services_pricing_estimate(make_table())
+    assert estimate.hourly_usd == 0.0367
+    assert estimate.spec_is_default is True
+    assert (estimate.cpu, estimate.memory, estimate.spec_label) == ("256", "512", "0.25 vCPU / 0.5 GB")
+    assert estimate.basis_date == "2026-11-11"
+    assert estimate.region == "ap-northeast-2"
+    assert estimate.currency == "USD"
+    assert len(estimate.components) == 2
+    assert round(sum(c.hourly_usd for c in estimate.components), 4) == estimate.hourly_usd
+    periods={p.label: p for p in estimate.periods}
+    assert [p.label for p in estimate.periods] == ["1시간", "1일", "1주", "한 달"]
+    assert [p.hours for p in estimate.periods] == [1, 24, 168, 730]
+    assert periods["1일"].usd == 0.88
+    # 0.036695 x 730 = 26.78735 -> 26.79 (과제 설명서의 26.78 은 계산과 달라 계산값을 쓴다)
+    assert periods["한 달"].usd == 26.79
+    assert any("기본 사양" in a for a in estimate.assumptions)
+    assert any("2026-11-11" in a for a in estimate.assumptions)
+    for word in ("LCU", "데이터 전송", "로그", "ECR"):
+        assert any(word in n for n in estimate.not_included), word
+
+
+def test_pricing_estimate_1024_2048():
+    estimate=Pricing_Service.services_pricing_estimate(make_table(), "1024", "2048")
+    assert estimate.hourly_usd == 0.0793
+    assert estimate.spec_label == "1 vCPU / 2 GB"
+    assert estimate.spec_is_default is False
+    assert not any("기본 사양" in a for a in estimate.assumptions)
+
+
+def test_pricing_estimate_planned_hours():
+    table=make_table()
+    assert Pricing_Service.services_pricing_estimate(table, planned_hours=8).planned_usd == 0.29
+    assert Pricing_Service.services_pricing_estimate(table, planned_hours=8).planned_hours == 8
+    assert Pricing_Service.services_pricing_estimate(table).planned_usd is None
+
+
+def test_pricing_estimate_max_tasks():
+    table=make_table()
+    four=Pricing_Service.services_pricing_estimate(table, max_tasks=4)
+    assert four.max_tasks == 4
+    assert four.max_hourly_usd == round(4*0.01419+0.0225, 4) == 0.0793
+    assert four.max_monthly_usd == round((4*0.014195+0.0225)*730, 2)
+    none=Pricing_Service.services_pricing_estimate(table)
+    assert none.max_hourly_usd is None and none.max_monthly_usd is None
+    one=Pricing_Service.services_pricing_estimate(table, max_tasks=1)
+    assert one.max_hourly_usd == one.hourly_usd
+
+
+def test_pricing_scaling_valid():
+    check=Pricing_Service.services_pricing_scaling_valid
+    assert check(None, None, None, None, 4) is None
+    assert check(1, 3, "AVERAGE_CPU", 60, 4) is None
+    assert check(1, 3, "AVERAGE_MEMORY", 100, 4) is None
+    assert check(1, 3, "REQUEST_COUNT_PER_TARGET", 100000, 4) is None
+    for bad in (
+        (1, None, None, None),
+        (1, 3, "AVERAGE_CPU", None),
+        (3, 1, "AVERAGE_CPU", 60),
+        (0, 3, "AVERAGE_CPU", 60),
+        (1, 5, "AVERAGE_CPU", 60),
+        (1, 3, "FOO", 60),
+        (1, 3, "AVERAGE_CPU", 0),
+        (1, 3, "AVERAGE_CPU", 101),
+        (1, 3, "AVERAGE_MEMORY", 101),
+        (1, 3, "REQUEST_COUNT_PER_TARGET", 0),
+        (1, 3, "REQUEST_COUNT_PER_TARGET", 100001),
+    ):
+        message=check(*bad, 4)
+        assert isinstance(message, str) and message, bad
+    assert check(1, 5, "AVERAGE_CPU", 60, 4) != check(1, 3, "FOO", 60, 4)
+
+
+def test_pricing_estimate_arm64_comparison():
+    estimate=Pricing_Service.services_pricing_estimate(make_table())
+    assert estimate.arm64_hourly_usd == 0.0338
+    assert estimate.arm64_saving_percent == 7.8
+    no_arm=Pricing_Service.services_pricing_estimate(make_table(arm=False))
+    assert no_arm.arm64_hourly_usd is None
+    assert no_arm.arm64_saving_percent is None
+
+
+def test_pricing_estimate_rejects_non_preset():
+    with pytest.raises(ValueError):
+        Pricing_Service.services_pricing_estimate(make_table(), "300", "512")
+    with pytest.raises(ValueError):
+        Pricing_Service.services_pricing_estimate(make_table(), "256", None)
