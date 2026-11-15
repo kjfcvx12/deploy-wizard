@@ -519,6 +519,13 @@ async def test_deploy_settings_planned_hours(client):
         assert response.status_code == 400
         assert any("가" <= ch <= "힣" for ch in response.json()["detail"])
 
+    # NaN·무한대는 숫자 검사에서 400
+    import json
+    for bad in (float("nan"), float("inf")):
+        response=await client.patch(f"/api/deploys/{d_id}/settings", content=json.dumps({"planned_hours": bad}),
+                                    headers={"content-type": "application/json"})
+        assert response.status_code == 400
+
     # 사양·증설은 여기서 못 바꾼다 (확인을 거친 재배포 몫)
     assert (await client.patch(f"/api/deploys/{d_id}/settings", json={"cpu": "512"})).status_code == 422
     assert (await client.patch(f"/api/deploys/{d_id}/settings", json={"max_tasks": 2})).status_code == 422
@@ -620,3 +627,56 @@ async def test_pipeline_failure_clears_running_since(client, monkeypatch):
 
     body=(await client.get(f"/api/deploys/{d_id}")).json()
     assert body["status"] == "failed" and body["running_since"] is None
+
+
+# 끊긴 작업 정리(pipeline_recover) - 서비스가 살아 있으면 running_since 를 두고, 서비스가 없으면 비운다
+@pytest.mark.asyncio
+async def test_pipeline_recover_running_since_depends_on_service(client):
+    from datetime import datetime
+    from features.deploys.crud import Deploy_Crud
+    from shared.database import AsyncSessionLocal
+
+    since=datetime(2026, 11, 16, 9, 0, 0)
+    live=(await client.post("/api/deploys", json={"repo_url": "https://github.com/o/r"})).json()["d_id"]
+    gone=(await client.post("/api/deploys", json={"repo_url": "https://github.com/o/r"})).json()["d_id"]
+
+    async with AsyncSessionLocal() as db:
+        await Deploy_Crud.crud_deploy_update(db, live, {"status": "deploying", "service_arn": "arn:svc:1", "running_since": since})
+        await Deploy_Crud.crud_deploy_update(db, gone, {"status": "deploying", "service_arn": None, "running_since": since})
+        await db.commit()
+
+    assert await Deploy_Pipeline.pipeline_recover() == 2
+
+    assert (await client.get(f"/api/deploys/{live}")).json()["running_since"] == since.isoformat()
+    assert (await client.get(f"/api/deploys/{gone}")).json()["running_since"] is None
+    assert (await client.get(f"/api/deploys/{live}")).json()["status"] == "failed"
+
+
+# 작업 종료는 서비스를 지울 때마다 running_since 를 비운다 - 이미 failed 인 배포여도
+@pytest.mark.asyncio
+async def test_session_end_clears_running_since_on_failed_row_with_service(client, monkeypatch):
+    from datetime import datetime
+    from features.deploys import services as deploys_services_module
+    from features.deploys.services import Deploy_Service
+    from features.deploys.crud import Deploy_Crud
+    from shared.database import AsyncSessionLocal
+
+    d_id=(await client.post("/api/deploys", json={"repo_url": "https://github.com/o/r"})).json()["d_id"]
+
+    async with AsyncSessionLocal() as db:
+        await Deploy_Crud.crud_deploy_update(db, d_id, {"status": "failed", "error_step": "deploying", "service_arn": "arn:svc:1",
+                                                        "running_since": datetime(2026, 11, 16, 9, 0, 0)})
+        await db.commit()
+
+    async def fake_build_session(db, aws_account_id):
+        return object()
+
+    monkeypatch.setattr(deploys_services_module.Aws_Account_Service, "services_aws_account_build_session", staticmethod(fake_build_session))
+    monkeypatch.setattr(deploys_services_module.Express_Service, "services_express_delete", staticmethod(lambda *a, **kw: None))
+
+    async with AsyncSessionLocal() as db:
+        await Deploy_Service.services_deploy_session_end(db)
+
+    async with AsyncSessionLocal() as db:
+        deploy=await Deploy_Crud.crud_deploy_get_by_d_id(db, d_id)
+        assert deploy.status == "failed" and deploy.service_arn is None and deploy.running_since is None

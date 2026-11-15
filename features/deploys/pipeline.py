@@ -355,9 +355,11 @@ class Deploy_Pipeline:
 
         buffer.step='running'
         buffer.buffer_add(f"배포 완료 :{status.endpoint}", 'cmd')
-        # running 이 된 시각을 남기고, 시간 초과 알림 기록은 비워 새로 센다
-        await Deploy_Pipeline.pipeline_update(d_id, status='running', endpoint=status.endpoint,
-                                              running_since=Deploy_Pipeline.pipeline_now(), plan_notified_at=None)
+        # running_since 가 비어 있을 때(처음 뜸, 멈춘 뒤 다시 켬)만 지금 시각으로 채우고 알림 기록도 비워 새로 센다. 살아 있는 서비스의 재배포는 시간을 이어서 센다
+        running_fields={"status": 'running', "endpoint": status.endpoint}
+        if deploy.running_since is None:
+            running_fields.update({"running_since": Deploy_Pipeline.pipeline_now(), "plan_notified_at": None})
+        await Deploy_Pipeline.pipeline_update(d_id, **running_fields)
         await Deploy_Pipeline.pipeline_release_record(d_id, buffer)
         Deploy_Pipeline.pipeline_notify(d_id, 'deploy_succeeded', buffer)
 
@@ -415,8 +417,13 @@ class Deploy_Pipeline:
         except Exception as e:
             buffer.buffer_add(f"환경변수 이름 기록을 건너뜁니다 ({type(e).__name__})", 'warn')
 
-        await Deploy_Pipeline.pipeline_update(d_id, status='failed', error_step=error_step,
-                                              error_msg=error_msg, explain=explain_json, running_since=None)
+        # 서비스가 없는 실패(떠 있던 적 없음)만 running_since 를 비운다. 서비스가 살아 있으면 시간을 이어서 센다 (실행 중에 service_arn 이 저장됐을 수 있어 다시 읽는다)
+        failed_fields={"status": 'failed', "error_step": error_step, "error_msg": error_msg, "explain": explain_json}
+        async with AsyncSessionLocal() as db:
+            current=await Deploy_Crud.crud_deploy_get_by_d_id(db, d_id)
+        if current is not None and not current.service_arn:
+            failed_fields["running_since"]=None
+        await Deploy_Pipeline.pipeline_update(d_id, **failed_fields)
         await Deploy_Pipeline.pipeline_record_issue(d_id, error_step, error_msg, explain_json)
         Deploy_Pipeline.pipeline_notify(d_id, 'deploy_failed', buffer)
 
@@ -439,12 +446,11 @@ class Deploy_Pipeline:
 
             for deploy in stuck:
                 step=deploy.status
-                await Deploy_Crud.crud_deploy_update(db, deploy.d_id, {
-                    "error_step": step,
-                    "error_msg": error_msg,
-                    "status": "failed",
-                    "running_since": None,
-                })
+                update_data={"error_step": step, "error_msg": error_msg, "status": "failed"}
+                # 서비스가 살아 있으면 running_since 를 이어서 센다
+                if not deploy.service_arn:
+                    update_data["running_since"]=None
+                await Deploy_Crud.crud_deploy_update(db, deploy.d_id, update_data)
                 await Deploy_Crud.crud_deploy_issue_create(db, deploy.d_id, step, error_msg, None)
 
             await db.commit()

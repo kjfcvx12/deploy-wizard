@@ -66,7 +66,7 @@ class Deploy(Base):
     # AVERAGE_CPU|AVERAGE_MEMORY|REQUEST_COUNT_PER_TARGET
     scale_target: Mapped[Optional[int]] = mapped_column()
     planned_hours: Mapped[Optional[float]] = mapped_column()
-    # running 이 된 시각 (UTC) - 멈춤·삭제·실패로 running 을 벗어나면 비운다
+    # running 이 된 시각 (UTC) - 비어 있을 때만 채우고, 멈춤·삭제·서비스 없는 실패 때 비운다 (살아 있는 서비스의 재배포·복구는 이어서 센다)
     running_since: Mapped[Optional[datetime]] = mapped_column(TIMESTAMP)
     plan_notified_at: Mapped[Optional[datetime]] = mapped_column(TIMESTAMP)
 

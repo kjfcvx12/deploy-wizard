@@ -46,7 +46,7 @@ Base URL: `http://localhost:8081` · 전부 JSON · 인증 없음(로컬 전용)
 - `branch`: 생략하면 레포의 기본 브랜치.
 - `aws_account_id`(M6, 선택): 생략하면 개발 세션으로 배포(M1~M5 동작). `/api/accounts/aws`로 연결한 계정의 `a_id`.
 - `github_installation_id`(M6, 선택): 넣으면 클론·브랜치 조회에 그 설치의 토큰을 쓴다 (private 레포 가능). 생략하면 지금까지처럼 public 클론.
-- 비용 확인용 옵션(모두 선택, 생략하면 지금까지처럼 기본 사양·증설 없음·계획 없음). 타입은 엄격하다 - 숫자 칸에 글자·불리언·소수를 넣으면 422:
+- 비용 확인용 옵션(모두 선택, 생략하면 지금까지처럼 기본 사양·증설 없음·계획 없음). 타입은 엄격하다 - 정수 칸에 글자·불리언·소수를 넣으면 422:
   - `cpu`·`memory`(문자열): `GET /api/pricing/options`의 사양 프리셋 조합이어야 한다. 둘 다 생략하거나 둘 다 보낸다 (한쪽만·프리셋이 아닌 조합은 400 `사양이 올바르지 않습니다 ...`).
   - `planned_hours`(숫자): 0보다 크고 8760 이하의 유한한 수 (아니면 400 `예정 사용 시간은 ...`).
   - `min_tasks`·`max_tasks`(정수)·`scale_metric`(`AVERAGE_CPU`|`AVERAGE_MEMORY`|`REQUEST_COUNT_PER_TARGET`)·`scale_target`(정수, CPU·메모리는 1~100, 요청 수는 1~100000): 자동 증설. 4개를 모두 보내거나 모두 생략한다. `1 ≤ min ≤ max ≤ MAX_TASKS_CAP`(기본 4). 위반하면 400 + 한국어 `detail`. 4개가 다 있을 때만 Express 서비스를 만들 때 `scalingTarget`으로 보낸다.
@@ -111,7 +111,7 @@ Base URL: `http://localhost:8081` · 전부 JSON · 인증 없음(로컬 전용)
 
 `auto_recover`: 배포별 자동 복구 스위치 (기본 `true`). `health_state`: `healthy` `unhealthy` `unknown` — 마지막 헬스체크 요약이며 아직 한 번도 확인하지 않았으면 `unknown`. `last_health_at`: 마지막 헬스체크 시각(없으면 null). `open_incident_id`: 아직 끝나지 않은(`open`·`recovering`·`needs_action`) 인시던트 번호, 없으면 null (배포마다 끝나지 않은 인시던트는 하나뿐). `open_incident_status`: 그 인시던트의 `status`(`open` `recovering` `needs_action`), 없으면 null. 둘 다 DB 열이 아니라 조회할 때마다 같은 조회로 채운다. 앞의 셋은 `deploys` 열이다 (옛 DB는 서버 시작 때 `ensure_columns`가 열을 더한다). 같은 때 더해지는 네 번째 열 `bad_commit_sha`(자동 되돌리기가 기억해 둔 나쁜 커밋, 감시가 같은 커밋을 다시 배포하지 않게 하는 내부용)는 응답에 싣지 않는다.
 
-`cpu` `memory` `min_tasks` `max_tasks` `scale_metric` `scale_target` `planned_hours`: 만들 때 고른 사양·자동 증설·예정 사용 시간 (고르지 않았으면 모두 null = 기본 사양). `running_since`: `running`이 된 시각(UTC, 시간대 표시 없음) - 멈춤·삭제·실패로 `running`을 벗어나면 null. `plan_notified_at`: 예정 사용 시간을 넘겼다는 알림을 보낸 시각 (아직 안 보냈으면 null, `running`이 될 때와 `planned_hours`를 바꿀 때 비운다). 모두 `deploys` 열이며 옛 DB는 서버 시작 때 `ensure_columns`가 더한다.
+`cpu` `memory` `min_tasks` `max_tasks` `scale_metric` `scale_target` `planned_hours`: 만들 때 고른 사양·자동 증설·예정 사용 시간 (고르지 않았으면 모두 null = 기본 사양). `running_since`: `running`이 된 시각(UTC, 시간대 표시 없음). `running`이 될 때 비어 있으면 지금 시각으로 채우고(이때 `plan_notified_at`도 비운다), 멈춤·삭제·서비스 없는 실패 때 비운다. 살아 있는 서비스의 재배포·재시작·복구는 시간을 이어서 센다. 멈춤 후 다시 켜면 처음부터 다시 센다. `plan_notified_at`: 예정 사용 시간을 넘겼다는 알림을 보낸 시각 (아직 안 보냈으면 null, `running_since`를 새로 채울 때와 `planned_hours`를 바꿀 때 비운다). 모두 `deploys` 열이며 옛 DB는 서버 시작 때 `ensure_columns`가 더한다.
 
 ### 값 목록
 

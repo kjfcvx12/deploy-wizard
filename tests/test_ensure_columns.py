@@ -5,7 +5,7 @@ from sqlalchemy import create_engine, inspect, text
 # 모델을 import 해야 Base.metadata 가 deploys 를 안다
 from features.accounts import models as account_models
 from features.deploys import models as deploy_models
-from shared.database import Base, ensure_columns
+from shared.database import Base, ensure_columns, ENSURE_COLUMNS
 
 NEW_COLUMNS={'auto_recover', 'health_state', 'last_health_at', 'bad_commit_sha'}
 
@@ -27,7 +27,7 @@ def test_ensure_columns_adds_missing_columns_once(tmp_path):
         assert NEW_COLUMNS.isdisjoint(c["name"] for c in inspect(conn).get_columns("deploys"))
         added=ensure_columns(conn)
 
-    assert {f"deploys.{name}" for name in NEW_COLUMNS} <= set(added)
+    assert set(added) == {f"deploys.{name}" for name in ENSURE_COLUMNS["deploys"]}
 
     with engine.begin() as conn:
         assert NEW_COLUMNS <= {c["name"] for c in inspect(conn).get_columns("deploys")}

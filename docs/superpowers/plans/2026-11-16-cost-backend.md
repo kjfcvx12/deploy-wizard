@@ -122,7 +122,7 @@
   - `Deploy_Create`에 선택 `cpu`, `memory`, `min_tasks`, `max_tasks`, `scale_metric`, `scale_target`, `planned_hours`. 증설 값은 `Pricing_Service.services_pricing_scaling_valid(..., settings.max_tasks_cap)`로 검증해 오류 문구가 있으면 400. 생성 시 프리셋 검증(`spec_valid`)과 `0 < planned_hours <= 8760`을 확인하고 위반 시 400 한국어(`"사양이 올바르지 않습니다 ..."`, `"예정 사용 시간은 ... "`).
   - `Deploy_Settings_Update`에 `planned_hours:float|None`. 보낸 항목만 바뀌는 기존 방식을 따르고, **`null`을 보내면 계획을 지운다**. 값이 바뀌면 `plan_notified_at`을 비운다(알림 재무장). 같은 검증.
   - `Express_Service.services_express_create(..., cpu:str|None=None, memory:str|None=None, scaling:dict|None=None, ...)` — 값이 있으면 `params["cpu"]`·`params["memory"]`로 보내고, `scaling`(`{"minTaskCount","maxTaskCount","autoScalingMetric","autoScalingTargetValue"}`)이 있으면 `params["scalingTarget"]`로 보낸다 (없으면 키 자체를 보내지 않는다). 우선순위: 인자 → `settings.ecs_cpu/ecs_memory` → 보내지 않음.
-  - 파이프라인은 `deploy.cpu`·`deploy.memory`와, 증설 값 4개가 모두 있으면 `scaling` dict 를 `services_express_create`에 넘긴다. `running` 으로 바꿀 때마다 `running_since=지금`, `plan_notified_at=None`으로 함께 저장하고, 멈춤·삭제·실패로 바뀔 때는 `running_since=None`.
+  - 파이프라인은 `deploy.cpu`·`deploy.memory`와, 증설 값 4개가 모두 있으면 `scaling` dict 를 `services_express_create`에 넘긴다. `running` 으로 바꿀 때 `running_since`가 비어 있으면 `running_since=지금`, `plan_notified_at=None`으로 함께 저장하고(이미 값이 있는 살아 있는 서비스의 재배포는 그대로 둔다), 멈춤·삭제·서비스(`service_arn`) 없는 실패로 바뀔 때는 `running_since=None`.
 
 - [ ] **Step 1: 실패하는 테스트**
   - `test_deploy_create_stores_spec_and_plan` — `{"repo_url", "cpu":"512","memory":"1024","planned_hours":4}` → 201, 응답에 그대로.
@@ -153,7 +153,7 @@
 - [ ] **Step 1: 실패하는 테스트**
   - `test_plan_check_notifies_once_at_boundary` — `planned_hours=2`, `running_since = now-2h`(정확히 경계) → 목록에 포함, `plan_notified_at`이 채워짐; 같은 `now`로 다시 부르면 빈 목록. `now-1h59m`은 포함되지 않는다.
   - `test_plan_check_ignores_not_running_no_plan_no_start` — `stopped`, `planned_hours=None`, `running_since=None` 각각 제외.
-  - `test_plan_resets_when_running_again` — 알림을 보낸 뒤 `running_since`가 새 시각이 되고 `plan_notified_at`이 비면(Task 4 동작) 새 기간이 지난 뒤 다시 한 번 대상이 된다.
+  - `test_plan_resets_when_running_again` — 알림을 보낸 뒤 멈췄다 다시 켜서 `running_since`가 새 시각이 되고 `plan_notified_at`이 비면(Task 4 동작) 새 기간이 지난 뒤 다시 한 번 대상이 된다.
   - `test_compose_plan_exceeded_text` — 제목·본문에 서비스 이름, `4시간`(예정 4), `멈추거나 삭제` 가 들어 있고 `deploys/<d_id>` 링크.
   - `test_plan_exceeded_creates_notification_row` — 가짜 mailer·pusher 로 `deploy_fire`/`deploy_run`을 돌려 알림 줄이 1개 생긴다(기존 `deploy_failed` 알림 테스트 방식).
   - `test_monitor_cycle_fires_plan_notification` — 감시 한 주기(기존 `services_health_check_once` 테스트 방식)가 초과 배포에 대해 알림을 1번 보낸다.

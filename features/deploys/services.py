@@ -341,9 +341,9 @@ class Deploy_Service:
                     if not dry_run:
                         await asyncio.to_thread(Express_Service.services_express_delete, session, deploy.service_arn)
 
-                    update_data.update({"service_arn": None, "endpoint": None})
+                    update_data.update({"service_arn": None, "endpoint": None, "running_since": None})
                     if deploy.status == 'running':
-                        update_data.update({"status": 'stopped', "running_since": None})
+                        update_data["status"]='stopped'
                     report["stopped"].append(name)
 
                 if purge:
