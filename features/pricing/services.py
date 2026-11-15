@@ -1,5 +1,6 @@
 import json
 import logging
+import math
 import re
 from datetime import datetime, timedelta, timezone
 from typing import Awaitable, Callable
@@ -18,9 +19,12 @@ logger=logging.getLogger(__name__)
 PRICE_URL="https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/{service}/current/{region}/index.json"
 FETCH_TIMEOUT_SECONDS=30
 
-# 리전 접두사(APN2, USE1 ...)는 리전마다 달라 접미사로만 고른다 - 접두사 없이 대문자·숫자 한 조각만 허용해 Outposts·TS 변형을 거른다
-ALB_USAGE_PATTERN=re.compile(r"^(?:[A-Z0-9]+-)?LoadBalancerUsage$")
-LCU_USAGE_PATTERN=re.compile(r"^(?:[A-Z0-9]+-)?LCUUsage$")
+# 리전 접두사(APN2, USE1, EUW1 ...)는 리전마다 달라 접미사로 고른다 - 접두사는 '영문 대문자 2~4자 + 숫자' 모양만 허용하고(접두사 없는 us-east-1 모양도 허용),
+# Outposts-·TS-·Reserved 같은 변형 행은 이 모양이 아니라서 걸러진다
+ALB_USAGE_PATTERN=re.compile(r"^(?:[A-Z]{2,4}\d-)?LoadBalancerUsage$")
+LCU_USAGE_PATTERN=re.compile(r"^(?:[A-Z]{2,4}\d-)?LCUUsage$")
+# 리전 이름 모양 (ap-northeast-2, us-east-1 ...) - 캐시 파일 이름과 URL 에 그대로 들어가므로 이 모양만 받는다
+REGION_PATTERN=re.compile(r"^[a-z]{2}(-[a-z]+)+-\d$")
 ALB_FAMILY="Load Balancer-Application"
 
 
@@ -54,7 +58,7 @@ class Pricing_Service:
                 for offer in (on_demand.get(sku) or {}).values():
                     for dimension in (offer.get("priceDimensions") or {}).values():
                         price=float(dimension["pricePerUnit"]["USD"])
-                        if price > 0:
+                        if math.isfinite(price) and price > 0:
                             return price
             return None
         except Exception:
@@ -113,11 +117,13 @@ class Pricing_Service:
     # 단가 표 가져오기 - 캐시가 신선하면 그대로, 아니면 가격 파일을 읽어 갱신. 읽기 실패 시 낡은 캐시, 그것도 없으면 None
     @staticmethod
     async def services_pricing_table(region:str|None=None, fetch:Callable[[str], Awaitable[dict]]|None=None, now:datetime|None=None) -> Price_Table | None:
-        region=region or settings.aws_region
+        region=settings.aws_region if region is None else region
+        if REGION_PATTERN.match(region) is None:
+            return None
         fetch=fetch or Pricing_Service.services_pricing_fetch
         now=now or datetime.now(timezone.utc)
         cached=Pricing_Service.services_pricing_cache_read(region)
-        if cached is not None and now - cached[0] < timedelta(hours=settings.pricing_cache_hours):
+        if cached is not None and timedelta(0) <= now - cached[0] < timedelta(hours=settings.pricing_cache_hours):
             return cached[1]
         try:
             ecs=await fetch(PRICE_URL.format(service="AmazonECS", region=region))
