@@ -87,6 +87,14 @@ class Settings(BaseSettings):
     expo_push_timeout_seconds:int=Field(10, alias="EXPO_PUSH_TIMEOUT_SECONDS")
     app_link_base:str=Field("deploywizard://", alias="APP_LINK_BASE")
 
+    # MCP - 로컬 MCP 서버(features/mcp)가 부르는 REST 주소와 토큰. 토큰은 2단계(로그인)부터 쓴다
+    wizard_api_url:str=Field("http://localhost:8081", alias="WIZARD_API_URL")
+    wizard_api_token:str|None=Field(None, alias="WIZARD_API_TOKEN")
+    # MCP - 살아 있는 배포가 이 수를 넘으면 deploy 미리보기에서 거절 (요금 폭주 방지)
+    mcp_max_live_deploys:int=Field(3, alias="MCP_MAX_LIVE_DEPLOYS")
+    # MCP - 행동 도구 확인 토큰 유효 시간(초)
+    mcp_confirm_ttl_seconds:int=Field(300, alias="MCP_CONFIRM_TTL_SECONDS")
+
     class Config:
         env_file=".env"
         case_sensitive=True

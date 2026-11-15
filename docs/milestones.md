@@ -29,6 +29,10 @@
 
 운영 복구·알림 백엔드가 들어왔다 (`features/health/`, `incidents/`, `notifications/`). 헬스 감시(1분) -> 연속 실패 3번이면 인시던트 -> 규칙 표 원인 설명 -> 알림(앱 안·메일·Expo 푸시) -> 자동 복구(재시작, 이전 정상 이미지로 되돌리기) -> 해제. `pytest`(전부 가짜)로만 확인했고 **실제 AWS 재시작·되돌리기 효과, 실제 SMTP·Expo 발송, 기존 `data/wizard.db`의 `ensure_columns` 첫 실행은 아직이다**. 로그·이벤트 수집과 운영 에이전트(D12)는 만들지 않았다. 앱 화면(D2)은 다음 단계. 구조는 [`architecture.md`](./architecture.md) "운영 감시와 자동 복구", 기록은 [`worklog/2026-11-10.md`](./worklog/2026-11-10.md).
 
+## 로컬 MCP 서버 (2026-11-16)
+
+Claude 에서 배포 마법사를 쓰는 로컬 MCP 서버(`features/mcp`, 도구 13개)가 들어왔다. 가짜 서버·인메모리 클라이언트로만 시험했고 **실제 Claude Code 연결과 MCP 를 통한 실제 배포 한 바퀴(분석 → 배포 → 대기 → 로그 → 삭제)는 아직 확인 전이다.** 로그인 백엔드(사용자 정보 암호화)와 원격 MCP 는 설계서에만 있고 만들지 않았다. 설계: [`superpowers/specs/2026-11-16-mcp-design.md`](./superpowers/specs/2026-11-16-mcp-design.md), 사용법: [`README.md`](../README.md) "Claude에서 쓰기 (MCP)", 기록: [`worklog/2026-11-16.md`](./worklog/2026-11-16.md).
+
 ## 다음에 할 일
 
 지금 상태(2026-10-07): 연결 블록 `test` = AWS 계정(역할 위임 확인, 템플릿 버전 2) + GitHub(`kjfcvx12`, All repositories). 배포 기록은 아직 없다. 자세한 것은 [`worklog/2026-10-07.md`](./worklog/2026-10-07.md) "State at save point".
