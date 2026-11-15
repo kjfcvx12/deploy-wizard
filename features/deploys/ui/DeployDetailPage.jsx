@@ -4,9 +4,11 @@ import { Link, useNavigate, useParams } from 'react-router-dom'
 import ExplainCard from '@features/explains/ui/ExplainCard.jsx'
 import EnvVarsCard from '@features/envvars/ui/EnvVarsCard.jsx'
 import IncidentCard from '@features/incidents/ui/IncidentCard.jsx'
+import { isValidId } from '@shared/ui/isValidId.js'
+import NotFoundNotice from '@shared/ui/NotFoundNotice.jsx'
 
 import { deployApi } from './api.js'
-import { HEALTH_STATE_LABEL, isProgress, repoName, showsEnvCard } from './constants.js'
+import { DEPLOY_NOT_FOUND_TEXT, HEALTH_STATE_LABEL, isProgress, repoName, showsEnvCard } from './constants.js'
 import StatusBadge from './StatusBadge.jsx'
 import StopDialog from './StopDialog.jsx'
 import StepProgress from './StepProgress.jsx'
@@ -16,9 +18,15 @@ import IssueHistory from './IssueHistory.jsx'
 // 떠 있는 배포를 다시 보는 간격(ms)
 const RUNNING_POLL_MS = 15000
 
-// 단계별 진행률, 터미널형 로그, 완료 시 클릭 가능한 링크 (M4) + 실패 해설과 선택지 (M5)
+// 배포 상세 화면 - 주소의 d_id 가 바뀌면 화면을 새로 만들고, 올바른 번호가 아니면 요청 없이 없는 배포 안내를 보인다
 export default function DeployDetailPage() {
   const { d_id } = useParams()
+  if (!isValidId(d_id)) return <NotFoundNotice text={DEPLOY_NOT_FOUND_TEXT} />
+  return <DeployDetail key={d_id} d_id={d_id} />
+}
+
+// 단계별 진행률, 터미널형 로그, 완료 시 클릭 가능한 링크 (M4) + 실패 해설과 선택지 (M5)
+function DeployDetail({ d_id }) {
   const navigate = useNavigate()
   const dialog = useRef(null)
   const stopDialog = useRef(null)
@@ -30,6 +38,7 @@ export default function DeployDetailPage() {
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   const [round, setRound] = useState(0)
+  const [notFound, setNotFound] = useState(false)
 
   // 상태와 로그를 함께 폴링 - 로그는 마지막 d_l_id 이후 것만 받는다
   useEffect(() => {
@@ -38,6 +47,7 @@ export default function DeployDetailPage() {
     let after = 0
     let running = false
     setLogs([])
+    setNotFound(false)
 
     const load = async () => {
       try {
@@ -57,6 +67,11 @@ export default function DeployDetailPage() {
         else if (running) timer = setTimeout(load, RUNNING_POLL_MS)
       } catch (e) {
         if (!alive) return
+        // 배포가 지워졌다 - 다시 부르지 않고 없는 배포 안내로 바꾼다
+        if (e.status === 404) {
+          setNotFound(true)
+          return
+        }
         setError(e.message)
         if (running) timer = setTimeout(load, RUNNING_POLL_MS)
       }
@@ -135,6 +150,8 @@ export default function DeployDetailPage() {
     }
   }
 
+  if (notFound) return <NotFoundNotice text={DEPLOY_NOT_FOUND_TEXT} />
+
   if (!deploy) {
     return error ? <div className="notice err">{error}</div> : <p className="muted">불러오는 중...</p>
   }
@@ -163,7 +180,7 @@ export default function DeployDetailPage() {
             <div className="deploy-meta">
               #{deploy.d_id}
               {deploy.branch && ` · ${deploy.branch}`}
-              {deploy.commit_sha && ` · ${deploy.commit_sha.slice(0, 7)}`}
+              {deploy.commit_sha && ` · ${deploy.commit_sha}`}
               {deploy.language && ` · ${deploy.language}`}
               {deploy.app_dir && deploy.app_dir !== '.' && ` · ${deploy.app_dir}/`}
             </div>

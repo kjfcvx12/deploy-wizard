@@ -48,4 +48,6 @@ test('backoffDelay: 5s base doubles up to 30s', () => {
   const seq = [0, 1, 2, 3, 4, 5].map((f) => backoffDelay(5000, f))
   assert.deepEqual(seq, [5000, 5000, 10000, 20000, 30000, 30000])
   assert.equal(backoffDelay(5000, 9, 60000), 60000)
+  // 읽지 않은 알림 수: 30초 기준, 상한 5분
+  assert.deepEqual([1, 2, 3, 4, 5, 6, 9].map((f) => backoffDelay(30000, f, 300000)), [30000, 60000, 120000, 240000, 300000, 300000, 300000])
 })

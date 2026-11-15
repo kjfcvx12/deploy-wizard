@@ -37,4 +37,7 @@ const ENV_CARD_STATUSES = ['analyzing', 'generating', 'building', 'pushing', 'ne
 
 export const showsEnvCard = (status) => ENV_CARD_STATUSES.includes(status)
 
+// 없는 배포 안내 (설정·상세 화면 공용)
+export const DEPLOY_NOT_FOUND_TEXT = '배포를 찾을 수 없습니다. 이미 삭제된 배포일 수 있습니다.'
+
 export const repoName = (repo_url) => repo_url.replace('https://github.com/', '')

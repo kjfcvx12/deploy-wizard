@@ -172,7 +172,7 @@ export default function NotificationsPage() {
       {!items && !error && <p className="muted">불러오는 중…</p>}
       {!items && error && (
         <div className="notif-error">
-          <p className="notice err">{`서버에 연결할 수 없습니다 :${error}`}</p>
+          <p className="notice err">{error}</p>
           <button type="button" onClick={() => { load() }}>다시 시도</button>
         </div>
       )}

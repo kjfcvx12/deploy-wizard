@@ -45,7 +45,7 @@ export default function DeployListPage() {
 
       <section className="card">
         <h2>내 배포</h2>
-        {error && <div className="notice err">서버에 연결할 수 없습니다 :{error}</div>}
+        {error && <div className="notice err">{error}</div>}
         {deploys && deploys.length === 0 && <p className="muted">아직 배포한 것이 없습니다.</p>}
         {deploys?.map((deploy) => (
           <Link key={deploy.d_id} to={`/deploys/${deploy.d_id}`} className="deploy-item">

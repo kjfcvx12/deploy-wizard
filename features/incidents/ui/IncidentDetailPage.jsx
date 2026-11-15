@@ -3,6 +3,8 @@ import { Link, useLocation, useNavigate, useParams } from 'react-router-dom'
 
 import { deployApi } from '@features/deploys/ui/api.js'
 import StopDialog from '@features/deploys/ui/StopDialog.jsx'
+import { isValidId } from '@shared/ui/isValidId.js'
+import NotFoundNotice from '@shared/ui/NotFoundNotice.jsx'
 import { backoffDelay } from '@shared/ui/polling.js'
 import { durationText, formatTime } from '@shared/ui/time.js'
 import { usePolling } from '@shared/ui/usePolling.js'
@@ -14,7 +16,7 @@ import IncidentBadge from './IncidentBadge.jsx'
 import IncidentExplain from './IncidentExplain.jsx'
 import IncidentTimeline from './IncidentTimeline.jsx'
 
-// 갱신 간격(ms) - 처리 중에는 5초마다, 연결 실패가 이어지면 5, 10, 20초로 늘려 최대 30초까지 (404 는 다시 부르지 않는다)
+// 갱신 간격(ms) - 처리 중에는 5초마다, 연결 실패가 이어지면 5, 10, 20초로 늘려 최대 30초까지 (404 와 끝난 상태 뒤의 실패는 다시 부르지 않는다)
 const POLL_MS = 5000
 // 헬스 이력은 처음·상태가 바뀔 때·수동 새로 고침 때 받고, 그 밖에는 60초에 한 번만
 const HEALTH_HOURS = 24
@@ -24,6 +26,7 @@ const NOT_FOUND_TEXT = '문제를 찾을 수 없습니다. 이미 삭제된 배�
 // 인시던트 상세 화면 (S-13) - 주소의 i_id 가 바뀌면 화면을 새로 만들어 다른 인시던트의 상태가 남지 않게 한다
 export default function IncidentDetailPage() {
   const { i_id } = useParams()
+  if (!isValidId(i_id)) return <NotFoundNotice text={NOT_FOUND_TEXT} />
   return <IncidentDetail key={i_id} i_id={i_id} />
 }
 
@@ -42,6 +45,7 @@ function IncidentDetail({ i_id }) {
 
   const [busy, setBusy] = useState(false)
   const [actionError, setActionError] = useState('')
+  const [copyError, setCopyError] = useState('')
   const [notice, setNotice] = useState('')
   const [acted, setActed] = useState(false)
   // 헬스 이력 - undefined 면 아직 받는 중(막대를 그리지 않음), null 이면 한 번도 받지 못함, 배열이면 받은 이력
@@ -59,6 +63,8 @@ function IncidentDetail({ i_id }) {
       return INCIDENT_ACTIVE_STATUSES.includes(value.status) ? POLL_MS : null
     }
     if (failure.status === 404) return null
+    // 끝난 상태(해결됨·확인 필요)를 받아 둔 뒤의 실패는 다시 부르지 않는다 - 수동 새로 고침만
+    if (value && !INCIDENT_ACTIVE_STATUSES.includes(value.status)) return null
     failsRef.current += 1
     return backoffDelay(POLL_MS, failsRef.current)
   }, [i_id])
@@ -83,8 +89,8 @@ function IncidentDetail({ i_id }) {
 
   // 동작 실패나 안내가 생기면 맨 위로 올려 보여 준다
   useEffect(() => {
-    if (actionError || notice) window.scrollTo?.({ top: 0 })
-  }, [actionError, notice])
+    if (actionError || copyError || notice) window.scrollTo?.({ top: 0 })
+  }, [actionError, copyError, notice])
 
   // 동작 하나를 실행한다 - 실행하는 동안 버튼을 잠그고(더블 클릭 방지), 성공하면 안내를 띄우고 다시 받고, 실패하면 빨간 알림을 띄운다
   const perform = async (call, doneMessage) => {
@@ -145,6 +151,7 @@ function IncidentDetail({ i_id }) {
     <>
       {!!error && <div className="notice err" style={{ marginTop: 0, marginBottom: 16 }}>{error.message}</div>}
       {!!actionError && <div className="notice err" style={{ marginTop: 0, marginBottom: 16 }}>{actionError}</div>}
+      {!!copyError && <div className="notice err" style={{ marginTop: 0, marginBottom: 16 }} role="alert">{copyError}</div>}
       {!!notice && <div className="notice info" style={{ marginTop: 0, marginBottom: 16 }}>{notice}</div>}
 
       <section className="card">
@@ -164,7 +171,7 @@ function IncidentDetail({ i_id }) {
         </div>
       </section>
 
-      <IncidentExplain explain={incident.explain} onCopyError={setActionError} />
+      <IncidentExplain explain={incident.explain} onCopyError={setCopyError} />
 
       <section className="card"><IncidentTimeline incident={incident} /></section>
 

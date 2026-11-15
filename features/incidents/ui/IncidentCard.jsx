@@ -8,6 +8,9 @@ import IncidentBadge from './IncidentBadge.jsx'
 export default function IncidentCard({ d_id, i_id, refreshKey }) {
   const [incident, setIncident] = useState(null)
 
+  // 다른 인시던트로 바뀌면 지난 요약을 비운다 (같은 인시던트의 갱신 때는 남겨 둔다)
+  useEffect(() => { setIncident(null) }, [i_id])
+
   useEffect(() => {
     let alive = true
     incidentApi.getOne(i_id).then((result) => alive && setIncident(result)).catch(() => {})

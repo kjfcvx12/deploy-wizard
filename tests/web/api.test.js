@@ -2,7 +2,7 @@ import test, { beforeEach, afterEach } from 'node:test'
 import assert from 'node:assert/strict'
 import './useAlias.mjs'
 
-const { request } = await import('../../shared/ui/api.js')
+const { request, NETWORK_ERROR_TEXT } = await import('../../shared/ui/api.js')
 const { deployApi } = await import('../../features/deploys/ui/api.js')
 const { incidentApi } = await import('../../features/incidents/ui/api.js')
 const { notificationApi } = await import('../../features/notifications/ui/api.js')
@@ -42,6 +42,23 @@ test('request: non-JSON error still has status', async () => {
 test('request: 422 array detail joined', async () => {
   reply = answer(422, { detail: [{ msg: 'a' }, { msg: 'b' }] })
   await assert.rejects(request('/x'), (e) => e.status === 422 && e.message === 'a, b')
+})
+
+test('request: fetch rejection becomes Korean message with status 0', async () => {
+  globalThis.fetch = async () => { throw new TypeError('Failed to fetch') }
+  await assert.rejects(request('/api/deploys'), (e) => {
+    assert.ok(e instanceof Error)
+    assert.equal(e.status, 0)
+    assert.equal(e.message, NETWORK_ERROR_TEXT)
+    assert.match(e.message, /서버에 연결할 수 없습니다/)
+    assert.doesNotMatch(e.message, /Failed to fetch/)
+    return true
+  })
+})
+
+test('request: 5xx JSON body without detail falls back to status text', async () => {
+  reply = answer(500, { error: 'boom' })
+  await assert.rejects(request('/x'), (e) => e.status === 500 && e.message === '요청 실패 (500)')
 })
 
 test('request: 204 gives null', async () => {
