@@ -1,26 +1,29 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { ActivityIndicator, ScrollView, StyleSheet, Text, View } from 'react-native'
-import { useSafeAreaInsets } from 'react-native-safe-area-context'
+import { ActivityIndicator, StyleSheet, Text, View } from 'react-native'
 import { Stack, useRouter } from 'expo-router'
 import { notificationApi } from '../src/api'
+import FitScreen from '../src/components/FitScreen'
+import FooterSlot from '../src/components/FooterSlot'
+import NotificationKinds from '../src/components/ops/NotificationKinds'
 import PushPermissionGuide from '../src/components/ops/PushPermissionGuide'
 import SettingSwitch from '../src/components/SettingSwitch'
 import { Button, Notice } from '../src/components/ui'
 import { useOnForeground } from '../src/hooks/useOnForeground'
-import { NOTIFICATION_KIND_LABEL, NOTIFICATION_KINDS } from '../src/ops/constants'
-import { KIND_HINT, MAIL_HINT, PUSH_HINT, PUSH_SCOPE_HINT, readValues } from '../src/ops/notificationSettings'
+import { NOTIFICATION_KINDS } from '../src/ops/constants'
+import { MAIL_HINT, PUSH_HINT, PUSH_SCOPE_HINT, readValues } from '../src/ops/notificationSettings'
 import { getPushState, readPushDevice, requestAndRegister, unregister } from '../src/ops/push'
 import { spacing, useColors } from '../src/theme'
 
 const SAVED_TEXT = '저장했습니다'
 // 저장 안내가 떠 있는 시간(ms)
 const SAVED_MS = 3000
+// 맨 아래 자리의 기본 글
+const NOTE_TEXT = '변경은 누르는 즉시 저장됩니다.'
 
 // 알림 설정 화면 (S-15 로그인 없이) - 스위치를 누르면 저장 버튼 없이 바로 반영하고, 실패하면 되돌린다
 export default function NotificationSettingsScreen() {
   const colors = useColors()
   const router = useRouter()
-  const insets = useSafeAreaInsets()
   const scrollRef = useRef(null)
   const alive = useRef(false)
   const loadSeq = useRef(0)
@@ -76,9 +79,9 @@ export default function NotificationSettingsScreen() {
     if (next === 'granted') setGuideOpen(false)
   })
 
-  // 실패나 안내가 생기면 맨 위로 올려 보여 준다
+  // 오류 안내가 생기면 맨 아래 안내 자리가 보이게 내린다 (넘칠 때만 의미가 있다) - 저장 성공 안내는 화면을 움직이지 않는다
   useEffect(() => {
-    if (message) scrollRef.current?.scrollTo?.({ y: 0, animated: true })
+    if (message?.tone === 'err') scrollRef.current?.scrollToEnd?.({ animated: true })
   }, [message])
 
   // 같은 스위치(묶음)가 응답을 기다리는 동안은 다시 누를 수 없다 - 종류 스위치는 목록 전체를 한 번에 보내므로 한 묶음이다
@@ -196,9 +199,9 @@ export default function NotificationSettingsScreen() {
   let body
   if (!values) {
     body = loading
-      ? <ActivityIndicator accessibilityLabel="불러오는 중" size="large" color={colors.accent} style={styles.spinner} />
+      ? <ActivityIndicator accessibilityLabel="불러오는 중" size="large" color={colors.accent} style={styles.center} />
       : (
-        <View style={styles.stack}>
+        <View style={[styles.stack, styles.center]}>
           <Notice>{loadError?.message}</Notice>
           <View style={styles.actions}>
             <Button label="다시 시도" onPress={load} />
@@ -209,15 +212,14 @@ export default function NotificationSettingsScreen() {
   } else {
     const fixedInfo = pushState === 'unsupported' || pushState === 'no_project'
     body = (
-      <View style={styles.stack}>
-        {!!message && <Notice tone={message.tone}>{message.text}</Notice>}
+      <View style={[styles.stack, styles.fill]}>
         <Text accessibilityRole="header" style={[styles.heading, { color: colors.text }]}>받는 방법</Text>
         <SettingSwitch
-          title="메일 받기" description={MAIL_HINT} value={values.notify_email} busy={!!busy.notify_email}
+          compact title="메일 받기" description={MAIL_HINT} value={values.notify_email} busy={!!busy.notify_email}
           accessibilityLabel="메일 받기" onToggle={toggleMail}
         />
         <SettingSwitch
-          title="푸시 받기" description={PUSH_HINT} value={pushOn} busy={!!busy.notify_push}
+          compact title="푸시 받기" description={PUSH_HINT} value={pushOn} busy={!!busy.notify_push}
           accessibilityLabel="푸시 받기" onToggle={togglePush}
         />
         <Text style={[styles.note, { color: colors.muted }]}>{PUSH_SCOPE_HINT}</Text>
@@ -227,20 +229,7 @@ export default function NotificationSettingsScreen() {
             onLater={fixedInfo ? undefined : () => setGuideOpen(false)}
           />
         )}
-        <Text accessibilityRole="header" style={[styles.heading, { color: colors.text }]}>받을 알림</Text>
-        {NOTIFICATION_KINDS.map((kind) => (
-          <SettingSwitch
-            key={kind}
-            title={NOTIFICATION_KIND_LABEL[kind]}
-            description={KIND_HINT[kind]}
-            value={values.kinds.includes(kind)}
-            busy={!!busy.kinds}
-            accessibilityLabel={`${NOTIFICATION_KIND_LABEL[kind]} 알림`}
-            onToggle={() => toggleKind(kind)}
-          />
-        ))}
-        <Text style={[styles.note, { color: colors.muted }]}>끈 종류는 앱 안 알림 목록에도 남지 않습니다</Text>
-        <Text style={[styles.note, { color: colors.muted }]}>변경은 누르는 즉시 저장됩니다.</Text>
+        <NotificationKinds kinds={values.kinds} busy={!!busy.kinds} onToggle={toggleKind} />
       </View>
     )
   }
@@ -248,23 +237,19 @@ export default function NotificationSettingsScreen() {
   return (
     <>
       <Stack.Screen options={{ title: '알림 설정' }} />
-      <ScrollView
-        ref={scrollRef}
-        testID="settings-scroll"
-        contentContainerStyle={[styles.content, { paddingBottom: spacing.xl * 2 + insets.bottom }]}
-        style={{ backgroundColor: colors.bg }}
-      >
+      <FitScreen testID="settings-scroll" scrollRef={scrollRef}>
         {body}
-      </ScrollView>
+        {!!values && <FooterSlot message={message} note={NOTE_TEXT} />}
+      </FitScreen>
     </>
   )
 }
 
 const styles = StyleSheet.create({
-  content: { padding: spacing.lg },
-  stack: { gap: spacing.md },
+  stack: { gap: spacing.sm },
   actions: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.md },
-  spinner: { marginTop: spacing.xl * 2 },
-  heading: { fontSize: 17, fontWeight: '700', lineHeight: 24, marginTop: spacing.sm },
-  note: { fontSize: 13, lineHeight: 19 },
+  fill: { flex: 1 },
+  center: { flex: 1, justifyContent: 'center' },
+  heading: { fontSize: 15, fontWeight: '700', lineHeight: 21 },
+  note: { fontSize: 12, lineHeight: 17 },
 })

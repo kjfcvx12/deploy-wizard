@@ -55,7 +55,8 @@ export default function IncidentCard({ d_id, i_id, label, onPress, refreshKey })
 const COPIED_MS = 2000
 
 // 원인 · 고칠 곳(고정폭, 선택·복사 가능) · 해야 할 일 - explain 이 null 이거나 일부만 있어도 그린다 (글자로만 그린다)
-export function IncidentExplain({ explain, onError }) {
+// flat 이면 카드 없이 한 덩어리로 그리고 구역 사이를 얇은 줄로 나눈다 (스크롤 상자 안에 넣을 때)
+export function IncidentExplain({ explain, onError, flat }) {
   const colors = useColors()
   const [copied, setCopied] = useState(false)
   const timer = useRef(null)
@@ -77,32 +78,52 @@ export function IncidentExplain({ explain, onError }) {
     }
   }
 
-  return (
-    <>
-      <Card style={styles.stack}>
+  const sections = [
+    (
+      <>
         <Text accessibilityRole="header" style={[styles.sectionTitle, { color: colors.text }]}>원인</Text>
         <Text style={[styles.body, wrapAnywhere, { color: colors.text }]}>{cause}</Text>
-      </Card>
+      </>
+    ),
+  ]
+  if (fixWhere) {
+    sections.push(
+      <>
+        <Text accessibilityRole="header" style={[styles.sectionTitle, { color: colors.text }]}>고칠 곳</Text>
+        <Text selectable style={[styles.mono, wrapAnywhere, { color: colors.text, backgroundColor: colors.surface2 }]}>{fixWhere}</Text>
+        <Button label={copied ? '복사됨' : '복사'} accessibilityLabel="고칠 곳 복사" onPress={copy} style={styles.self} />
+      </>,
+    )
+  }
+  if (actions.length > 0) {
+    sections.push(
+      <>
+        <Text accessibilityRole="header" style={[styles.sectionTitle, { color: colors.text }]}>해야 할 일</Text>
+        {actions.map((action, index) => (
+          <View key={`${index}-${action}`} style={styles.actionRow}>
+            <Text style={[styles.body, styles.num, { color: colors.text }]}>{`${index + 1}.`}</Text>
+            <Text style={[styles.body, styles.actionText, wrapAnywhere, { color: colors.text }]}>{action}</Text>
+          </View>
+        ))}
+      </>,
+    )
+  }
 
-      {!!fixWhere && (
-        <Card style={styles.stack}>
-          <Text accessibilityRole="header" style={[styles.sectionTitle, { color: colors.text }]}>고칠 곳</Text>
-          <Text selectable style={[styles.mono, wrapAnywhere, { color: colors.text, backgroundColor: colors.surface2 }]}>{fixWhere}</Text>
-          <Button label={copied ? '복사됨' : '복사'} accessibilityLabel="고칠 곳 복사" onPress={copy} style={styles.self} />
-        </Card>
-      )}
-
-      {actions.length > 0 && (
-        <Card style={styles.stack}>
-          <Text accessibilityRole="header" style={[styles.sectionTitle, { color: colors.text }]}>해야 할 일</Text>
-          {actions.map((action, index) => (
-            <View key={`${index}-${action}`} style={styles.actionRow}>
-              <Text style={[styles.body, styles.num, { color: colors.text }]}>{`${index + 1}.`}</Text>
-              <Text style={[styles.body, styles.actionText, wrapAnywhere, { color: colors.text }]}>{action}</Text>
-            </View>
-          ))}
-        </Card>
-      )}
+  if (flat) {
+    return (
+      <View testID="explain-flat" style={styles.flat}>
+        {sections.map((section, index) => (
+          <View key={index} style={styles.stack}>
+            {index > 0 && <View testID="explain-divider" style={[styles.divider, { backgroundColor: colors.border }]} />}
+            {section}
+          </View>
+        ))}
+      </View>
+    )
+  }
+  return (
+    <>
+      {sections.map((section, index) => <Card key={index} style={styles.stack}>{section}</Card>)}
     </>
   )
 }
@@ -117,6 +138,8 @@ const styles = StyleSheet.create({
   summary: { fontSize: 14, lineHeight: 20 },
   more: { fontSize: 13, fontWeight: '700' },
   stack: { gap: spacing.sm },
+  flat: { gap: spacing.md },
+  divider: { height: 1, marginBottom: spacing.xs },
   sectionTitle: { fontSize: 15, fontWeight: '700' },
   body: { fontSize: 14, lineHeight: 21 },
   mono: { fontFamily: monoFont, fontSize: 13, lineHeight: 19, padding: spacing.md, borderRadius: radius.sm },

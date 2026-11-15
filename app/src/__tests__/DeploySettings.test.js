@@ -1,4 +1,4 @@
-import { AppState, StyleSheet } from 'react-native'
+import { AppState, ScrollView, StyleSheet } from 'react-native'
 import { render, screen, fireEvent, act } from '@testing-library/react-native'
 import { deployApi, envApi } from '../api'
 import DeploySettings from '../../app/deploy-settings/[d_id]'
@@ -31,6 +31,7 @@ const REDEPLOY = '새 커밋이 오면 자동 재배포'
 const RECOVER = '문제가 생기면 자동 복구'
 const notFound = Object.assign(new Error('해당 id의 배포가 없습니다'), { status: 404 })
 const NOT_FOUND_TEXT = '배포를 찾을 수 없습니다. 이미 삭제된 배포일 수 있습니다.'
+const NOTE_TEXT = '변경은 누르는 즉시 저장됩니다. 이미 진행 중인 배포에는 영향이 없습니다.'
 
 // 끝낼 시점을 테스트가 정하는 약속
 const deferred = () => {
@@ -251,6 +252,72 @@ describe('배포 설정 - 변경', () => {
     await flush()
     expect(screen.getByText(NOT_FOUND_TEXT)).toBeTruthy()
     expect(screen.queryByRole('switch')).toBeNull()
+  })
+})
+
+describe('배포 설정 - 맨 아래 안내 자리', () => {
+  test('평소엔 기본 글이 보이고 맨 위에는 안내 띠가 없다', async () => {
+    await open()
+    expect(screen.getByText(NOTE_TEXT)).toBeTruthy()
+    expect(screen.queryByText('저장했습니다')).toBeNull()
+  })
+
+  test('저장 성공 안내가 맨 아래 자리에서 기본 글을 대신하고 3초 뒤 기본 글로 돌아온다', async () => {
+    await open()
+    await fireEvent.press(row(RECOVER))
+    await flush()
+    expect(screen.getByText('저장했습니다').parent.props.accessibilityRole).toBe('alert')
+    expect(screen.queryByText(NOTE_TEXT)).toBeNull()
+    await act(async () => { jest.advanceTimersByTime(3100) })
+    expect(screen.queryByText('저장했습니다')).toBeNull()
+    expect(screen.getByText(NOTE_TEXT)).toBeTruthy()
+  })
+
+  test('저장 성공 안내는 화면을 움직이지 않는다 (맨 아래로도 맨 위로도 스크롤하지 않음)', async () => {
+    const scrollToEnd = jest.fn()
+    const scrollTo = jest.fn()
+    jest.spyOn(ScrollView.prototype, 'scrollToEnd').mockImplementation(scrollToEnd)
+    jest.spyOn(ScrollView.prototype, 'scrollTo').mockImplementation(scrollTo)
+    await open()
+    await fireEvent.press(row(RECOVER))
+    await flush()
+    expect(screen.getByText('저장했습니다')).toBeTruthy()
+    expect(scrollToEnd).not.toHaveBeenCalled()
+    expect(scrollTo).not.toHaveBeenCalled()
+  })
+
+  test('오류 안내가 뜨면 맨 아래로 스크롤하고, 맨 위로는 올리지 않는다', async () => {
+    const scrollToEnd = jest.fn()
+    const scrollTo = jest.fn()
+    jest.spyOn(ScrollView.prototype, 'scrollToEnd').mockImplementation(scrollToEnd)
+    jest.spyOn(ScrollView.prototype, 'scrollTo').mockImplementation(scrollTo)
+    deployApi.patchSettings.mockRejectedValueOnce(new Error('지금은 설정을 바꿀 수 없습니다'))
+    await open()
+    await fireEvent.press(row(RECOVER))
+    await flush()
+    expect(screen.getByText('지금은 설정을 바꿀 수 없습니다')).toBeTruthy()
+    expect(scrollToEnd).toHaveBeenCalled()
+    expect(scrollTo).not.toHaveBeenCalled()
+  })
+
+  test('스위치가 실패하면 서버 오류 문장 전체가 alert 로 보이고 스위치는 되돌아간다', async () => {
+    const long = '지금은 설정을 바꿀 수 없습니다. 잠시 뒤 다시 시도해 주세요. '.repeat(4).trim()
+    deployApi.patchSettings.mockRejectedValueOnce(new Error(long))
+    await open()
+    await fireEvent.press(row(RECOVER))
+    await flush()
+    expect(screen.getByText(long).parent.props.accessibilityRole).toBe('alert')
+    expect(screen.queryByText(NOTE_TEXT)).toBeNull()
+    expect(row(RECOVER).props.accessibilityState).toMatchObject({ checked: true })
+  })
+
+  test('404 면 안내와 돌아가기만 보이고 기본 글은 없다', async () => {
+    deployApi.getOne.mockRejectedValue(notFound)
+    await render(<DeploySettings />)
+    expect(await screen.findByText(NOT_FOUND_TEXT)).toBeTruthy()
+    expect(screen.getByRole('button', { name: '돌아가기' })).toBeTruthy()
+    expect(screen.queryByText(NOTE_TEXT)).toBeNull()
+    expect(screen.queryByRole('button', { name: '다시 시도' })).toBeNull()
   })
 })
 

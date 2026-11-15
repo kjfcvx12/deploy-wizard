@@ -1,10 +1,10 @@
 import { Alert, AppState, StyleSheet } from 'react-native'
 import * as Clipboard from 'expo-clipboard'
-import { render, screen, fireEvent, act } from '@testing-library/react-native'
+import { render, screen, fireEvent, act, within } from '@testing-library/react-native'
 import { deployApi, healthApi, incidentApi } from '../api'
 import IncidentDetail from '../../app/incidents/[i_id]'
 import { formatTime } from '../ops/format'
-import { monoFont } from '../theme'
+import { monoFont, spacing } from '../theme'
 
 const mockPush = jest.fn()
 const mockBack = jest.fn()
@@ -165,6 +165,82 @@ describe('인시던트 상세 - 내용', () => {
     await act(async () => {})
     expect(screen.getByLabelText('최근 24시간 확인 기록 없음')).toBeTruthy()
     expect(screen.queryByText('헬스 이력을 불러오지 못했습니다')).toBeNull()
+  })
+})
+
+describe('인시던트 상세 - 한 화면 배치 (위 고정 · 가운데 상자 · 아래 고정)', () => {
+  test('가운데 상자(incident-body) 안에 원인·고칠 곳·해야 할 일·타임라인이 모두 있고 헬스 막대와 버튼은 상자 밖에 있다', async () => {
+    await open()
+    await act(async () => {})
+    const box = within(screen.getByTestId('incident-body'))
+    expect(screen.getByTestId('incident-body').props.nestedScrollEnabled).toBe(true)
+    // 안쪽 상자가 iOS 의 끌어당겨 새로고침을 가로채지 않게 튕김을 끈다
+    expect(screen.getByTestId('incident-body').props.bounces).toBe(false)
+    expect(screen.getByTestId('incident-body').props.alwaysBounceVertical).toBe(false)
+    ;['원인', '고칠 곳', '해야 할 일', '마법사가 한 일'].forEach((title) => expect(box.getByText(title)).toBeTruthy())
+    expect(box.getByText(FIX)).toBeTruthy()
+    expect(box.getAllByTestId('timeline-item')).toHaveLength(2)
+    expect(box.queryByLabelText(/최근 24시간/)).toBeNull()
+    expect(box.queryByRole('button', { name: '배포 #3 보기' })).toBeNull()
+    expect(screen.getByLabelText(/최근 24시간/)).toBeTruthy()
+    expect(screen.getByRole('button', { name: '배포 #3 보기' })).toBeTruthy()
+    // 요약은 상자 밖(위 고정)
+    expect(box.queryByText('복구 중')).toBeNull()
+  })
+
+  test('가운데 상자의 maxHeight 는 측정이 모두 끝나면 사용 가능 높이 - 위 묶음 - 아래 묶음 - 간격 둘, 하나라도 없으면 제한하지 않는다', async () => {
+    await open()
+    await act(async () => {})
+    const maxOf = () => StyleSheet.flatten(screen.getByTestId('incident-middle').props.style)
+    const layout = (id, height) => fireEvent(screen.getByTestId(id), 'layout', { nativeEvent: { layout: { x: 0, y: 0, width: 390, height } } })
+    expect(maxOf().maxHeight).toBeUndefined()
+    expect(maxOf().minHeight).toBe(160)
+    expect(maxOf().flexGrow).toBe(1)
+    await layout('incident-scroll', 780)
+    await layout('incident-top', 100)
+    expect(maxOf().maxHeight).toBeUndefined()
+    await layout('incident-bottom', 166)
+    const content = StyleSheet.flatten(screen.getByTestId('incident-scroll').props.contentContainerStyle)
+    const available = 780 - content.padding - content.paddingBottom
+    expect(maxOf().maxHeight).toBe(available - 100 - 166 - spacing.md * 2)
+    // 아래 묶음이 커지면 (안내가 뜨면) 상자가 줄고, 위·아래가 너무 크면 최소 160 으로 멈춘다
+    await layout('incident-bottom', 238)
+    expect(maxOf().maxHeight).toBe(available - 100 - 238 - spacing.md * 2)
+    await layout('incident-top', 900)
+    expect(maxOf().maxHeight).toBe(160)
+  })
+
+  test('needs_action 이면 버튼 3개가 있고 동작 뒤에는 배포 보기 한 개만 남는다', async () => {
+    await open(needsAction)
+    expect(screen.getAllByRole('button').filter((b) => /^배포 #3 /.test(b.props.accessibilityLabel))).toHaveLength(3)
+    expect(screen.getByText(/아무것도 누르지 않으면/)).toBeTruthy()
+    await fireEvent.press(screen.getByRole('button', { name: '배포 #3 다시 배포' }))
+    expect(await screen.findByText(/다시 배포를 시작했습니다/)).toBeTruthy()
+    const labeled = screen.getAllByRole('button').filter((b) => /^배포 #3 /.test(b.props.accessibilityLabel))
+    expect(labeled.map((b) => b.props.accessibilityLabel)).toEqual(['배포 #3 보기'])
+    expect(screen.queryByText(/아무것도 누르지 않으면/)).toBeNull()
+    expect(screen.getByTestId('incident-body')).toBeTruthy()
+    expect(within(screen.getByTestId('incident-body')).getByText('원인')).toBeTruthy()
+  })
+
+  test('동작 실패 오류가 버튼 위에 alert 로 전체 문장 보인다', async () => {
+    const long = '이미 진행 중인 배포가 있어 지금은 다시 배포할 수 없습니다. 잠시 뒤 [배포 보기]에서 진행 상황을 확인한 다음 다시 시도하세요.'
+    deployApi.redeploy.mockRejectedValueOnce(new Error(long))
+    await open(needsAction)
+    await fireEvent.press(screen.getByRole('button', { name: '배포 #3 다시 배포' }))
+    expect(await screen.findByText(long)).toBeTruthy()
+    // Notice 는 접근성 역할 alert 인 View 가 글을 감싼다 (View 라 getByRole 에는 잡히지 않아 부모를 본다)
+    expect(screen.getByText(long).parent.props.accessibilityRole).toBe('alert')
+    expect(within(screen.getByTestId('incident-body')).queryByText(long)).toBeNull()
+    expect(screen.queryByTestId('incident-body')).toBeTruthy()
+    expect(screen.getByRole('button', { name: '배포 #3 다시 배포' })).toBeTruthy()
+  })
+
+  test('긴 공백 없는 fix_where 가 그대로 화면 글에 들어 있다', async () => {
+    const arn = `arn:aws:ecs:ap-northeast-2:123456789012:service/${'very-long-cluster-name'.repeat(4)}/${'svc'.repeat(10)}`
+    await open({ ...base, explain: { ...base.explain, fix_where: arn } })
+    expect(within(screen.getByTestId('incident-body')).getByText(arn)).toBeTruthy()
+    expect(screen.getByRole('button', { name: '배포 #3 보기' })).toBeTruthy()
   })
 })
 
