@@ -26,6 +26,7 @@ class Settings(BaseSettings):
     # 빌드
     work_dir:str=Field("./data/work", alias="WORK_DIR")
     cache_dir:str=Field("./data/cache", alias="CACHE_DIR")
+    docker_auth_dir:str=Field("./data/docker-auth", alias="DOCKER_AUTH_DIR")
     build_timeout_official:int=Field(900, alias="BUILD_TIMEOUT_OFFICIAL")
     build_timeout_experimental:int=Field(1800, alias="BUILD_TIMEOUT_EXPERIMENTAL")
     fix_limit_official:int=Field(2, alias="FIX_LIMIT_OFFICIAL")
@@ -105,6 +106,10 @@ class Settings(BaseSettings):
     @property
     def cache_path(self) -> Path:
         return Path(self.cache_dir).resolve()
+
+    @property
+    def docker_auth_path(self) -> Path:
+        return Path(self.docker_auth_dir).resolve()
 
     @property
     def cors_origin_list(self) -> list[str]:
