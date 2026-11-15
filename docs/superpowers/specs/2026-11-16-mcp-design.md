@@ -236,3 +236,10 @@ tests/test_mcp.py
 - import: `from mcp.server.mcpserver import MCPServer, Context`, `from mcp_types import ToolAnnotations`, `from mcp.shared.exceptions import MCPError`.
 - 도구 설명은 `description=`(docstring 금지). 반환은 모델. 한국어 안내용 오류는 `ToolError("...")` 또는 모델에 `message` 필드.
 - 도구가 예기치 않게 예외를 던지면 클라이언트는 일반 문구만 받는다 — 서비스 계층에서 잡아 한국어 한 줄로 바꿔 돌려준다 (5.4).
+
+### 9.7 Task 6 구현에서 정한 것
+
+- elicitation 은 **켠다**: 행동 도구 5개는 `confirm_token` 이 없을 때만 `ctx.elicit(미리보기 문구, Confirm_Schema)`를 부른다 (`Confirm_Schema` = `ok: bool` 하나). 승인(`accept` + `ok=True`)이면 서비스를 토큰으로 곧바로 다시 불러 실행(한도·바인딩 검사는 서비스 한 곳), 거절·취소면 `{"status": "cancelled"}`. `MCPError`(미지원)는 도구 안에서 잡아 토큰 미리보기를 그대로 돌려준다. `confirm_token` 을 넘기면 elicitation 없이 토큰 경로.
+- 도구 반환형은 `dict[str, Any]` (목록은 `{"items": [...]}`). `max_live`·확인 유효 시간은 `build_server` 인자로만 정하고 도구 매개변수에는 없다.
+- `Wizard_Error` → `ToolError(str(e))` (한국어 문구가 `is_error` 결과로 간다).
+- 새 SDK 이름은 쓰지 않았다 (`Context`, `MCPServer`, `ToolAnnotations`, `MCPError`, `ToolError` 만).
