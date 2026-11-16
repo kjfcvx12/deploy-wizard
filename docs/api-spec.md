@@ -52,7 +52,8 @@ Google `id_token`으로 로그인해 액세스 토큰(JWT, 900초)과 리프레�
 
 - `platform`: `web` | `android`. 그 밖(`ios` 포함)은 422. 플랫폼마다 `aud`가 다르다 — `web`은 `GOOGLE_CLIENT_ID_WEB`, `android`는 `GOOGLE_CLIENT_ID_ANDROID`만 받는다. iOS 는 `features/auth/scheme.py`의 `LOGIN_PLATFORMS`에 한 줄 + `GOOGLE_CLIENT_ID_IOS` 설정으로 더한다.
 - **웹 (`platform="web"` 또는 쿠키로 온 refresh)**: 리프레시는 본문에 싣지 않고(`refresh_token: null`) `Set-Cookie: dw_refresh=…; HttpOnly; SameSite=strict; Path=/api/auth; Max-Age=2592000`(`AUTH_COOKIE_SECURE=true`이면 `Secure`). **앱**: 본문 `refresh_token`에 싣고, 앱이 안전한 저장소에 둔다.
-- **쿠키로 온 refresh·logout 은 `Origin` 헤더가 `CORS_ORIGINS`에 있어야 한다.** 없거나 밖이면 403 (토큰은 쓰지 않는다). 본문에 `refresh_token`이 있으면 쿠키보다 본문을 쓴다.
+- **쿠키로 온 refresh·logout 과 `platform="web"` 로그인은 `Origin` 헤더가 `CORS_ORIGINS`에 있어야 한다.** 없거나 밖이면 403 (Google 검증도 토큰 사용도 하지 않는다). `android` 로그인은 `Origin`을 보지 않는다. 본문에 `refresh_token`이 있으면 쿠키보다 본문을 쓰고(이때는 `Origin` 확인이 없고 쿠키 토큰도 회전하지 않는다), 응답도 본문으로 준다.
+- 같은 Google 계정의 첫 로그인이 동시에 오면 한쪽은 유일 키에 막히지만, 되돌린 뒤 다시 읽어 있는 사용자로 이어 가므로 둘 다 200 이다. `AUTH_JWT_KEY`가 없으면 로그인·refresh 는 커밋 전에 503 으로 끝나 사용자·토큰 회전이 남지 않는다 (옛 리프레시 토큰이 그대로 살아 있다).
 - 서버는 리프레시 토큰을 SHA-256 해시로만 저장한다. 원문은 발급 응답에 한 번만 나간다. 사용자 이메일·이름·사진·`google_sub`는 DB 에 암호화해 둔다.
 
 ### DELETE `/api/me` (계정 삭제)
@@ -88,7 +89,7 @@ Google `id_token`으로 로그인해 액세스 토큰(JWT, 900초)과 리프레�
 | 422 | `platform`이 `web`·`android`가 아님, 본문 타입이 틀림 (`/api/auth/*` 전체) | FastAPI 검증 오류 목록 - 단, 보낸 값을 되돌려 주는 `input` 항목은 뺀다 (`id_token`·리프레시 토큰이 응답에 실리지 않게) |
 | 503 | Google 공개키를 못 받음 / 그 플랫폼의 클라이언트 ID 미설정 / `AUTH_JWT_KEY` 없음 | `Google 로그인 서버에 연결할 수 없습니다. 잠시 뒤 다시 시도해 주세요` / `Google 로그인이 아직 설정되지 않았습니다 (GOOGLE_CLIENT_ID_* 확인)` / `로그인 설정이 완료되지 않았습니다 (AUTH_JWT_KEY 확인)` |
 | 401 | refresh: 토큰 없음·모름·만료·폐기됨(재사용 → 계열 폐기)·동시 요청에서 짐·탈퇴한 사용자 | `로그인이 만료되었습니다. 다시 로그인해 주세요` |
-| 403 | 쿠키로 온 refresh·logout 의 `Origin`이 없거나 허용 목록 밖 | `허용되지 않은 출처입니다` |
+| 403 | 쿠키로 온 refresh·logout, 또는 `platform="web"` 로그인의 `Origin`이 없거나 허용 목록 밖 | `허용되지 않은 출처입니다` |
 | 401 | 보호 경로(`AUTH_ENABLED=true`)·`/api/me`·`/api/auth/tokens*`: 토큰 없음·틀림·만료·다른 용도(`typ`)·폐기된 개인 토큰·없는/탈퇴한 사용자 (응답 헤더 `WWW-Authenticate: Bearer`) | `로그인이 필요합니다` |
 | 403 | `/api/auth/tokens*`·`DELETE /api/me`를 개인 토큰으로 부름 | `개인 토큰으로는 개인 토큰을 관리할 수 없습니다. 로그인해서 관리해 주세요` |
 | 400 | `DELETE /api/me`: 본문이 `{"confirm": true}` 가 아님 | `계정을 삭제하려면 confirm 에 true 를 보내야 합니다` |

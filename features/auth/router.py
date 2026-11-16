@@ -36,9 +36,12 @@ def router_auth_refresh_token_pick(request:Request, payload:Auth_Refresh_Request
     return cookie, True
 
 
-# POST Google 로그인 - 웹은 리프레시를 쿠키로, 앱은 본문으로
+# POST Google 로그인 - 웹은 리프레시를 쿠키로 (Origin 확인 필수), 앱은 본문으로
 @router.post('/auth/google', response_model=Auth_Token)
-async def router_auth_google(payload:Auth_Google_Request, response:Response, db:AsyncSession=Depends(get_db)):
+async def router_auth_google(payload:Auth_Google_Request, request:Request, response:Response, db:AsyncSession=Depends(get_db)):
+    if payload.platform == "web":
+        Auth_Service.services_auth_origin_check(request.headers.get("origin"))
+
     token, raw=await Auth_Service.services_auth_google_login(db, payload.id_token, payload.platform)
 
     if payload.platform == "web":

@@ -4,6 +4,7 @@ from datetime import datetime, timedelta, timezone
 import jwt
 from fastapi import Depends, HTTPException, Request, status
 
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from shared.database import get_db
@@ -103,7 +104,7 @@ class Auth_Service:
             raise unauthorized from None
 
         sub=claims.get("sub")
-        if claims.get("typ") != ACCESS_TYPE or not isinstance(sub, str) or not sub.isdigit():
+        if claims.get("typ") != ACCESS_TYPE or not isinstance(sub, str) or not (sub.isascii() and sub.isdecimal()):
             raise unauthorized
 
         return int(sub)
@@ -118,10 +119,10 @@ class Auth_Service:
         return db_token, raw
 
 
-    # 응답 모양 - 리프레시 원문은 일단 본문에 넣고, 웹이면 라우터가 쿠키로 옮긴다
+    # 응답 모양 - 리프레시 원문은 일단 본문에 넣고, 웹이면 라우터가 쿠키로 옮긴다. 액세스 토큰은 커밋 전에 만들어 넘긴다 (키가 없을 때 회전만 남지 않게)
     @staticmethod
-    def services_auth_token_build(db_user:User, raw:str) -> Auth_Token:
-        return Auth_Token(access_token=Auth_Service.services_auth_access_issue(db_user.u_id),
+    def services_auth_token_build(db_user:User, raw:str, access_token:str) -> Auth_Token:
+        return Auth_Token(access_token=access_token,
                           expires_in=settings.auth_access_seconds,
                           refresh_token=raw,
                           user=User_Read.model_validate(db_user))
@@ -147,10 +148,21 @@ class Auth_Service:
             profile={"email": email, "email_bidx": blind_index("email", email),
                      "name": identity.name, "picture_url": identity.picture_url, "last_login_at": now}
 
-            db_user=await Auth_Crud.crud_user_get_by_google_sub_bidx(db, blind_index("google_sub", identity.sub))
+            sub_bidx=blind_index("google_sub", identity.sub)
+            db_user=await Auth_Crud.crud_user_get_by_google_sub_bidx(db, sub_bidx)
             if db_user is None:
-                db_user=await Auth_Crud.crud_user_create(db, {**profile, "google_sub": identity.sub,
-                                                               "google_sub_bidx": blind_index("google_sub", identity.sub), "status": "active"})
+                # 같은 계정의 첫 로그인이 동시에 둘이면 한쪽은 유일 키에 막힌다 - 되돌린 뒤 다시 읽어 있는 사용자 경로로 이어 간다
+                try:
+                    db_user=await Auth_Crud.crud_user_create(db, {**profile, "google_sub": identity.sub,
+                                                                   "google_sub_bidx": sub_bidx, "status": "active"})
+                except IntegrityError:
+                    await db.rollback()
+                    db_user=await Auth_Crud.crud_user_get_by_google_sub_bidx(db, sub_bidx)
+                    if db_user is None:
+                        raise
+                    if db_user.status != "active":
+                        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=MESSAGE_NOT_ALLOWED)
+                    db_user=await Auth_Crud.crud_user_update(db, db_user, profile)
             elif db_user.status != "active":
                 raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=MESSAGE_NOT_ALLOWED)
             else:
@@ -159,9 +171,12 @@ class Auth_Service:
             # 4. 새 계열의 리프레시 토큰
             _, raw=await Auth_Service.services_auth_refresh_issue(db, db_user.u_id, py_secrets.token_hex(16), platform, now)
 
+            # 5. 액세스 토큰은 커밋 전에 - AUTH_JWT_KEY 가 없으면 여기서 503 으로 끝나고 아무것도 남지 않는다
+            access_token=Auth_Service.services_auth_access_issue(db_user.u_id)
+
             await db.commit()
             await db.refresh(db_user)
-            return Auth_Service.services_auth_token_build(db_user, raw), raw
+            return Auth_Service.services_auth_token_build(db_user, raw, access_token), raw
 
         except HTTPException:
             await db.rollback()
@@ -211,8 +226,11 @@ class Auth_Service:
             new_token, raw=await Auth_Service.services_auth_refresh_issue(db, db_user.u_id, db_token.family_id, db_token.platform, now)
             await Auth_Crud.crud_refresh_token_set_replaced_by(db, db_token.r_t_id, new_token.r_t_id)
 
+            # 액세스 토큰은 커밋 전에 - 키가 없으면 503 으로 되돌려 옛 토큰이 그대로 살아 있다
+            access_token=Auth_Service.services_auth_access_issue(db_user.u_id)
+
             await db.commit()
-            return Auth_Service.services_auth_token_build(db_user, raw), raw
+            return Auth_Service.services_auth_token_build(db_user, raw, access_token), raw
 
         except HTTPException:
             await db.rollback()

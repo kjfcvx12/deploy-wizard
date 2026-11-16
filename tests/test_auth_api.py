@@ -115,7 +115,7 @@ async def test_auth_google_creates_user_and_tokens(client, fake_verifier):
 # 웹 로그인 - 리프레시는 httpOnly 쿠키로만
 @pytest.mark.asyncio
 async def test_auth_google_web_sets_cookie(client, fake_verifier):
-    response=await client.post("/api/auth/google", json={"id_token": "good-token", "platform": "web"})
+    response=await client.post("/api/auth/google", json={"id_token": "good-token", "platform": "web"}, headers={"Origin": ORIGIN_OK})
     assert response.status_code == 200
 
     assert response.json()["refresh_token"] is None
@@ -133,7 +133,7 @@ async def test_auth_google_web_sets_cookie(client, fake_verifier):
 @pytest.mark.asyncio
 async def test_auth_google_web_cookie_secure(client, monkeypatch):
     monkeypatch.setattr(settings, "auth_cookie_secure", True)
-    response=await client.post("/api/auth/google", json={"id_token": "good-token", "platform": "web"})
+    response=await client.post("/api/auth/google", json={"id_token": "good-token", "platform": "web"}, headers={"Origin": ORIGIN_OK})
     assert response.status_code == 200
     assert "Secure" in response.headers["set-cookie"]
 
@@ -308,7 +308,7 @@ async def test_auth_logout_revokes_family(client):
 # 쿠키로 온 리프레시·로그아웃 - Origin 이 허용 목록에 있어야 한다
 @pytest.mark.asyncio
 async def test_auth_cookie_refresh_origin_check(client):
-    response=await client.post("/api/auth/google", json={"id_token": "good-token", "platform": "web"})
+    response=await client.post("/api/auth/google", json={"id_token": "good-token", "platform": "web"}, headers={"Origin": ORIGIN_OK})
     assert response.status_code == 200
     assert client.cookies.get("dw_refresh", "").startswith("dwr_")
 
@@ -416,3 +416,153 @@ async def test_auth_validation_error_does_not_echo_input(client):
     assert refresh.status_code == 422
     assert "12345" not in refresh.text
     assert all("input" not in item for item in refresh.json()["detail"])
+
+
+# 웹 로그인 CSRF - 쿠키를 굽는 웹 로그인도 쿠키 refresh 처럼 Origin 이 허용 목록에 있어야 한다 (앱은 상관없음)
+@pytest.mark.asyncio
+async def test_auth_google_web_origin_check(client, fake_verifier):
+    body={"id_token": "good-token", "platform": "web"}
+
+    no_origin=await client.post("/api/auth/google", json=body)
+    assert no_origin.status_code == 403
+    assert no_origin.json()["detail"] == MESSAGE_ORIGIN
+    evil=await client.post("/api/auth/google", json=body, headers={"Origin": "http://evil.example"})
+    assert evil.status_code == 403
+    assert evil.json()["detail"] == MESSAGE_ORIGIN
+    # 거절된 요청은 Google 검증도, 사용자·쿠키 생성도 하지 않는다
+    assert fake_verifier.calls == []
+    assert "set-cookie" not in evil.headers
+    assert (await sql("SELECT COUNT(*) FROM users"))[0][0] == 0
+
+    ok=await client.post("/api/auth/google", json=body, headers={"Origin": ORIGIN_OK})
+    assert ok.status_code == 200
+    assert "dw_refresh=dwr_" in ok.headers["set-cookie"]
+
+    # 안드로이드는 Origin 이 없어도, 엉뚱해도 그대로 로그인된다
+    app_body={"id_token": "good-token", "platform": "android"}
+    assert (await client.post("/api/auth/google", json=app_body)).status_code == 200
+    assert (await client.post("/api/auth/google", json=app_body, headers={"Origin": "http://evil.example"})).status_code == 200
+
+
+# 같은 Google 계정의 첫 로그인이 동시에 둘 - 사용자 행은 하나, 둘 다 200 (유일 키 충돌을 잡아 다시 읽는다)
+@pytest.mark.asyncio
+async def test_auth_google_first_login_race(client, monkeypatch):
+    barrier=asyncio.Barrier(2)
+    original=Auth_Crud.crud_user_get_by_google_sub_bidx
+    reads=[0]
+
+    # 두 요청이 모두 "사용자 없음"을 읽은 뒤에야 만들기로 넘어가게 한다 (다시 읽을 때는 기다리지 않는다)
+    async def get_then_wait(db, google_sub_bidx):
+        row=await original(db, google_sub_bidx)
+        reads[0]+=1
+        if reads[0] <= 2:
+            await asyncio.wait_for(barrier.wait(), 10)
+        return row
+
+    monkeypatch.setattr(Auth_Crud, "crud_user_get_by_google_sub_bidx", staticmethod(get_then_wait))
+
+    first, second=await asyncio.gather(
+        client.post("/api/auth/google", json={"id_token": "good-token", "platform": "android"}),
+        client.post("/api/auth/google", json={"id_token": "good-token", "platform": "android"}),
+    )
+    assert first.status_code == 200, first.text
+    assert second.status_code == 200, second.text
+    assert first.json()["user"]["u_id"] == second.json()["user"]["u_id"]
+    assert first.json()["refresh_token"] != second.json()["refresh_token"]
+
+    monkeypatch.setattr(Auth_Crud, "crud_user_get_by_google_sub_bidx", staticmethod(original))
+    assert (await sql("SELECT COUNT(*) FROM users"))[0][0] == 1
+    rows=await sql("SELECT family_id FROM refresh_tokens")
+    assert len(rows) == 2 and rows[0][0] != rows[1][0]
+
+
+# AUTH_JWT_KEY 가 없으면 로그인은 503 이고 사용자·리프레시 토큰이 남지 않는다
+@pytest.mark.asyncio
+async def test_auth_google_without_jwt_key_leaves_nothing(client, monkeypatch):
+    monkeypatch.setattr(settings, "auth_jwt_key", None)
+    response=await client.post("/api/auth/google", json={"id_token": "good-token", "platform": "android"})
+    assert response.status_code == 503
+    assert (await sql("SELECT COUNT(*) FROM users"))[0][0] == 0
+    assert (await sql("SELECT COUNT(*) FROM refresh_tokens"))[0][0] == 0
+
+
+# 키가 없을 때의 리프레시 503 - 갓 회전한 토큰을 잃지 않는다 (옛 토큰이 그대로 살아 있다)
+@pytest.mark.asyncio
+async def test_auth_refresh_without_jwt_key_keeps_old_token(client, monkeypatch):
+    token=(await login_app(client))["refresh_token"]
+    key=settings.auth_jwt_key
+
+    monkeypatch.setattr(settings, "auth_jwt_key", None)
+    response=await client.post("/api/auth/refresh", json={"refresh_token": token})
+    assert response.status_code == 503
+    rows=await sql("SELECT revoked_at, replaced_by FROM refresh_tokens")
+    assert len(rows) == 1 and rows[0][0] is None and rows[0][1] is None
+
+    monkeypatch.setattr(settings, "auth_jwt_key", key)
+    again=await client.post("/api/auth/refresh", json={"refresh_token": token})
+    assert again.status_code == 200
+    assert again.json()["refresh_token"] != token
+
+
+# 액세스 토큰의 sub - 아스키 숫자만. 윗첨자·다른 문자 숫자는 401 (예전에는 int() 가 터져 500)
+@pytest.mark.asyncio
+@pytest.mark.parametrize("sub", ["²", "١٢", "１２", "", "-1", "1.5", " 7", "0x7"])
+async def test_auth_access_decode_sub_must_be_ascii_digits(client, sub):
+    import jwt
+    from fastapi import HTTPException
+    from features.auth.services import Auth_Service
+
+    now=int(datetime.now(timezone.utc).timestamp())
+    token=jwt.encode({"sub": sub, "typ": "access", "iss": "deploy-wizard", "aud": "deploy-wizard-api", "iat": now, "exp": now + 900},
+                     settings.auth_jwt_key, algorithm="HS256")
+    with pytest.raises(HTTPException) as error:
+        Auth_Service.services_auth_access_decode(token)
+    assert error.value.status_code == 401
+
+    response=await client.get("/api/me", headers={"Authorization": f"Bearer {token}"})
+    assert response.status_code == 401
+
+
+# 탈퇴한 사용자의 액세스 토큰 - /api/me 는 401
+@pytest.mark.asyncio
+async def test_auth_me_deleted_user_401(client):
+    body=await login_app(client)
+    await sql("UPDATE users SET status='deleted'")
+
+    response=await client.get("/api/me", headers={"Authorization": f"Bearer {body['access_token']}"})
+    assert response.status_code == 401
+    assert response.headers.get("www-authenticate") == "Bearer"
+
+
+# 본문과 쿠키에 리프레시 토큰이 둘 다 오면 본문이 이긴다 - Origin 을 안 보고, 쿠키는 회전하지 않고, 응답도 본문으로
+@pytest.mark.asyncio
+async def test_auth_refresh_body_wins_over_cookie(client):
+    web=await client.post("/api/auth/google", json={"id_token": "good-token", "platform": "web"}, headers={"Origin": ORIGIN_OK})
+    assert web.status_code == 200
+    cookie_token=client.cookies.get("dw_refresh")
+    assert cookie_token.startswith("dwr_")
+    app_token=(await login_app(client))["refresh_token"]
+
+    response=await client.post("/api/auth/refresh", json={"refresh_token": app_token})
+    assert response.status_code == 200
+    assert response.json()["refresh_token"].startswith("dwr_")
+    assert "set-cookie" not in response.headers
+
+    revoked={row[0]: row[1] for row in await sql("SELECT token_hash, revoked_at FROM refresh_tokens")}
+    assert revoked[hashlib.sha256(cookie_token.encode()).hexdigest()] is None
+    assert revoked[hashlib.sha256(app_token.encode()).hexdigest()] is not None
+    # 쿠키 토큰은 아직 쓸 수 있다
+    assert (await client.post("/api/auth/refresh", headers={"Origin": ORIGIN_OK})).status_code == 200
+
+
+# 로그아웃한 뒤의 리프레시 - 폐기된 토큰이라 401 (재사용으로 보고 계열을 다시 끊는다)
+@pytest.mark.asyncio
+async def test_auth_refresh_after_logout_401(client):
+    token=(await login_app(client))["refresh_token"]
+    assert (await client.post("/api/auth/logout", json={"refresh_token": token})).status_code == 200
+
+    response=await client.post("/api/auth/refresh", json={"refresh_token": token})
+    assert response.status_code == 401
+    assert response.json()["detail"] == MESSAGE_EXPIRED
+    rows=await sql("SELECT revoked_at FROM refresh_tokens")
+    assert rows and all(row[0] is not None for row in rows)
