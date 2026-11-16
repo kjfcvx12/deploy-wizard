@@ -19,6 +19,9 @@ os.environ["WORK_DIR"]=str(TEST_DATA / "work")
 os.environ["CACHE_DIR"]=str(TEST_DATA / "cache")
 # shared/secrets.py 테스트용 고정 키 - 실제 운영 키가 아니다
 os.environ["SECRET_KEY"]="beHhcE1V0jAvZWL3WoF7jmPUJgEMzSGZXGDt7_O_X5w="
+# 블라인드 인덱스·액세스 토큰 서명용 테스트 키 - 실제 운영 키가 아니다
+os.environ["BLIND_INDEX_KEY"]="test-blind-index-key-not-a-real-key"
+os.environ["AUTH_JWT_KEY"]="test-auth-jwt-key-not-a-real-key-0123456789"
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
