@@ -61,6 +61,8 @@ class Settings(BaseSettings):
     google_client_id_web:str|None=Field(None, alias="GOOGLE_CLIENT_ID_WEB")
     google_client_id_android:str|None=Field(None, alias="GOOGLE_CLIENT_ID_ANDROID")
     google_jwks_cache_seconds:int=Field(3600, alias="GOOGLE_JWKS_CACHE_SECONDS")
+    # 로그인 - 모르는 kid 때문에 JWKS 를 다시 받는 최소 간격 (초)
+    google_jwks_refetch_cooldown_seconds:int=Field(60, alias="GOOGLE_JWKS_REFETCH_COOLDOWN_SECONDS")
 
     # M6 - GitHub App (github.com/settings/apps/new 에서 한 번 수동 등록)
     github_app_id:str|None=Field(None, alias="GITHUB_APP_ID")

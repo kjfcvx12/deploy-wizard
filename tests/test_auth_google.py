@@ -1,3 +1,4 @@
+import asyncio
 import base64
 import hashlib
 import hmac
@@ -108,15 +109,18 @@ async def test_google_verify_caches_jwks(key1):
 @pytest.mark.asyncio
 async def test_google_verify_unknown_kid_refetches_once(key1, key2):
     fetch=Fake_Fetch([jwk_of(key1, "k1")])
-    verifier=Google_Verifier(fetch_json=fetch, now=lambda: 1000.0)
+    clock=[1000.0]
+    verifier=Google_Verifier(fetch_json=fetch, now=lambda: clock[0])
     await verifier.verifier_google_verify(sign(key1, "k1"), {CLIENT_ID})
     assert len(fetch.calls) == 2
-    # 키가 회전되어 새 kid 가 생겼다 - JWKS 만 한 번 다시 받는다
+    # 키가 회전되어 새 kid 가 생겼다 - 쿨다운(60초)이 지난 뒤 JWKS 만 한 번 다시 받는다
+    clock[0]+=61
     fetch.keys=[jwk_of(key1, "k1"), jwk_of(key2, "k2")]
     identity=await verifier.verifier_google_verify(sign(key2, "k2"), {CLIENT_ID})
     assert identity.sub == "1234"
     assert fetch.calls[2:] == [JWKS_URI]
     # 다시 받아도 없는 kid 는 401, 요청은 한 번만 더
+    clock[0]+=61
     with pytest.raises(Google_Auth_Error) as info:
         await verifier.verifier_google_verify(sign(key2, "k3"), {CLIENT_ID})
     assert info.value.status_code == 401
@@ -210,3 +214,211 @@ async def test_google_verify_no_client_ids(key1):
     assert info.value.status_code == 503
     assert info.value.message == "Google 로그인이 아직 설정되지 않았습니다 (GOOGLE_CLIENT_ID_* 확인)"
     assert fetch.calls == []
+
+
+@pytest.mark.asyncio
+async def test_google_verify_unknown_kid_refetch_has_cooldown(key1, key2):
+    fetch=Fake_Fetch([jwk_of(key1, "k1")])
+    clock=[1000.0]
+    verifier=Google_Verifier(fetch_json=fetch, now=lambda: clock[0])
+    await verifier.verifier_google_verify(sign(key1, "k1"), {CLIENT_ID})
+    assert len(fetch.calls) == 2
+    clock[0]+=61
+    # 쿨다운이 지난 첫 모르는 kid - JWKS 한 번 더
+    with pytest.raises(Google_Auth_Error) as info:
+        await verifier.verifier_google_verify(sign(key2, "k3"), {CLIENT_ID})
+    assert info.value.status_code == 401
+    assert len(fetch.calls) == 3
+    # 60초 안의 두 번째 모르는 kid - 네트워크 호출 없이 401
+    clock[0]+=30
+    with pytest.raises(Google_Auth_Error) as info:
+        await verifier.verifier_google_verify(sign(key2, "k4"), {CLIENT_ID})
+    assert info.value.status_code == 401
+    assert len(fetch.calls) == 3
+    # 쿨다운 뒤에는 다시 받는다
+    clock[0]+=31
+    with pytest.raises(Google_Auth_Error):
+        await verifier.verifier_google_verify(sign(key2, "k5"), {CLIENT_ID})
+    assert len(fetch.calls) == 4
+
+
+@pytest.mark.asyncio
+async def test_google_verify_unknown_kid_right_after_load_makes_no_call(key1, key2):
+    fetch=Fake_Fetch([jwk_of(key1, "k1")])
+    verifier=Google_Verifier(fetch_json=fetch, now=lambda: 1000.0)
+    await verifier.verifier_google_verify(sign(key1, "k1"), {CLIENT_ID})
+    with pytest.raises(Google_Auth_Error) as info:
+        await verifier.verifier_google_verify(sign(key2, "k2"), {CLIENT_ID})
+    assert info.value.status_code == 401
+    assert len(fetch.calls) == 2
+
+
+@pytest.mark.asyncio
+async def test_google_verify_concurrent_first_requests_share_one_fetch(key1):
+    fetch=Fake_Fetch([jwk_of(key1, "k1")])
+    gate=asyncio.Event()
+
+    async def slow(url:str) -> dict:
+        await gate.wait()
+        return await fetch(url)
+
+    verifier=Google_Verifier(fetch_json=slow, now=lambda: 1000.0)
+    tasks=[asyncio.create_task(verifier.verifier_google_verify(sign(key1, "k1"), {CLIENT_ID})) for _ in range(5)]
+    await asyncio.sleep(0.05)
+    gate.set()
+    results=await asyncio.gather(*tasks)
+    assert all(r.sub == "1234" for r in results)
+    assert fetch.calls == [GOOGLE_DISCOVERY_URL, JWKS_URI]
+
+
+@pytest.mark.asyncio
+async def test_google_verify_concurrent_unknown_kid_share_one_fetch(key1, key2):
+    fetch=Fake_Fetch([jwk_of(key1, "k1")])
+    clock=[1000.0]
+    gate=asyncio.Event()
+    gate.set()
+
+    async def slow(url:str) -> dict:
+        await gate.wait()
+        return await fetch(url)
+
+    verifier=Google_Verifier(fetch_json=slow, now=lambda: clock[0])
+    await verifier.verifier_google_verify(sign(key1, "k1"), {CLIENT_ID})
+    clock[0]+=61
+    fetch.keys=[jwk_of(key1, "k1"), jwk_of(key2, "k2")]
+    gate.clear()
+    tasks=[asyncio.create_task(verifier.verifier_google_verify(sign(key2, "k2"), {CLIENT_ID})) for _ in range(5)]
+    await asyncio.sleep(0.05)
+    gate.set()
+    results=await asyncio.gather(*tasks)
+    assert all(r.sub == "1234" for r in results)
+    assert fetch.calls[2:] == [JWKS_URI]
+
+
+# email_verified 는 bool true 와 문자열 "true" 만 통과
+@pytest.mark.asyncio
+@pytest.mark.parametrize("value", [1, "True", "1", "false", False, None, 0, "", [True]])
+async def test_google_verify_email_verified_strict_rejects(value, key1):
+    verifier=Google_Verifier(fetch_json=Fake_Fetch([jwk_of(key1, "k1")]))
+    token=sign(key1, "k1", make_claims(email_verified=value))
+    with pytest.raises(Google_Auth_Error) as info:
+        await verifier.verifier_google_verify(token, {CLIENT_ID})
+    assert info.value.status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_google_verify_email_verified_missing_rejects(key1):
+    verifier=Google_Verifier(fetch_json=Fake_Fetch([jwk_of(key1, "k1")]))
+    claims=make_claims()
+    del claims["email_verified"]
+    with pytest.raises(Google_Auth_Error) as info:
+        await verifier.verifier_google_verify(sign(key1, "k1", claims), {CLIENT_ID})
+    assert info.value.status_code == 401
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("value", [True, "true"])
+async def test_google_verify_email_verified_accepts(value, key1):
+    verifier=Google_Verifier(fetch_json=Fake_Fetch([jwk_of(key1, "k1")]))
+    identity=await verifier.verifier_google_verify(sign(key1, "k1", make_claims(email_verified=value)), {CLIENT_ID})
+    assert identity.sub == "1234"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("missing", ["email", "sub"])
+async def test_google_verify_missing_identity_claim_rejects(missing, key1):
+    verifier=Google_Verifier(fetch_json=Fake_Fetch([jwk_of(key1, "k1")]))
+    claims=make_claims()
+    del claims[missing]
+    with pytest.raises(Google_Auth_Error) as info:
+        await verifier.verifier_google_verify(sign(key1, "k1", claims), {CLIENT_ID})
+    assert info.value.status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_google_verify_discovery_without_jwks_uri_503(key1):
+    async def fetch(url:str) -> dict:
+        return {"issuer":"https://accounts.google.com"}
+    verifier=Google_Verifier(fetch_json=fetch)
+    with pytest.raises(Google_Auth_Error) as info:
+        await verifier.verifier_google_verify(sign(key1, "k1"), {CLIENT_ID})
+    assert info.value.status_code == 503
+
+
+@pytest.mark.asyncio
+async def test_google_verify_jwks_keys_not_a_list_503(key1):
+    async def fetch(url:str) -> dict:
+        if url == GOOGLE_DISCOVERY_URL:
+            return {"jwks_uri":JWKS_URI}
+        return {"keys":"not-a-list"}
+    verifier=Google_Verifier(fetch_json=fetch)
+    with pytest.raises(Google_Auth_Error) as info:
+        await verifier.verifier_google_verify(sign(key1, "k1"), {CLIENT_ID})
+    assert info.value.status_code == 503
+
+
+@pytest.mark.asyncio
+async def test_google_verify_jwks_fetch_failure_after_discovery_503(key1):
+    calls:list[str]=[]
+
+    async def fetch(url:str) -> dict:
+        calls.append(url)
+        if url == GOOGLE_DISCOVERY_URL:
+            return {"jwks_uri":JWKS_URI}
+        raise httpx.ConnectError("boom")
+    verifier=Google_Verifier(fetch_json=fetch)
+    token=sign(key1, "k1")
+    with pytest.raises(Google_Auth_Error) as info:
+        await verifier.verifier_google_verify(token, {CLIENT_ID})
+    assert info.value.status_code == 503
+    assert token not in str(info.value)
+    assert calls == [GOOGLE_DISCOVERY_URL, JWKS_URI]
+
+
+@pytest.mark.asyncio
+async def test_google_verify_token_without_kid_makes_no_call(key1):
+    fetch=Fake_Fetch([jwk_of(key1, "k1")])
+    verifier=Google_Verifier(fetch_json=fetch)
+    token=jwt.encode(make_claims(), key1, algorithm="RS256")
+    with pytest.raises(Google_Auth_Error) as info:
+        await verifier.verifier_google_verify(token, {CLIENT_ID})
+    assert info.value.status_code == 401
+    assert fetch.calls == []
+
+
+@pytest.mark.asyncio
+async def test_google_verify_aud_list_containing_our_client_id(key1):
+    verifier=Google_Verifier(fetch_json=Fake_Fetch([jwk_of(key1, "k1")]))
+    token=sign(key1, "k1", make_claims(aud=["someone-else", CLIENT_ID]))
+    identity=await verifier.verifier_google_verify(token, {CLIENT_ID})
+    assert identity.sub == "1234"
+
+
+@pytest.mark.asyncio
+async def test_google_verify_aud_list_without_our_client_id_rejects(key1):
+    verifier=Google_Verifier(fetch_json=Fake_Fetch([jwk_of(key1, "k1")]))
+    token=sign(key1, "k1", make_claims(aud=["someone-else", "another"]))
+    with pytest.raises(Google_Auth_Error) as info:
+        await verifier.verifier_google_verify(token, {CLIENT_ID})
+    assert info.value.status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_google_verify_stale_keys_served_when_refresh_fails(key1):
+    fetch=Fake_Fetch([jwk_of(key1, "k1")])
+    clock=[1000.0]
+    verifier=Google_Verifier(fetch_json=fetch, now=lambda: clock[0])
+    await verifier.verifier_google_verify(sign(key1, "k1"), {CLIENT_ID})
+
+    async def broken(url:str) -> dict:
+        raise httpx.ConnectError("boom")
+    verifier._fetch_json=broken
+    # 만료된 캐시를 새로 받다가 실패 - 24시간 안이면 옛 키를 계속 쓴다
+    clock[0]+=3601
+    identity=await verifier.verifier_google_verify(sign(key1, "k1"), {CLIENT_ID})
+    assert identity.sub == "1234"
+    # 24시간을 넘기면 503
+    clock[0]+=86400
+    with pytest.raises(Google_Auth_Error) as info:
+        await verifier.verifier_google_verify(sign(key1, "k1"), {CLIENT_ID})
+    assert info.value.status_code == 503

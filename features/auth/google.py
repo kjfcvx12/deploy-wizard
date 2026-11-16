@@ -1,3 +1,4 @@
+import asyncio
 import time
 from typing import Awaitable, Callable
 
@@ -13,6 +14,8 @@ GOOGLE_DISCOVERY_URL="https://accounts.google.com/.well-known/openid-configurati
 GOOGLE_ISSUERS=("https://accounts.google.com", "accounts.google.com")
 GOOGLE_ALGORITHM="RS256"
 GOOGLE_LEEWAY_SECONDS=60
+# 캐시가 만료된 뒤 새로 받기에 실패해도 옛 키를 더 쓸 수 있는 시간 (24시간)
+GOOGLE_JWKS_STALE_SECONDS=86400
 
 MESSAGE_INVALID="Google 로그인 정보를 확인할 수 없습니다. 다시 로그인해 주세요"
 MESSAGE_UNREACHABLE="Google 로그인 서버에 연결할 수 없습니다. 잠시 뒤 다시 시도해 주세요"
@@ -53,6 +56,8 @@ class Google_Verifier:
         self._jwks_uri:str | None=None
         self._keys:dict[str, object]={}
         self._fetched_at:float | None=None
+        self._last_attempt_at:float | None=None
+        self._lock=asyncio.Lock()
 
     # 캐시가 아직 유효한지
     def _cache_fresh(self) -> bool:
@@ -95,12 +100,33 @@ class Google_Verifier:
         self._jwks_uri=jwks_uri
         await self._load_keys()
 
-    # kid 에 맞는 공개키 - 캐시에 없으면 한 번만 다시 받는다
-    async def _key_for(self, kid:str) -> object:
-        if not self._cache_fresh():
+    # 마지막으로 받아 본 지 쿨다운(기본 60초)이 지났는지
+    def _cooldown_over(self) -> bool:
+        if self._last_attempt_at is None:
+            return True
+        return self._now() - self._last_attempt_at >= settings.google_jwks_refetch_cooldown_seconds
+
+    # 만료된 캐시를 새로 받는다 - 실패해도 24시간 안이면 옛 키를 계속 쓴다
+    async def _refresh_expired(self) -> None:
+        stale_ok=bool(self._keys) and self._fetched_at is not None and self._now() - self._fetched_at < settings.google_jwks_cache_seconds + GOOGLE_JWKS_STALE_SECONDS
+        if stale_ok and not self._cooldown_over():
+            return
+        self._last_attempt_at=self._now()
+        try:
             await self._load_all()
-        elif kid not in self._keys:
-            await self._load_keys()
+        except Google_Auth_Error:
+            if not stale_ok:
+                raise
+
+    # kid 에 맞는 공개키 - 캐시에 없으면 쿨다운 안에서는 받지 않고, 락 안에서 한 번만 받는다
+    async def _key_for(self, kid:str) -> object:
+        if not (self._cache_fresh() and kid in self._keys):
+            async with self._lock:
+                if not self._cache_fresh():
+                    await self._refresh_expired()
+                elif kid not in self._keys and self._cooldown_over():
+                    self._last_attempt_at=self._now()
+                    await self._load_keys()
         key=self._keys.get(kid)
         if key is None:
             raise Google_Auth_Error(MESSAGE_INVALID, 401)
@@ -130,7 +156,8 @@ class Google_Verifier:
         if claims.get("iss") not in GOOGLE_ISSUERS:
             raise Google_Auth_Error(MESSAGE_INVALID, 401)
         # 5. 이메일 확인 여부
-        if claims.get("email_verified") not in (True, "true"):
+        verified=claims.get("email_verified")
+        if not (verified is True or verified == "true"):
             raise Google_Auth_Error(MESSAGE_INVALID, 401)
         sub=claims.get("sub")
         email=claims.get("email")
