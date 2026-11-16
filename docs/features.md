@@ -83,7 +83,7 @@
 ### advice (백엔드 + 화면 - 실제 AWS 배포로는 아직 검증 전)
 - `POST /api/deploys/advice`는 임시 폴더에 얕게 클론해 읽고 항상 지운다. 배포 기록·AWS 호출·DB 쓰기가 없다. 같은 `(repo_url, commit_sha)`는 메모리 캐시(최대 100, 프로세스 재시작 시 사라짐)를 쓴다.
 - 판정은 규칙뿐이다: 의존성 파일(`requirements.txt` `pyproject.toml` `package.json`)과 소스 일부를 읽어 신호를 모으고 `small/medium/large`와 확신도를 낸다. AI는 환경변수 종류 분류(`envvars`)에서만 쓴다. 심볼릭 링크는 따라가지 않고 테스트 파일은 건너뛴다.
-- **숫자는 비워 둔다.** `cpu` `memory`와 `cost`의 금액·기준일은 항상 `null`이다. Express Mode가 허용하는 CPU·메모리 조합과 요금 구성을 실제 배포로 확인한 뒤(D10) 채운다. 사용자가 수준을 고르는 기능(I-08)과 `deploys`의 `size_tier` 등 열도 그때까지 미룬다.
+- **`cpu`·`memory`는 비워 둔다.** 둘은 항상 `null`이다(기본 사양은 AWS가 정한다). `cost`의 금액·기준일은 비용 확인 백엔드(`pricing`)가 채운다 — 기본 사양 기준 추정이고 `spec_is_default`로 표시한다. Express Mode가 허용하는 CPU·메모리 조합을 실제 배포로 확인한 뒤(D10) 사양 추천도 채운다. 사용자가 수준을 고르는 기능(I-08)과 `deploys`의 `size_tier` 등 열도 그때까지 미룬다.
 - 정적 사이트는 마법사의 Node 템플릿이 `start` 없는 사이트를 처리하는지 확인하지 않았다 — `needs`에 `static_site`(`supported: true`)로 알리기만 한다.
 - `disk_write`는 정규식·AST 추정이라 임시·로그 쓰기를 잘못 잡을 수 있다.
 - **화면 (계획 B)**: `ui/api.js` · `ui/constants.js`(수준·확신도·필요한 것 라벨, 모르는 키는 원문 그대로) · `ui/AdvicePanel.jsx`(보여 주기만 하는 패널). 새 배포 폼(`deploys/ui/DeployForm.jsx`)이 [분석] -> 패널 -> [이 레포로 배포]의 두 단계를 조립한다 - `advice`가 `deploys`를 알지 않도록 배포 생성은 폼이 한다. 비용 영역은 `features/pricing/ui/CostPanel.jsx`가 그린다 (아래 `pricing` 화면). 예전의 "최소·최대" 비용 줄은 없어졌다. 수준을 고르는 UI는 `size_tier` 백엔드(D10)가 생길 때까지 미룬다. 자세한 모양은 [`ui-spec.md`](./ui-spec.md) "분석 결과 패널".

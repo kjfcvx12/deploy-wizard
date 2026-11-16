@@ -6,7 +6,7 @@ import { NOTIFICATION_KIND_LABEL, NOTIFICATION_KINDS } from '../../ops/constants
 import { KIND_HINT } from '../../ops/notificationSettings'
 import { radius, spacing, useColors } from '../../theme'
 
-// 받을 알림 종류 - 6개를 2열 타일로 놓고, 종류별 설명은 [설명 보기] 를 눌러야 펼친다 (스크린리더에는 항상 hint 로 읽힌다)
+// 받을 알림 종류 - 알림 종류(`NOTIFICATION_KINDS`) 전부를 2열 타일로 놓고, 종류별 설명은 [설명 보기] 를 눌러야 펼친다 (스크린리더에는 항상 hint 로 읽힌다)
 export default function NotificationKinds({ kinds, busy, onToggle }) {
   const colors = useColors()
   const [expanded, setExpanded] = useState(false)
