@@ -249,7 +249,7 @@ export default function CostPanel({ cost, onChange, disabled }) {
       <div className="cost-live" role="status" aria-live="polite">
         {rejected && <p className="notice err">{rejected}</p>}
         {priceMissing && !rejected && (
-          <p className="notice warn">{PRICE_FAIL_TEXT}{cost?.note ? ` (${cost.note})` : ''}</p>
+          <p className="notice warn">{PRICE_FAIL_TEXT}</p>
         )}
         {view && (
           <>

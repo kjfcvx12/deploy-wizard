@@ -12,7 +12,7 @@
 | `explains` | 한국어 에러 해설 (규칙 → LLM) | scheme · services · ui | M5 |
 | `envvars` | 소스에서 환경변수 이름 찾기(스캐너), 종류 분류(규칙 → AI 선택), 값 입력·건너뛰기, 컨테이너에 넣을 값, 실행 중 에러에서 이름 찾기 | models · scheme · crud · scan · services · router · ui | 백엔드 + 화면 (실제 AWS 검증 전) |
 | `advice` | 배포 전 분석 - 사양 수준·필요한 것·확신도 (읽기 전용, 숫자는 검증 전이라 비움) | scheme · services · router · ui | 백엔드 + 화면 (실제 AWS 검증 전) |
-| `pricing` | 비용 확인 - AWS 공개 가격 파일 읽기(24시간 캐시), 사양 프리셋 4개, 비용 추정(Fargate + ALB 고정분, ARM64 비교는 표시만), 자동 증설 값 검사 | scheme · services · router · ui | 백엔드 (가짜 가격·Express 로만 확인, 프리셋·`scalingTarget`·기본 사양 실제 AWS 미검증), 화면은 웹 `ui/`에 있음 (브라우저 확인 전 상태) |
+| `pricing` | 비용 확인 - AWS 공개 가격 파일 읽기(24시간 캐시), 사양 프리셋 4개, 비용 추정(Fargate + ALB 고정분, ARM64 비교는 표시만), 자동 증설 값 검사 | scheme · services · router · ui | 백엔드 (가짜 가격·Express 로만 확인, 프리셋·`scalingTarget`·기본 사양 실제 AWS 미검증), 화면은 웹 `ui/`에 있음 (분석 화면은 실제 브라우저에서 확인, 배포 상세·설정 화면은 미확인) |
 | `accounts` | 사용자 AWS 계정 연결(CloudFormation+AssumeRole) · GitHub App 연결 - 연결·파이프라인 배선(private 클론 포함) 완료 | models · scheme · crud · services · router · cloudformation/ · ui | M6 (진행 중) |
 | `watches` | 코드 변경 감지 - 폴링(백그라운드) + 웹훅(서명 검증 + 디바운스) 둘 다 코드 완료 | services | M6 (코드 완료, 실제 검증 남음) |
 | `health` | 떠 있는 배포를 1분마다 점검해 이력을 남기는 감시 루프, 이력 정리(7일) | models · scheme · crud · services | D1 (코드 완료, 실제 AWS 미검증) |
