@@ -259,7 +259,6 @@ export default function NewDeployScreen() {
           contentContainerStyle={[styles.content, { paddingBottom: spacing.xl * 2 + insets.bottom }]}
           keyboardShouldPersistTaps="handled"
           keyboardDismissMode="on-drag"
-          automaticallyAdjustKeyboardInsets
         >
           <ConnectionPicker connections={connections} value={connectionId} onChange={chooseConnection} />
           {connectionsLoaded && connections.length === 0 && <NoConnectionHint />}

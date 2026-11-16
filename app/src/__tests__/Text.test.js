@@ -21,17 +21,8 @@ describe('Text 래퍼', () => {
     expect(DefaultText).toBe(Text)
   })
 
-  it('iOS 에서는 lineBreakStrategyIOS 가 hangul-word 다', async () => {
-    await render(<Text testID="t2">가나다</Text>)
-    expect(screen.getByTestId('t2').props.lineBreakStrategyIOS).toBe('hangul-word')
-  })
-
-  it('호출자가 lineBreakStrategyIOS 를 넘기면 그것이 이긴다', async () => {
-    await render(<Text testID="t3" lineBreakStrategyIOS="standard">가나다</Text>)
-    expect(screen.getByTestId('t3').props.lineBreakStrategyIOS).toBe('standard')
-  })
-
-  it('iOS 에서는 웹용 줄바꿈 스타일이 없다', async () => {
+  it('앱(안드로이드)에서는 웹용 줄바꿈 스타일이 없다', async () => {
+    jest.replaceProperty(Platform, 'OS', 'android')
     await render(<Text testID="t4" style={{ color: 'red' }}>가나다</Text>)
     const flat = StyleSheet.flatten(screen.getByTestId('t4').props.style)
     expect(flat.color).toBe('red')

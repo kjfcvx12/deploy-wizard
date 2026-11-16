@@ -265,7 +265,6 @@ describe('AWS 연결 안내 - RoleArn 등록', () => {
     await guide()
     const scroll = screen.getByTestId('guide-scroll')
     expect(scroll.props.keyboardShouldPersistTaps).toBe('handled')
-    expect(scroll.props.automaticallyAdjustKeyboardInsets).toBe(true)
   })
 
   test('안드로이드에서는 안내 전체를 KeyboardAvoidingView(height) 가 감싼다 (기기에서는 확인하지 못했다)', async () => {
@@ -279,8 +278,8 @@ describe('안내 창 - 상태 표시줄 여백 (최종 검토 1)', () => {
   const METRICS = { frame: { x: 0, y: 0, width: 390, height: 844 }, insets: { top: 24, left: 0, right: 0, bottom: 0 } }
   const topPadding = () => StyleSheet.flatten(mockKavProps[mockKavProps.length - 1].style).paddingTop
 
-  test.each(['android', 'ios'])('%s 에서 제목 줄 위 여백은 안전 영역 위쪽 값이다', async (os) => {
-    jest.replaceProperty(Platform, 'OS', os)
+  test('안드로이드에서 제목 줄 위 여백은 안전 영역 위쪽 값이다', async () => {
+    jest.replaceProperty(Platform, 'OS', 'android')
     await render(
       <SafeAreaProvider initialMetrics={METRICS}>
         <AwsGuide setup={SETUP} busy={false} error="" onSubmit={jest.fn()} onClose={jest.fn()} />

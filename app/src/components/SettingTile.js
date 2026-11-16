@@ -23,7 +23,6 @@ export default function SettingTile({ title, value, busy, accessibilityLabel, ac
           disabled={!!busy}
           trackColor={{ false: colors.border, true: colors.accent }}
           thumbColor={value ? colors.accentText : colors.muted}
-          ios_backgroundColor={colors.border}
         />
       </View>
     </Pressable>

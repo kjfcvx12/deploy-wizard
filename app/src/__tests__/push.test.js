@@ -22,8 +22,8 @@ beforeEach(async () => {
   await AsyncStorage.clear()
   mockConstants.expoConfig = { extra: { eas: { projectId: 'proj-1' } } }
   mockConstants.easConfig = undefined
-  jest.replaceProperty(Platform, 'OS', 'ios')
-  deviceApi.register.mockReset().mockResolvedValue({ p_d_id: 5, platform: 'ios', token_tail: 'yz789]' })
+  jest.replaceProperty(Platform, 'OS', 'android')
+  deviceApi.register.mockReset().mockResolvedValue({ p_d_id: 5, platform: 'android', token_tail: 'yz789]' })
   deviceApi.remove.mockReset().mockResolvedValue({ message: 'ok' })
   Notifications.getPermissionsAsync.mockReset().mockResolvedValue(GRANTED)
   Notifications.requestPermissionsAsync.mockReset().mockResolvedValue(GRANTED)
@@ -43,10 +43,7 @@ describe('getPushState', () => {
     ['허용됨', GRANTED, 'granted'],
     ['아직 묻지 않음', UNDETERMINED, 'undetermined'],
     ['거부(다시 물을 수 없음)', DENIED, 'denied'],
-    ['한 번 거부했지만 다시 물을 수 있음(안드로이드)', { status: 'denied', granted: false, canAskAgain: true }, 'undetermined'],
-    ['iOS 임시 허용', { status: 'granted', granted: false, canAskAgain: true, ios: { status: 3 } }, 'granted'],
-    ['iOS 아직 묻지 않음', { status: 'undetermined', granted: false, canAskAgain: true, ios: { status: 0 } }, 'undetermined'],
-    ['iOS 거부', { status: 'denied', granted: false, canAskAgain: false, ios: { status: 1 } }, 'denied'],
+    ['한 번 거부했지만 다시 물을 수 있음', { status: 'denied', granted: false, canAskAgain: true }, 'undetermined'],
   ])('%s', async (_name, permission, expected) => {
     Notifications.getPermissionsAsync.mockResolvedValue(permission)
     expect(await getPushState()).toBe(expected)
@@ -89,7 +86,7 @@ describe('requestAndRegister', () => {
     expect(Notifications.requestPermissionsAsync).toHaveBeenCalledTimes(1)
     expect(Notifications.getExpoPushTokenAsync).toHaveBeenCalledWith({ projectId: 'proj-1' })
     expect(deviceApi.register).toHaveBeenCalledTimes(1)
-    expect(deviceApi.register).toHaveBeenCalledWith({ expo_token: TOKEN, platform: 'ios' })
+    expect(deviceApi.register).toHaveBeenCalledWith({ expo_token: TOKEN, platform: 'android' })
     expect(await AsyncStorage.getItem('dw-push-device')).toBe('5')
     expect(await readPushDevice()).toBe(5)
   })
@@ -108,11 +105,6 @@ describe('requestAndRegister', () => {
     expect(order).toEqual(['channel', 'token'])
     expect(Notifications.setNotificationChannelAsync).toHaveBeenCalledWith('default', expect.objectContaining({ importance: 6 }))
     expect(deviceApi.register).toHaveBeenCalledWith({ expo_token: TOKEN, platform: 'android' })
-  })
-
-  test('iOS 에서는 채널을 만들지 않는다', async () => {
-    await requestAndRegister()
-    expect(Notifications.setNotificationChannelAsync).not.toHaveBeenCalled()
   })
 
   test('채널 만들기가 실패해도 등록은 계속한다', async () => {
@@ -138,7 +130,7 @@ describe('requestAndRegister', () => {
     expect(deviceApi.register).not.toHaveBeenCalled()
   })
 
-  test.each([['unsupported', 'web'], ['no_project', 'ios']])('%s 는 권한도 토큰도 건드리지 않고 그 상태를 돌려준다', async (state, os) => {
+  test.each([['unsupported', 'web'], ['no_project', 'android']])('%s 는 권한도 토큰도 건드리지 않고 그 상태를 돌려준다', async (state, os) => {
     jest.replaceProperty(Platform, 'OS', os)
     if (state === 'no_project') mockConstants.expoConfig = {}
     Notifications.getPermissionsAsync.mockResolvedValue(UNDETERMINED)

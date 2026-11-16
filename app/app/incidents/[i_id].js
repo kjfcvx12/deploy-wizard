@@ -177,7 +177,7 @@ function IncidentDetail({ i_id }) {
 
         <Card testID="incident-middle" style={[styles.middle, middleMax != null && { maxHeight: middleMax }]}>
           {/* 탭마다 상자를 새로 만들어 스크롤이 맨 위로 돌아가게 한다 */}
-          <ScrollView key={tab} testID="incident-body" nestedScrollEnabled bounces={false} alwaysBounceVertical={false} style={styles.grow} contentContainerStyle={styles.stack}>
+          <ScrollView key={tab} testID="incident-body" nestedScrollEnabled style={styles.grow} contentContainerStyle={styles.stack}>
             {tab === 'problem' ? (
               <>
                 <IncidentFacts incident={incident} />

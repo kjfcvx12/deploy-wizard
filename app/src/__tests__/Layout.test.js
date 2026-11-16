@@ -43,17 +43,10 @@ afterEach(() => {
 })
 
 describe('루트 레이아웃 - 알림 연결', () => {
-  test('화면을 그리고 앞에서 받은 알림은 배너·목록에 보이되 소리와 숫자는 없다', async () => {
-    await render(<RootLayout />)
-    expect(screen.getByTestId('stack')).toBeTruthy()
-    const { handleNotification } = Notifications.setNotificationHandler.mock.calls[0][0]
-    // iOS 는 조용히 (소리 없음)
-    expect(await handleNotification({})).toEqual({ shouldShowBanner: true, shouldShowList: true, shouldPlaySound: false, shouldSetBadge: false })
-  })
-
-  test('안드로이드에서는 shouldPlaySound 가 true 다 (false 면 앞에서 받은 알림의 상단 배너가 뜨지 않는다 - 타입 정의 설명)', async () => {
+  test('화면을 그리고 앞에서 받은 알림은 배너·목록에 보이고 shouldPlaySound 는 true 다 (false 면 상단 배너가 뜨지 않는다 - 타입 정의 설명), 숫자는 없다', async () => {
     jest.replaceProperty(Platform, 'OS', 'android')
     await render(<RootLayout />)
+    expect(screen.getByTestId('stack')).toBeTruthy()
     const { handleNotification } = Notifications.setNotificationHandler.mock.calls[0][0]
     expect(await handleNotification({})).toEqual({ shouldShowBanner: true, shouldShowList: true, shouldPlaySound: true, shouldSetBadge: false })
   })

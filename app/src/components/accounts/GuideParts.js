@@ -11,7 +11,7 @@ const OPEN_ERROR = '주소를 열 수 없습니다'
 const COPY_ERROR = '복사하지 못했습니다'
 
 // 안내 창 틀 - 전체 화면 Modal 안에 제목과 오른쪽 위 닫기(= 나중에)와 스크롤. 키보드가 입력칸을 가리지 않게 감싼다. 뒤로 가기는 onClose
-// 위 여백: 안드로이드(edge-to-edge)와 iOS 는 Modal 이 상태 표시줄 아래까지 그려져 안전 영역 위쪽만큼 띄운다. 웹은 0
+// 위 여백: 안드로이드(edge-to-edge)는 Modal 이 상태 표시줄 아래까지 그려져 안전 영역 위쪽만큼 띄운다. 웹은 0
 export function GuideModal({ title, closeLabel, onClose, children }) {
   const colors = useColors()
   const insets = useSafeAreaInsets()
@@ -26,7 +26,6 @@ export function GuideModal({ title, closeLabel, onClose, children }) {
           contentContainerStyle={[styles.content, { paddingBottom: spacing.xl * 2 + insets.bottom }]}
           keyboardShouldPersistTaps="handled"
           keyboardDismissMode="on-drag"
-          automaticallyAdjustKeyboardInsets
         >
           <View style={styles.head}>
             <Text accessibilityRole="header" style={[styles.title, wrapAnywhere, { color: colors.text }]}>{title}</Text>

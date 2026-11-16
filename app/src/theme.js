@@ -56,10 +56,10 @@ export const darkColors = {
 export const spacing = { xs: 4, sm: 8, md: 12, lg: 16, xl: 24 }
 export const radius = { sm: 6, md: 10, lg: 16, pill: 999 }
 
-// 고정폭 글꼴 - iOS 에는 'monospace' 가 없어서 Menlo 를 쓴다
-export const monoFont = Platform.select({ ios: 'Menlo', default: 'monospace' })
+// 고정폭 글꼴
+export const monoFont = 'monospace'
 
-// 공백 없는 긴 글자(변수 이름 등)를 웹에서도 줄바꿈한다 - 앱(iOS/안드로이드)은 기본으로 줄바꿈한다
+// 공백 없는 긴 글자(변수 이름 등)를 웹에서도 줄바꿈한다 - 안드로이드 앱은 기본으로 줄바꿈한다
 export const wrapAnywhere = Platform.OS === 'web' ? { overflowWrap: 'anywhere', minWidth: 0 } : null
 
 // 톤 이름(ok | warn | err | accent | muted)을 글자색·배경색 한 쌍으로 바꾼다 - 모르는 톤은 흐린 색

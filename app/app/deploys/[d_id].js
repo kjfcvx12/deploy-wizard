@@ -282,7 +282,6 @@ function DeployDetail({ d_id }) {
           refreshControl={<RefreshControl refreshing={pulling} onRefresh={onPull} tintColor={colors.accent} colors={[colors.accent]} />}
           keyboardShouldPersistTaps="handled"
           keyboardDismissMode="on-drag"
-          automaticallyAdjustKeyboardInsets
           contentContainerStyle={[styles.content, { paddingBottom: spacing.xl * 2 + insets.bottom }]}
           style={{ backgroundColor: colors.bg }}
         >

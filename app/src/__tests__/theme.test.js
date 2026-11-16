@@ -16,7 +16,7 @@ describe('theme', () => {
     expect(spacing.lg).toBe(16)
   })
 
-  test('고정폭 글꼴은 iOS 에서 Menlo', () => {
-    expect(monoFont).toBe('Menlo')
+  test('고정폭 글꼴은 monospace', () => {
+    expect(monoFont).toBe('monospace')
   })
 })

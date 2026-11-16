@@ -93,11 +93,11 @@ async def test_notification_api_read_unknown_or_non_inapp_is_404(client):
 
 @pytest.mark.asyncio
 async def test_device_api_register_masks_token_and_upserts(client):
-    created=await client.post("/api/devices", json={"expo_token": TOKEN, "platform": "ios"})
+    created=await client.post("/api/devices", json={"expo_token": TOKEN, "platform": "android"})
 
     assert created.status_code == 201
     body=created.json()
-    assert body["platform"] == "ios" and body["token_tail"] == TOKEN[-6:]
+    assert body["platform"] == "android" and body["token_tail"] == TOKEN[-6:]
     assert TOKEN not in created.text and "expo_token" not in body
 
     again=await client.post("/api/devices", json={"expo_token": TOKEN, "platform": "android"})
@@ -109,11 +109,12 @@ async def test_device_api_register_masks_token_and_upserts(client):
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("payload", [
-    {"expo_token": "not-a-token", "platform": "ios"},
-    {"expo_token": "ExponentPushToken[]", "platform": "ios"},
-    {"expo_token": "FcmToken[abc]", "platform": "ios"},
+    {"expo_token": "not-a-token", "platform": "android"},
+    {"expo_token": "ExponentPushToken[]", "platform": "android"},
+    {"expo_token": "FcmToken[abc]", "platform": "android"},
     {"expo_token": TOKEN, "platform": "windows"},
-    {"platform": "ios"},
+    {"expo_token": TOKEN, "platform": "ios"},
+    {"platform": "android"},
 ])
 async def test_device_api_rejects_invalid_payload(client, payload):
     response=await client.post("/api/devices", json=payload)
@@ -131,7 +132,7 @@ async def test_device_api_accepts_expo_prefix_variant(client):
 
 @pytest.mark.asyncio
 async def test_device_api_delete(client):
-    p_d_id=(await client.post("/api/devices", json={"expo_token": TOKEN, "platform": "ios"})).json()["p_d_id"]
+    p_d_id=(await client.post("/api/devices", json={"expo_token": TOKEN, "platform": "android"})).json()["p_d_id"]
 
     assert (await client.delete(f"/api/devices/{p_d_id}")).status_code == 200
     missing=await client.delete(f"/api/devices/{p_d_id}")

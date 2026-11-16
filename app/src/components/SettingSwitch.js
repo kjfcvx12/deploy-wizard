@@ -26,7 +26,6 @@ export default function SettingSwitch({ title, description, value, busy, accessi
           disabled={!!busy}
           trackColor={{ false: colors.border, true: colors.accent }}
           thumbColor={value ? colors.accentText : colors.muted}
-          ios_backgroundColor={colors.border}
         />
       </View>
     </Pressable>

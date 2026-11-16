@@ -244,7 +244,6 @@ export default function AccountsScreen() {
           contentContainerStyle={[styles.content, { paddingBottom: spacing.xl * 2 + insets.bottom }]}
           keyboardShouldPersistTaps="handled"
           keyboardDismissMode="on-drag"
-          automaticallyAdjustKeyboardInsets
         >
           {!!error && <Notice>{error}</Notice>}
           {!!notice && <Notice tone="info">{notice}</Notice>}

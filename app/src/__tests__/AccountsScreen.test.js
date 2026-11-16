@@ -768,7 +768,6 @@ describe('계정 연결 화면 - 키보드와 안전 영역', () => {
     expect(mockKavProps[mockKavProps.length - 1].behavior).toBe('height')
     expect(StyleSheet.flatten(wrapper.props.style).flex).toBe(1)
     const scroll = screen.getByTestId('accounts-scroll')
-    expect(scroll.props.automaticallyAdjustKeyboardInsets).toBe(true)
     expect(scroll.props.keyboardShouldPersistTaps).toBe('handled')
     expect(scroll.props.keyboardDismissMode).toBe('on-drag')
   })

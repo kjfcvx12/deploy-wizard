@@ -36,6 +36,7 @@ let consoleSpies
 let foreground
 beforeEach(async () => {
   jest.useFakeTimers()
+  jest.replaceProperty(Platform, 'OS', 'android')
   await AsyncStorage.clear()
   mockBack.mockReset()
   mockReplace.mockReset()
@@ -301,7 +302,7 @@ describe('알림 설정 - 푸시', () => {
 
     await fireEvent.press(screen.getByRole('button', { name: '알림 켜기' }))
     expect(Notifications.requestPermissionsAsync).toHaveBeenCalledTimes(1)
-    expect(deviceApi.register).toHaveBeenCalledWith({ expo_token: TOKEN, platform: 'ios' })
+    expect(deviceApi.register).toHaveBeenCalledWith({ expo_token: TOKEN, platform: 'android' })
     expect(notificationApi.patchSettings).toHaveBeenCalledWith({ notify_push: true })
     await waitFor(() => expect(checked('푸시 받기')).toBe(true))
     expect(screen.queryByText(/알림 권한이 필요합니다/)).toBeNull()

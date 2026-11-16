@@ -80,12 +80,6 @@ describe('새 배포 화면 - 키보드와 안전 영역', () => {
     const wrapper = screen.getByTestId('keyboard-avoiding')
     expect(mockKavProps[mockKavProps.length - 1].behavior).toBe('height')
     expect(StyleSheet.flatten(wrapper.props.style).flex).toBe(1)
-    expect(screen.getByTestId('new-scroll').props.automaticallyAdjustKeyboardInsets).toBe(true)
-  })
-
-  test('iOS 에서는 behavior 를 주지 않는다', async () => {
-    await render(<NewDeploy />)
-    expect(mockKavProps[mockKavProps.length - 1].behavior).toBeUndefined()
   })
 
   test('스크롤 아래 여백에 하단 안전 영역을 더한다', async () => {
