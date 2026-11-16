@@ -91,7 +91,11 @@ async def accounts_make(a_id:int, g_id:int) -> tuple[int, int]:
 
 # 없는 계정·설치를 넣으면 404 이고 배포가 생기지 않는다 (인증 끔 모드에서도 있는지는 본다)
 @pytest.mark.asyncio
-async def test_deploy_create_unknown_account_404(client):
+async def test_deploy_create_unknown_account_404(client, monkeypatch):
+    from shared.settings import settings
+
+    monkeypatch.setattr(settings, "auth_enabled", False)
+
     for body in ({"aws_account_id": 5}, {"github_installation_id": 9}):
         response=await client.post("/api/deploys", json={"repo_url": "https://github.com/o/r", **body})
         assert response.status_code == 404

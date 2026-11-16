@@ -25,6 +25,11 @@ os.environ["AUTH_JWT_KEY"]="test-auth-jwt-key-not-a-real-key-0123456789"
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+# deploys.u_id 등의 FK 가 users 를 가리켜, 시험 파일이 main 없이 create_all 해도 users 표를 알게 한다 (환경변수를 정한 뒤 불러온다)
+from features.auth import models as auth_models  # noqa: E402,F401
+# 알림 시험이 배포 조회에서 deploy_env_vars 를 읽는다 - 단독 실행에서도 표가 만들어지게 (Task 5 이전부터 있던 단독 실행 실패)
+from features.envvars import models as envvar_models  # noqa: E402,F401
+
 
 # 시험이 끝나면 이 프로세스의 DB 파일을 지운다 - 연결을 닫고 지우며, 못 지우면 남겨 둬도 다음 실행에 영향이 없다
 def pytest_sessionfinish(session, exitstatus):

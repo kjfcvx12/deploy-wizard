@@ -118,7 +118,7 @@ class Deploy_Service:
     # 레포 브랜치 목록 조회 - GitHub 설치가 있으면 그 토큰으로 (private 레포도 가능). 남의 설치는 404
     @staticmethod
     async def services_deploy_get_remote(db:AsyncSession, repo_url:str, github_installation_id:int|None=None, u_id:int|None=None) -> Repo_Remote:
-        if github_installation_id:
+        if github_installation_id is not None:
             await Github_Service.services_github_assert_owned(db, github_installation_id, u_id)
 
         try:
