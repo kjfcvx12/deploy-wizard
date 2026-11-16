@@ -249,6 +249,44 @@ async def test_auth_refresh_inactive_user_401(client):
     assert response.status_code == 401
 
 
+# 허용 목록에서 빠진 이메일 - 리프레시 401 이고 계열 전체가 폐기된다
+@pytest.mark.asyncio
+async def test_auth_refresh_email_removed_from_allowlist_401(client, monkeypatch):
+    first=(await login_app(client))["refresh_token"]
+    second=(await client.post("/api/auth/refresh", json={"refresh_token": first})).json()["refresh_token"]
+
+    monkeypatch.setattr(settings, "auth_allowed_emails", "someone-else@example.com")
+    response=await client.post("/api/auth/refresh", json={"refresh_token": second})
+    assert response.status_code == 401
+    assert response.json()["detail"] == MESSAGE_EXPIRED
+
+    rows=await sql("SELECT revoked_at FROM refresh_tokens")
+    assert rows and all(row[0] is not None for row in rows)
+
+    # 다시 허용해도 끊긴 계열은 살아나지 않는다
+    monkeypatch.setattr(settings, "auth_allowed_emails", "me@example.com")
+    assert (await client.post("/api/auth/refresh", json={"refresh_token": second})).status_code == 401
+
+
+# 빈 허용 목록 - 아무도 리프레시할 수 없다 (로그인과 같다)
+@pytest.mark.asyncio
+async def test_auth_refresh_empty_allowlist_401(client, monkeypatch):
+    token=(await login_app(client))["refresh_token"]
+    monkeypatch.setattr(settings, "auth_allowed_emails", "")
+    assert (await client.post("/api/auth/refresh", json={"refresh_token": token})).status_code == 401
+
+
+# 허용 목록에 그대로 있으면 리프레시가 계속 된다 (대소문자 무관)
+@pytest.mark.asyncio
+async def test_auth_refresh_still_allowed_200(client, monkeypatch):
+    token=(await login_app(client))["refresh_token"]
+    monkeypatch.setattr(settings, "auth_allowed_emails", "other@example.com, ME@example.com")
+    for _ in range(2):
+        response=await client.post("/api/auth/refresh", json={"refresh_token": token})
+        assert response.status_code == 200
+        token=response.json()["refresh_token"]
+
+
 # 로그아웃 - 그 계열 폐기, 모르는 토큰·빈 요청도 200
 @pytest.mark.asyncio
 async def test_auth_logout_revokes_family(client):

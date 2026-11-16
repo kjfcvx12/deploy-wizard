@@ -178,9 +178,9 @@ class Auth_Service:
             if db_token.expires_at <= now:
                 raise expired
 
-            # 2. 사용자가 살아 있어야 한다 - 아니면 그 계열도 끊는다
+            # 2. 사용자가 살아 있고 아직 허용 목록에 있어야 한다 (D-L1) - 아니면 그 계열도 끊는다
             db_user=await Auth_Crud.crud_user_get_by_u_id(db, db_token.u_id)
-            if db_user is None or db_user.status != "active":
+            if db_user is None or db_user.status != "active" or db_user.email not in settings.auth_allowed_email_set:
                 await Auth_Crud.crud_refresh_token_revoke_family(db, db_token.family_id, now)
                 await db.commit()
                 raise expired
