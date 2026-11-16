@@ -782,3 +782,37 @@ def test_migrate_columns_check_detects_missing_import():
     columns=collect_encrypted_columns("bare")
 
     assert columns["before"] != columns["after"] and len(columns["after"]) > len(columns["before"])
+
+
+# 서버 시작 - 암호화 전 값이 남은 옛 DB 는 표·열을 더하기 전에 거절한다 (거절한 DB 의 모양이 바뀌지 않는다)
+@pytest.mark.asyncio
+async def test_lifespan_refuses_old_db_before_changing_schema(tmp_path, monkeypatch):
+    import main
+    from shared.database import bootstrap_schema
+
+    db_path=make_old_db(tmp_path / "wizard.db")
+    engine=create_async_engine(f"sqlite+aiosqlite:///{db_path.as_posix()}")
+
+    # 표·열·인덱스 모양 전체
+    def schema_of() -> list:
+        conn=sqlite3.connect(db_path)
+        try:
+            return conn.execute("SELECT type, name, sql FROM sqlite_master ORDER BY type, name").fetchall()
+        finally:
+            conn.close()
+
+    before=schema_of()
+    monkeypatch.setattr(main, "async_engine", engine)
+    monkeypatch.setattr(main, "bootstrap_schema", lambda: bootstrap_schema(engine))
+    monkeypatch.setattr(settings, "auth_enabled", False)
+
+    try:
+        with pytest.raises(RuntimeError) as error:
+            async with main.lifespan(main.app):
+                pass
+    finally:
+        await engine.dispose()
+
+    assert "암호화 전 값이 4건" in str(error.value) and "migrate_login.py backup" in str(error.value)
+    assert OLD_ROLE_ARN not in str(error.value)
+    assert schema_of() == before

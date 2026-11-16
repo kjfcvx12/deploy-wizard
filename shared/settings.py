@@ -151,11 +151,6 @@ class Settings(BaseSettings):
     def cors_origin_list(self) -> list[str]:
         return [origin.strip() for origin in self.cors_origins.split(",") if origin.strip()]
 
-    # 설정된 Google 클라이언트 ID 모음 (비어 있지 않은 웹·안드로이드 값)
-    @property
-    def google_client_ids(self) -> set[str]:
-        return {value.strip() for value in (self.google_client_id_web, self.google_client_id_android) if value and value.strip()}
-
     # 로그인 허용 이메일 모음 (소문자)
     @property
     def auth_allowed_email_set(self) -> set[str]:

@@ -502,3 +502,30 @@ def test_auth_route_check_catches_prefixed_websocket():
     # 허용 목록에 적으면 통과
     _, allowed=routes_unprotected(app.routes, PUBLIC_PATHS, {"/api/ws-prefixed"})
     assert allowed == []
+
+
+# 암호화 키가 없거나 이전 전 값이라 Secret_Error 가 나도 역추적 없이 한국어 한 줄 (값·토큰은 싣지 않는다)
+def test_auth_token_script_run_prints_korean_line_on_secret_error(monkeypatch, capsys):
+    import scripts.auth_token as script
+    from shared.secrets import Secret_Error
+
+    async def broken(args):
+        raise Secret_Error("BLIND_INDEX_KEY가 설정되지 않았습니다 (.env 확인) dwp_secretvalue")
+
+    monkeypatch.setattr(script, "script_main", broken)
+
+    assert script.script_run(["list", "--email", "me@example.com"]) == 1
+
+    captured=capsys.readouterr()
+    assert "Traceback" not in captured.err and captured.out == ""
+    assert "암호화 키" in captured.err and "로그인 이전" in captured.err
+    assert "dwp_secretvalue" not in captured.err and "me@example.com" not in captured.err
+    assert len(captured.err.strip().splitlines()) == 1
+
+    # 기존 RuntimeError 는 그대로 문구를 보이고 1
+    async def runtime(args):
+        raise RuntimeError("그 이메일의 사용자가 없습니다")
+
+    monkeypatch.setattr(script, "script_main", runtime)
+    assert script.script_run(["list", "--email", "me@example.com"]) == 1
+    assert "그 이메일의 사용자가 없습니다" in capsys.readouterr().err

@@ -53,6 +53,10 @@ async def lifespan(app:FastAPI):
     # 로그인을 켰는데 키가 빠졌으면 여기서 멈춘다 (로그인 계획 Task 4)
     Auth_Service.services_auth_startup_check()
 
+    # 암호화 전 값이 남은 옛 DB 는 표·열을 더하기 전에 먼저 거른다 - 거절한 DB 의 모양을 바꾸지 않게 (없는 표·열은 건너뛴다)
+    async with async_engine.connect() as conn:
+        await conn.run_sync(migrate_check_startup)
+
     # 표를 만들고, 이미 있는 표에는 새 열이 안 생기므로 모자란 열만 더한다
     await bootstrap_schema()
 

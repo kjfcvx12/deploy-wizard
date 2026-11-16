@@ -2,8 +2,12 @@ import asyncio
 import hashlib
 from datetime import datetime, timedelta, timezone
 
+import time
+
+import jwt
 import pytest
 import pytest_asyncio
+from cryptography.hazmat.primitives.asymmetric import rsa
 from httpx import AsyncClient, ASGITransport
 from sqlalchemy import text
 
@@ -12,7 +16,7 @@ from shared.secrets import blind_index
 from shared.settings import settings
 
 from features.auth import google as google_module
-from features.auth.google import Google_Auth_Error, Google_Identity
+from features.auth.google import GOOGLE_DISCOVERY_URL, Google_Auth_Error, Google_Identity, Google_Verifier
 from features.auth.crud import Auth_Crud
 
 
@@ -91,8 +95,8 @@ async def test_auth_google_creates_user_and_tokens(client, fake_verifier):
     assert body["access_token"]
     assert body["user"]["email"] == "me@example.com"
     assert body["user"]["name"] == "나"
-    # 안드로이드 로그인은 안드로이드 클라이언트 ID 만 aud 로 받는다
-    assert fake_verifier.calls[-1] == {"android-client-id"}
+    # 안드로이드 로그인은 안드로이드 ID 와 서버(웹) ID 를 aud 로 받는다 (네이티브 로그인은 aud 가 서버 ID)
+    assert fake_verifier.calls[-1] == {"android-client-id", "web-client-id"}
 
     again=await login_app(client, "good-token-renamed")
     assert again["user"]["u_id"] == body["user"]["u_id"]
@@ -596,3 +600,56 @@ def test_auth_validation_scrub_matches_exact_path_only():
         response=client.get(path, params={"count": "0"})
         assert response.status_code == 422, path
         assert "input" in response.json()["detail"][0], path
+
+
+# 실제 검증기(가짜 네트워크)를 끼운다 - 플랫폼마다 받는 aud 를 서명·aud 검사까지 거쳐 확인한다
+@pytest.fixture
+def real_verifier(monkeypatch):
+    private_key=rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    jwk=jwt.algorithms.RSAAlgorithm.to_jwk(private_key.public_key(), as_dict=True)
+    jwk.update({"kid": "k1", "alg": "RS256", "use": "sig"})
+
+    async def fetch(url:str) -> dict:
+        if url == GOOGLE_DISCOVERY_URL:
+            return {"issuer": "https://accounts.google.com", "jwks_uri": "https://www.googleapis.com/oauth2/v3/certs"}
+        return {"keys": [jwk]}
+
+    monkeypatch.setattr(google_module, "GOOGLE_VERIFIER", Google_Verifier(fetch_json=fetch))
+
+    # aud 를 정해 서명한 id_token
+    def make_token(aud:str) -> str:
+        claims={"iss": "https://accounts.google.com", "aud": aud, "sub": "google-sub-1", "email": "me@example.com", "email_verified": True,
+                "name": "나", "iat": int(time.time()), "exp": int(time.time()) + 3600}
+        return jwt.encode(claims, private_key, algorithm="RS256", headers={"kid": "k1"})
+    return make_token
+
+
+# 플랫폼별 aud - 안드로이드는 서버(웹) ID·안드로이드 ID 둘 다, 그 밖은 401. 웹은 웹 ID 만
+@pytest.mark.asyncio
+@pytest.mark.parametrize("platform,aud,expected", [
+    ("android", "web-client-id", 200),
+    ("android", "android-client-id", 200),
+    ("android", "other-client-id", 401),
+    ("web", "web-client-id", 200),
+    ("web", "android-client-id", 401),
+    ("web", "other-client-id", 401),
+])
+async def test_auth_google_aud_per_platform(client, real_verifier, platform, aud, expected):
+    headers={"Origin": ORIGIN_OK} if platform == "web" else {}
+    response=await client.post("/api/auth/google", json={"id_token": real_verifier(aud), "platform": platform}, headers=headers)
+    assert response.status_code == expected, response.text
+
+
+# 그 플랫폼이 받는 클라이언트 ID 가 하나도 설정되지 않았으면 503 (설정된 것만 센다)
+@pytest.mark.asyncio
+async def test_auth_google_no_client_id_configured_503(client, real_verifier, monkeypatch):
+    monkeypatch.setattr(settings, "google_client_id_web", None)
+    monkeypatch.setattr(settings, "google_client_id_android", " ")
+    response=await client.post("/api/auth/google", json={"id_token": real_verifier("web-client-id"), "platform": "android"})
+    assert response.status_code == 503
+    assert response.json()["detail"] == "Google 로그인이 아직 설정되지 않았습니다 (GOOGLE_CLIENT_ID_* 확인)"
+
+    # 안드로이드 ID 만 비면 서버(웹) ID 로 받는다
+    monkeypatch.setattr(settings, "google_client_id_web", "web-client-id")
+    ok=await client.post("/api/auth/google", json={"id_token": real_verifier("web-client-id"), "platform": "android"})
+    assert ok.status_code == 200

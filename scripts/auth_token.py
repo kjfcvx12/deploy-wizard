@@ -12,6 +12,7 @@ from sqlalchemy.exc import ArgumentError
 
 from shared.database import AsyncSessionLocal, bootstrap_schema
 from shared.masking import mask_text
+from shared.secrets import Secret_Error
 from shared.settings import settings
 
 # 모델을 import 해야 create_all 이 표를 안다
@@ -33,6 +34,9 @@ from features.auth.services import Auth_Service
 # python scripts/auth_token.py create --email <주소> --name mcp [--days 30]
 # python scripts/auth_token.py list --email <주소>
 # python scripts/auth_token.py revoke --id <a_t_id>
+
+# 키가 없거나 이전 전 값이라 읽지 못할 때의 안내 (값·토큰은 싣지 않는다)
+MESSAGE_SECRET="암호화 키(SECRET_KEY·BLIND_INDEX_KEY) 설정이나 DB 이전이 끝나지 않았습니다. .env 를 확인하고 README 의 '로그인 이전' 절차를 먼저 마치세요"
 
 
 # 안내문에 보여 줄 DB 위치 - sqlite 는 파일 경로, 그 밖은 종류와 호스트만. 사용자 이름·비밀번호·옵션은 싣지 않는다
@@ -127,9 +131,18 @@ def script_args(argv=None):
     return parser.parse_args(argv)
 
 
-if __name__ == "__main__":
+# 실행 - 오류는 한국어 한 줄로 알리고 종료 코드를 돌려준다 (Secret_Error 문구에는 값·토큰을 싣지 않는다)
+def script_run(argv=None) -> int:
     try:
-        asyncio.run(script_main(script_args()))
+        asyncio.run(script_main(script_args(argv)))
     except RuntimeError as e:
         print(e, file=sys.stderr)
-        sys.exit(1)
+        return 1
+    except Secret_Error:
+        print(MESSAGE_SECRET, file=sys.stderr)
+        return 1
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(script_run())

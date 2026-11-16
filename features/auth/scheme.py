@@ -4,11 +4,12 @@ from typing import Literal
 from pydantic import BaseModel, Field, field_validator
 
 
-# 로그인 플랫폼 -> 그 플랫폼의 Google 클라이언트 ID 설정 이름 (settings 속성). 이 표가 허용 플랫폼의 기준이다
+# 로그인 플랫폼 -> 그 플랫폼 로그인에서 aud 로 받는 Google 클라이언트 ID 설정 이름들 (settings 속성). 이 표가 허용 플랫폼의 기준이다
+# 안드로이드 네이티브 로그인은 id_token 의 aud 를 서버(웹) 클라이언트 ID 로, 안드로이드 클라이언트 ID 는 azp 로 준다 (Google 문서, 한 번 더 확인 필요) - 그래서 둘 다 받는다
 # iOS 추가 시 여기에 'ios' 한 줄 + GOOGLE_CLIENT_ID_IOS 설정
 LOGIN_PLATFORMS={
-    "web": "google_client_id_web",
-    "android": "google_client_id_android",
+    "web": ("google_client_id_web",),
+    "android": ("google_client_id_android", "google_client_id_web"),
 }
 
 

@@ -60,12 +60,12 @@ class Auth_Service:
         return datetime.now(timezone.utc).replace(tzinfo=None)
 
 
-    # 플랫폼의 Google 클라이언트 ID - 그 플랫폼 것만 aud 로 받는다 (설정이 없으면 빈 모음 -> 검증기가 503)
+    # 플랫폼이 aud 로 받는 Google 클라이언트 ID 모음 - 설정된(비어 있지 않은) 값만 (없으면 빈 모음 -> 검증기가 503)
+    # azp 는 보지 않는다 - aud 가 우리 클라이언트 ID 이고 서명·발급자·만료가 맞으면 충분하다 (안드로이드는 azp 에 안드로이드 ID 가 오지만 aud 가 서버 ID 라서 aud 만 본다)
     @staticmethod
     def services_auth_client_ids(platform:str) -> set[str]:
-        name=LOGIN_PLATFORMS.get(platform)
-        value=getattr(settings, name, None) if name else None
-        return {value.strip()} if isinstance(value, str) and value.strip() else set()
+        values=(getattr(settings, name, None) for name in LOGIN_PLATFORMS.get(platform, ()))
+        return {value.strip() for value in values if isinstance(value, str) and value.strip()}
 
 
     # 쿠키로 온 요청의 출처 확인 - Origin 이 CORS 허용 목록에 있어야 한다 (없거나 밖이면 403)
