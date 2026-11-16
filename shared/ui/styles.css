@@ -278,6 +278,40 @@ details.env-group > summary { font-size: 14px; }
   .advice-actions button { width: 100%; }
 }
 
+/* 배포 직전 비용 패널 - 색은 변수만, 글은 줄바꿈하고 가리지 않는다 */
+.cost-panel { margin-top: 16px; }
+.cost-panel h3 { margin: 0 0 4px; font-size: 14px; }
+.cost-resources { margin: 0 0 12px; padding-left: 20px; }
+.cost-resources li { overflow-wrap: anywhere; }
+.cost-options { display: grid; gap: 14px; margin: 12px 0; }
+.cost-field { display: grid; gap: 6px; min-width: 0; align-content: start; }
+.cost-field > label { font-size: 14px; font-weight: 600; }
+.cost-field input[type="text"], .cost-field select { width: 100%; }
+.cost-check { display: flex; gap: 8px; align-items: center; font-weight: 600; }
+.cost-check input { flex: none; width: 18px; height: 18px; min-height: 0; padding: 0; }
+.cost-check span { min-width: 0; overflow-wrap: anywhere; }
+.cost-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 10px; }
+.cost-quick { display: flex; gap: 6px; flex-wrap: wrap; }
+.cost-quick button { padding: 6px 12px; font-size: 14px; }
+.cost-quick button[aria-pressed="true"] { background: var(--info-bg); border-color: var(--accent); color: var(--accent); }
+.cost-hint { margin: 4px 0 0; overflow-wrap: anywhere; }
+.cost-err { margin: 0; color: var(--err); overflow-wrap: anywhere; }
+.cost-live .notice { margin: 8px 0 0; }
+.cost-total { margin: 6px 0 0; overflow-wrap: anywhere; }
+.cost-total strong { font-size: 18px; }
+.cost-table { width: 100%; margin-top: 12px; border-collapse: collapse; font-size: 14px; }
+.cost-table th, .cost-table td { padding: 6px 8px; border-bottom: 1px solid var(--border); text-align: left; vertical-align: top; overflow-wrap: anywhere; }
+.cost-table thead th { color: var(--muted); font-size: 13px; }
+.cost-table .num { text-align: right; white-space: nowrap; }
+.cost-note { display: block; }
+.cost-billing { margin-top: 14px; }
+
+/* 폰 폭 - 빠른 선택 버튼과 자동 증설 체크 줄의 터치 크기 */
+@media (max-width: 640px) {
+  .cost-quick button { min-height: 40px; padding: 8px 14px; }
+  .cost-check { min-height: 40px; padding-block: 8px; }
+}
+
 /* 목록 - 긴 레포 이름·주소가 칸을 밀어내지 않게 줄바꿈한다 */
 .deploy-item > div { min-width: 0; }
 .deploy-item .badge { flex: none; }
@@ -434,6 +468,16 @@ details.env-group > summary { font-size: 14px; }
 .setting-input:checked + .setting-track::after { transform: translateX(20px); background: var(--accent-text); }
 .setting-input:focus-visible + .setting-track { outline: 2px solid var(--accent); outline-offset: 2px; }
 .setting-input:disabled + .setting-track { opacity: .5; }
+
+.plan-line { display: flex; flex-wrap: wrap; gap: 2px 14px; margin: 0 0 16px; color: var(--muted); font-size: 13px; }
+.plan-line span { min-width: 0; overflow-wrap: anywhere; }
+.plan-line .plan-over { color: var(--warn); font-weight: 700; }
+
+/* 배포 설정 화면 - 예정 사용 시간 입력 */
+.plan-edit { margin: 0 0 12px; padding: 14px 16px; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); }
+.plan-edit label { display: block; margin-bottom: 6px; font-weight: 700; }
+.plan-edit .row input { flex: 1 1 140px; }
+.plan-edit .plan-hint { margin: 8px 0 0; line-height: 1.5; overflow-wrap: anywhere; }
 
 /* 알림 - 상단 바의 읽지 않은 수 알약과 알림 목록 (S-12) */
 .bell-link { display: inline-flex; align-items: center; gap: 6px; }

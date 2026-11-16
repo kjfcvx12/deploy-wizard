@@ -35,7 +35,11 @@ Claude 에서 배포 마법사를 쓰는 로컬 MCP 서버(`features/mcp`, 도�
 
 ## 비용 확인 백엔드 (2026-11-16)
 
-배포 전 비용 확인 백엔드가 들어왔다 — 가격 파일 읽기·캐시·추정(`features/pricing`), `GET /api/pricing/options`·`POST /api/pricing/estimate`, 분석 결과의 비용(`advice`), 배포 옵션(사양·자동 증설·예정 사용 시간) 저장과 Express 서비스 생성 때 적용, 예정 시간 초과 알림(`plan_exceeded`, 알림만), MCP `deploy` 미리보기의 비용 줄. `pytest`(가짜 가격 파일·가짜 Express)로만 확인했다. **프리셋 4개·`scalingTarget`·기본 사양의 실제 AWS 확인은 아직이다** ([`aws-notes.md`](./aws-notes.md) 체크리스트). **웹 화면은 다음 계획.** 시간대 스케줄 자동 절전, 유휴 휴면, Kubernetes 는 설계만 있다 (스펙 7절). 구조는 [`architecture.md`](./architecture.md) "비용 확인", 설계는 [`superpowers/specs/2026-11-16-cost-confirm-design.md`](./superpowers/specs/2026-11-16-cost-confirm-design.md), 기록은 [`worklog/2026-11-16.md`](./worklog/2026-11-16.md).
+배포 전 비용 확인 백엔드가 들어왔다 — 가격 파일 읽기·캐시·추정(`features/pricing`), `GET /api/pricing/options`·`POST /api/pricing/estimate`, 분석 결과의 비용(`advice`), 배포 옵션(사양·자동 증설·예정 사용 시간) 저장과 Express 서비스 생성 때 적용, 예정 시간 초과 알림(`plan_exceeded`, 알림만), MCP `deploy` 미리보기의 비용 줄. `pytest`(가짜 가격 파일·가짜 Express)로만 확인했다. **프리셋 4개·`scalingTarget`·기본 사양의 실제 AWS 확인은 아직이다** ([`aws-notes.md`](./aws-notes.md) 체크리스트). 웹 화면은 아래 "비용 확인 웹"에 있다. 시간대 스케줄 자동 절전, 유휴 휴면, Kubernetes 는 설계만 있다 (스펙 7절). 구조는 [`architecture.md`](./architecture.md) "비용 확인", 설계는 [`superpowers/specs/2026-11-16-cost-confirm-design.md`](./superpowers/specs/2026-11-16-cost-confirm-design.md), 기록은 [`worklog/2026-11-16.md`](./worklog/2026-11-16.md).
+
+## 비용 확인 웹 (2026-11-16)
+
+웹 분석 화면에 배포 직전 비용 영역(`features/pricing/ui/`: 구성 요소별 시간당 가격, 기간별 금액, 사양·사용 계획·자동 증설 선택, 선택한 옵션으로 배포), 배포 상세의 사양·사용 계획 줄, 배포 설정의 예정 사용 시간 폼이 들어왔다. 알림 종류 `plan_exceeded`는 웹·앱 상수에 반영됐다. 순수 로직은 `npm run test:web`, 화면 코드는 `npm run build`로만 확인했다 그리고 2026-11-16에 실제 브라우저·실제 API로 분석 화면을 읽기 전용으로 확인했다(옵션 변경 시 재계산, 오류·503 문구, 320~1280px 넘침 없음). **다크 모드·배포 상세 사용 계획 줄·설정 예정 시간 입력·[배포] 버튼은 확인하지 않았다(배포를 만들면 요금이 나가서).** 앱(Expo)에는 이 화면이 없다. 모양은 [`ui-spec.md`](./ui-spec.md) "배포 전 비용 영역", 계획은 [`superpowers/plans/2026-11-16-cost-web.md`](./superpowers/plans/2026-11-16-cost-web.md), 기록은 [`worklog/2026-11-16.md`](./worklog/2026-11-16.md).
 
 ## 다음에 할 일
 

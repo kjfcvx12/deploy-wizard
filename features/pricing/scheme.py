@@ -65,10 +65,18 @@ class Pricing_Plan(BaseModel):
     hours: int | None = None
 
 
-# 가격 화면에 필요한 선택지 - 사양 프리셋과 사용 기간
+# 자동 증설 기준 지표 하나 - value 는 AWS 값, label 은 화면에 보일 한국어 이름
+class Scale_Metric(BaseModel):
+    value: str
+    label: str
+
+
+# 가격 화면에 필요한 선택지 - 사양 프리셋, 사용 기간, 최대 작업 수 상한, 증설 기준 지표
 class Pricing_Options(BaseModel):
     specs: list[Spec_Option]
     plans: list[Pricing_Plan]
+    max_tasks_cap: int
+    scale_metrics: list[Scale_Metric]
 
 
 # 비용 추정 요청 - 모든 값이 선택. 타입은 엄격하게 받고(불리언·글자 숫자 거절), 범위는 라우터가 한국어 400 으로 검사한다

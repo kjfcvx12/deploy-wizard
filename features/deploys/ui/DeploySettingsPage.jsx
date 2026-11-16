@@ -1,14 +1,16 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useId, useRef, useState } from 'react'
 import { Link, useLocation, useNavigate, useParams } from 'react-router-dom'
 
 import { isValidId } from '@shared/ui/isValidId.js'
 import NotFoundNotice from '@shared/ui/NotFoundNotice.jsx'
 import SettingSwitch from '@shared/ui/SettingSwitch.jsx'
+import { parsePlannedHours } from '@features/pricing/ui/costLogic.js'
 
 import { deployApi } from './api.js'
 import { DEPLOY_NOT_FOUND_TEXT, repoName } from './constants.js'
 
 const SAVED_TEXT = '저장했습니다'
+const PLANNED_HINT = '넘기면 알림만 보냅니다. 자동으로 끄지 않습니다. 비워 두면 예정 시간 없이 계속 쓰는 것으로 봅니다.'
 // 저장 안내가 떠 있는 시간(ms)
 const SAVED_MS = 3000
 
@@ -50,6 +52,7 @@ function DeploySettings({ d_id }) {
   const timerRef = useRef(null)
   const messageRef = useRef(null)
   const noticeRef = useRef(null)
+  const hoursId = useId()
 
   const [deploy, setDeploy] = useState(null)
   const [values, setValues] = useState(null)
@@ -57,6 +60,8 @@ function DeploySettings({ d_id }) {
   const [loadError, setLoadError] = useState(null)
   const [busy, setBusy] = useState({})
   const [message, setMessageState] = useState(null)
+  const [hoursText, setHoursText] = useState('')
+  const [hoursInvalid, setHoursInvalid] = useState(false)
 
   // 화면이 살아 있는 동안만 상태를 바꾼다 - 닫힌 뒤 늦게 오는 응답과 안내 타이머는 버린다
   useEffect(() => {
@@ -78,6 +83,7 @@ function DeploySettings({ d_id }) {
       valuesRef.current = readValues(result)
       setDeploy(result)
       setValues(valuesRef.current)
+      setHoursText(result.planned_hours == null ? '' : String(result.planned_hours))
     } catch (e) {
       if (alive.current && mine === loadSeq.current) setLoadError(e)
     } finally {
@@ -141,6 +147,37 @@ function DeploySettings({ d_id }) {
     }
   }
 
+  // 예정 사용 시간 저장 - 비우면 계획을 지운다(null). 잘못된 값은 서버에 보내지 않고 같은 안내 자리에 이유를 보인다
+  const savePlanned = async (event) => {
+    event.preventDefault()
+    if (busyRef.current.planned_hours) return
+    const { hours, error } = parsePlannedHours(hoursText)
+    if (error) {
+      setHoursInvalid(true)
+      showError(error)
+      return
+    }
+    setHoursInvalid(false)
+    busyRef.current.planned_hours = true
+    clearTimeout(timerRef.current)
+    setBusy((b) => ({ ...b, planned_hours: true }))
+    setMessage(null)
+    try {
+      await deployApi.patchSettings(d_id, { planned_hours: hours })
+      if (alive.current) {
+        setHoursText(hours === null ? '' : String(hours))
+        showSaved()
+      }
+    } catch (e) {
+      if (!alive.current) return
+      showError(e.message)
+      if (e.status === 404) setLoadError(e)
+    } finally {
+      busyRef.current.planned_hours = false
+      if (alive.current) setBusy((b) => ({ ...b, planned_hours: false }))
+    }
+  }
+
   // 돌아간다 - 바로 연 화면이라 돌아갈 곳이 없으면 목록으로
   const leave = () => { if (location.key === 'default') navigate('/'); else navigate(-1) }
 
@@ -186,12 +223,31 @@ function DeploySettings({ d_id }) {
         ))}
       </div>
 
+      <form className="plan-edit" onSubmit={savePlanned} noValidate>
+        <label htmlFor={hoursId}>예정 사용 시간(시간)</label>
+        <div className="row">
+          <input
+            id={hoursId}
+            type="text"
+            inputMode="decimal"
+            autoComplete="off"
+            value={hoursText}
+            disabled={!!busy.planned_hours}
+            aria-invalid={hoursInvalid && message?.tone === 'err' ? true : undefined}
+            aria-describedby={hoursInvalid && message?.tone === 'err' ? `${hoursId}-hint ${hoursId}-notice` : `${hoursId}-hint`}
+            onChange={(e) => { setHoursText(e.target.value); setHoursInvalid(false) }}
+          />
+          <button type="submit" disabled={!!busy.planned_hours}>저장</button>
+        </div>
+        <p className="muted small plan-hint" id={`${hoursId}-hint`}>{PLANNED_HINT}</p>
+      </form>
+
       {/* 읽어 주는 영역은 항상 떠 있게 두고 안에 안내만 넣고 뺀다 - 비어 있다가 채워질 때 스크린 리더가 읽는다 */}
       <div role="status" aria-live="polite" aria-atomic="true">
-        {!!message && <div ref={noticeRef} className={`notice ${message.tone}`} style={{ marginTop: 0, marginBottom: 12 }}>{message.text}</div>}
+        {!!message && <div ref={noticeRef} id={`${hoursId}-notice`} className={`notice ${message.tone}`} style={{ marginTop: 0, marginBottom: 12 }}>{message.text}</div>}
       </div>
 
-      <p className="muted small">변경은 누르는 즉시 저장됩니다. 이미 진행 중인 배포에는 영향이 없습니다.</p>
+      <p className="muted small">스위치는 누르는 즉시 저장되고, 예정 사용 시간은 [저장]을 눌러야 반영됩니다. 이미 진행 중인 배포에는 영향이 없습니다.</p>
     </>
   )
 }

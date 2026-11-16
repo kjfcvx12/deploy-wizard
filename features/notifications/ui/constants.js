@@ -3,7 +3,7 @@
 
 // 알림 종류 (서버 순서 그대로) - 설정 화면의 종류 목록도 이 순서를 쓴다
 export const NOTIFICATION_KINDS = [
-  'incident_opened', 'incident_recovered', 'incident_needs_action', 'deploy_succeeded', 'deploy_failed', 'new_commit',
+  'incident_opened', 'incident_recovered', 'incident_needs_action', 'deploy_succeeded', 'deploy_failed', 'new_commit', 'plan_exceeded',
 ]
 
 // 알림 종류 이름
@@ -14,6 +14,7 @@ export const NOTIFICATION_KIND_LABEL = {
   deploy_succeeded: '배포 성공',
   deploy_failed: '배포 실패',
   new_commit: '새 커밋',
+  plan_exceeded: '예정 사용 시간 초과',
 }
 
 // 알림 종류별 아이콘 글자
@@ -24,6 +25,7 @@ export const NOTIFICATION_KIND_ICON = {
   deploy_succeeded: '✔',
   deploy_failed: '✖',
   new_commit: '⇡',
+  plan_exceeded: '✖',
 }
 
 // 알림 종류별 배지 색 (.badge 클래스)
@@ -34,6 +36,7 @@ export const NOTIFICATION_KIND_BADGE = {
   deploy_succeeded: 'ok',
   deploy_failed: 'err',
   new_commit: 'run',
+  plan_exceeded: 'err',
 }
 
 // 종류별 설명 한 줄
@@ -44,6 +47,7 @@ export const KIND_HINT = {
   deploy_succeeded: '배포가 끝나 실행 중이 됐을 때',
   deploy_failed: '배포가 실패했을 때',
   new_commit: '배포한 브랜치에 새 커밋이 올라왔을 때',
+  plan_exceeded: '예정한 사용 시간을 넘기면 알려 줍니다 (자동으로 끄지 않습니다)',
 }
 
 export const MAIL_HINT = '서버에 메일 설정이 있을 때만 보내집니다'

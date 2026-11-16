@@ -5,7 +5,7 @@ import SettingSwitch from '@shared/ui/SettingSwitch.jsx'
 
 import { notificationApi } from './api.js'
 import { KIND_HINT, MAIL_HINT, NOTIFICATION_KINDS, NOTIFICATION_KIND_LABEL, PUSH_HINT_WEB } from './constants.js'
-import { readSettingValues } from './logic.js'
+import { kindsAfterToggle, readSettingValues } from './logic.js'
 
 const SAVED_TEXT = '저장했습니다'
 // 저장 안내가 떠 있는 시간(ms)
@@ -126,10 +126,7 @@ export default function NotificationSettingsPage() {
   // 종류 스위치 하나를 바꾼다 - 목록 전체를 서버 순서로, 눌린 줄이 아니라 지금 값에서 다시 만들어 보낸다
   const toggleKind = (kind) => {
     if (!valuesRef.current) return
-    const current = valuesRef.current.kinds
-    const has = current.includes(kind)
-    const kinds = NOTIFICATION_KINDS.filter((k) => (k === kind ? !has : current.includes(k)))
-    save('kinds', { kinds })
+    save('kinds', { kinds: kindsAfterToggle(valuesRef.current.kinds, kind) })
   }
 
   // 돌아간다 - 바로 연 화면이라 돌아갈 곳이 없으면 알림 목록으로

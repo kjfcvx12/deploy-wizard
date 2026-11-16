@@ -1,0 +1,218 @@
+import { toMs } from '@shared/ui/time.js'
+
+const MAX_PLANNED_HOURS = 8760
+const INCOMPLETE_SCALING_TEXT = '증설 설정은 최소·최대·기준·목표값을 모두 정해야 합니다'
+
+// 유한한 숫자인지 (문자열·null 은 아님)
+const isNum = (value) => typeof value === 'number' && Number.isFinite(value)
+
+// 비어 있는 입력인지 (null·undefined·빈 문자열·공백)
+const isBlank = (value) => value === null || value === undefined || String(value).trim() === ''
+
+// 정수로 읽을 수 있으면 그 수, 아니면 null (숫자 또는 숫자 모양 문자열만)
+const toInteger = (value) => {
+  if (typeof value === 'number') return Number.isInteger(value) ? value : null
+  if (typeof value === 'string' && /^-?\d+$/.test(value.trim())) return Number(value.trim())
+  return null
+}
+
+// 금액 표기 - USD 는 $12.34, 그 외 통화는 12.34 KRW (반올림하면 0 이 되는 값은 부호 없이 0)
+export function formatUsd(value, digits = 2, currency = 'USD') {
+  if (!isNum(value)) return '-'
+  const rounded = value.toFixed(digits)
+  const text = Number(rounded) === 0 ? (0).toFixed(digits) : rounded
+  return currency === 'USD' ? `$${text}` : `${text} ${currency}`
+}
+
+// 시간 표기 - 24 는 1일, 168 은 1주일, 그 외 N시간 (소수는 최대 1자리, 0.1 도 안 되는 양수는 "0.1시간 미만")
+export function formatHours(hours) {
+  if (!isNum(hours)) return '-'
+  if (hours === 24) return '1일'
+  if (hours === 168) return '1주일'
+  const rounded = Number(hours.toFixed(1))
+  if (hours > 0 && rounded === 0) return '0.1시간 미만'
+  return `${rounded}시간`
+}
+
+// 사용 예정 시간 입력 해석 - 비면 계획 없음, 잘못되면 한국어 오류
+export function parsePlannedHours(text) {
+  if (isBlank(text)) return { hours: null, error: null }
+  const trimmed = String(text).trim()
+  const fail = { hours: null, error: `사용 시간은 0보다 크고 ${MAX_PLANNED_HOURS}시간 이하의 숫자로 적어 주세요` }
+  if (!/^-?(\d+\.?\d*|\.\d+)$/.test(trimmed)) return fail
+  const hours = Number(trimmed)
+  if (!Number.isFinite(hours) || hours <= 0 || hours > MAX_PLANNED_HOURS) return fail
+  return { hours, error: null }
+}
+
+// 자동 증설 입력 검증 - 문제 없으면 null, 있으면 한국어 문구
+export function validateScaling(values, cap, metrics = []) {
+  const { min, max, metric, target } = values || {}
+  const fields = [min, max, metric, target]
+  if (fields.every(isBlank)) return null
+  if (fields.some(isBlank)) return INCOMPLETE_SCALING_TEXT
+
+  const minTasks = toInteger(min)
+  const maxTasks = toInteger(max)
+  const targetValue = toInteger(target)
+  if (minTasks === null || maxTasks === null || targetValue === null) {
+    return '최소·최대·목표값은 정수로 적어 주세요'
+  }
+  if (minTasks < 1) return '최소 작업 수는 1 이상이어야 합니다'
+  if (minTasks > maxTasks) return '최소 작업 수는 최대 작업 수보다 클 수 없습니다'
+  if (maxTasks > cap) return `최대 작업 수는 ${cap}개까지만 정할 수 있습니다`
+  if (!(metrics || []).some((item) => item.value === metric)) return '증설 기준을 목록에서 골라 주세요'
+
+  const upper = metric === 'REQUEST_COUNT_PER_TARGET' ? 100000 : 100
+  if (targetValue < 1 || targetValue > upper) return `목표값은 1~${upper} 사이여야 합니다`
+  return null
+}
+
+// 사양 선택 - cpu·memory 가 둘 다 있을 때만
+const specPart = (selection) => {
+  const { cpu, memory } = selection || {}
+  return !isBlank(cpu) && !isBlank(memory) ? { cpu, memory } : {}
+}
+
+// 사용 예정 시간 선택 - 숫자(또는 숫자 문자열)로 읽힐 때만
+const plannedPart = (selection) => {
+  const raw = selection?.plannedHours
+  const { hours } = parsePlannedHours(typeof raw === 'number' ? String(raw) : raw)
+  return hours === null ? {} : { planned_hours: hours }
+}
+
+// 배포 요청에 실을 옵션 - 고른 것만 담는다 (증설은 켜져 있고 검증을 통과했을 때만)
+export function buildDeployOptions(selection, cap, metrics) {
+  const options = { ...specPart(selection), ...plannedPart(selection) }
+  const scaling = selection?.scaling
+  // validateScaling 은 네 칸이 모두 빈 경우를 문제없음(null)으로 보므로, 값이 모두 있을 때만 싣는다
+  const filled = [scaling?.min, scaling?.max, scaling?.metric, scaling?.target].every((v) => !isBlank(v))
+  if (scaling?.enabled && filled && validateScaling(scaling, cap, metrics) === null) {
+    options.min_tasks = Number(scaling.min)
+    options.max_tasks = Number(scaling.max)
+    options.scale_metric = scaling.metric
+    options.scale_target = Number(scaling.target)
+  }
+  return options
+}
+
+// /pricing/estimate 본문 - 사양·사용 시간·최대 작업 수 중 고른 것만
+export function buildEstimateBody(selection) {
+  const body = { ...specPart(selection), ...plannedPart(selection) }
+  const scaling = selection?.scaling
+  if (scaling?.enabled) {
+    const maxTasks = toInteger(scaling.max)
+    if (maxTasks !== null && maxTasks >= 1) body.max_tasks = maxTasks
+  }
+  return body
+}
+
+// 서버의 추정 응답을 화면이 바로 그릴 문자열로 바꾼다 (없는 값은 null)
+export function describeEstimate(estimate) {
+  const e = estimate || {}
+  const currency = e.currency || 'USD'
+  const usd = (value, digits) => formatUsd(value, digits, currency)
+
+  const componentRows = (e.components || []).map((c) => ({
+    name: c.name,
+    hourly: usd(c.hourly_usd, 4),
+    note: c.note ?? null,
+  }))
+  const periods = (e.periods || []).map((p) => ({ label: p.label, hours: p.hours, usd: usd(p.usd, 2) }))
+
+  const planned = isNum(e.planned_hours) && isNum(e.planned_usd)
+    ? `${formatHours(e.planned_hours)} 동안 약 ${usd(e.planned_usd, 2)}`
+    : null
+  const max = isNum(e.max_tasks) && isNum(e.max_hourly_usd) && isNum(e.max_monthly_usd)
+    ? `최대 ${e.max_tasks}개까지 늘면 시간당 최대 ${usd(e.max_hourly_usd, 4)}, 한 달 최대 ${usd(e.max_monthly_usd, 2)}`
+    : null
+  const arm = isNum(e.arm64_hourly_usd) && isNum(e.arm64_saving_percent)
+    ? `ARM64면 약 ${Number(e.arm64_saving_percent.toFixed(1))}% 저렴합니다 (시간당 ${usd(e.arm64_hourly_usd, 4)}). 이 마법사는 x86으로만 빌드합니다`
+    : null
+
+  return {
+    componentRows,
+    hourly: isNum(e.hourly_usd) ? usd(e.hourly_usd, 4) : null,
+    periods,
+    planned,
+    max,
+    arm,
+    assumptions: e.assumptions || [],
+    notIncluded: e.not_included || [],
+    basis: e.basis_date ? `기준일 ${e.basis_date} · ${currency}` : null,
+  }
+}
+
+// 분석 응답의 cost(기본 사양 추정)를 추정 응답 모양으로 - 가격이 없으면 null (한 달 금액만 있다)
+export function estimateFromCost(cost) {
+  if (!cost || !isNum(cost.hourly_usd)) return null
+  const monthly = isNum(cost.monthly_min) && cost.monthly_min === cost.monthly_max
+    ? [{ label: '한 달', hours: null, usd: cost.monthly_min }]
+    : []
+  return {
+    basis_date: cost.basis_date ?? null,
+    currency: cost.currency || 'USD',
+    spec_label: cost.spec_label ?? null,
+    components: cost.components || [],
+    hourly_usd: cost.hourly_usd,
+    periods: monthly,
+    arm64_hourly_usd: cost.arm64_hourly_usd ?? null,
+    arm64_saving_percent: null,
+    assumptions: [],
+    not_included: cost.not_included || [],
+  }
+}
+
+// 예정 사용 시간까지 남은 시간 - 계획이나 시작 시각이 없거나 읽을 수 없으면 none, 끝나는 순간부터 over (서버 시각은 UTC)
+export function planRemaining(runningSince, plannedHours, now) {
+  const none = { state: 'none', remainingMs: null }
+  if (!isNum(plannedHours) || plannedHours <= 0) return none
+  const start = toMs(runningSince)
+  const current = now instanceof Date ? now.getTime() : NaN
+  if (Number.isNaN(start) || Number.isNaN(current)) return none
+  const total = plannedHours * 3600000
+  const remaining = Math.min(total, start + total - current)
+  return remaining > 0 ? { state: 'counting', remainingMs: remaining } : { state: 'over', remainingMs: null }
+}
+
+// 남은 시간 표기 - "1일 1시간 남음", "3시간 12분 남음", "59분 남음", 1분 미만은 "1분 미만 남음"
+export function formatRemaining(ms) {
+  if (!isNum(ms)) return ''
+  const minutes = Math.floor(ms / 60000)
+  if (minutes < 1) return '1분 미만 남음'
+  const days = Math.floor(minutes / 1440)
+  const hours = Math.floor((minutes % 1440) / 60)
+  const rest = minutes % 60
+  if (days) return hours ? `${days}일 ${hours}시간 남음` : `${days}일 남음`
+  if (hours) return rest ? `${hours}시간 ${rest}분 남음` : `${hours}시간 남음`
+  return `${rest}분 남음`
+}
+
+// 배포 상세 머리 줄 - 사양·증설·사용 계획 글자 (모두 없으면 null). options 는 /pricing/options 응답(없어도 된다)
+export function describeDeployPlan(deploy, options, now) {
+  const d = deploy || {}
+  const hasSpec = !isBlank(d.cpu) && !isBlank(d.memory)
+  const hasScaling = isNum(d.min_tasks) && isNum(d.max_tasks)
+  const hasPlan = isNum(d.planned_hours) && d.planned_hours > 0
+  if (!hasSpec && !hasScaling && !hasPlan) return null
+
+  const preset = (options?.specs || []).find((s) => s.cpu === d.cpu && s.memory === d.memory)
+  const spec = hasSpec ? (preset?.label ?? `${d.cpu} / ${d.memory}`) : '기본 사양'
+
+  const metric = (options?.scale_metrics || []).find((m) => m.value === d.scale_metric)
+  const metricText = isBlank(d.scale_metric) ? '' : ` (${metric?.label ?? d.scale_metric} 기준)`
+  const scaling = hasScaling ? `자동 증설 ${d.min_tasks}~${d.max_tasks}개${metricText}` : null
+
+  let plan = null
+  let over = false
+  if (hasPlan) {
+    plan = `예정 사용 ${formatHours(d.planned_hours)}`
+    const left = planRemaining(d.running_since, d.planned_hours, now)
+    if (left.state === 'counting') plan += ` · ${formatRemaining(left.remainingMs)}`
+    if (left.state === 'over') {
+      over = true
+      plan += ' · 예정 시간을 넘겼습니다 — 멈추거나 삭제하세요'
+    }
+  }
+  return { spec, scaling, plan, over }
+}

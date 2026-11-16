@@ -330,11 +330,17 @@ AWS 공개 가격 파일(인증 없음)에서 Fargate·ALB 시간당 단가를 �
 ```json
 {
   "specs": [{ "label": "0.25 vCPU / 0.5 GB", "cpu": "256", "memory": "512", "vcpu": 0.25, "memory_gb": 0.5 }],
-  "plans": [{ "label": "4시간", "hours": 4 }, { "label": "하루", "hours": 24 }, { "label": "일주일", "hours": 168 }, { "label": "계속", "hours": null }]
+  "plans": [{ "label": "4시간", "hours": 4 }, { "label": "하루", "hours": 24 }, { "label": "일주일", "hours": 168 }, { "label": "계속", "hours": null }],
+  "max_tasks_cap": 4,
+  "scale_metrics": [
+    { "value": "AVERAGE_CPU", "label": "CPU 사용률" },
+    { "value": "AVERAGE_MEMORY", "label": "메모리 사용률" },
+    { "value": "REQUEST_COUNT_PER_TARGET", "label": "요청 수" }
+  ]
 }
 ```
 
-`specs`는 항상 4개(0.25/0.5, 0.5/1, 1/2, 2/4 vCPU/GB). `plans`의 마지막 `hours: null`은 "계속"(기간을 정하지 않음).
+`specs`는 항상 4개(0.25/0.5, 0.5/1, 1/2, 2/4 vCPU/GB). `plans`의 마지막 `hours: null`은 "계속"(기간을 정하지 않음). `max_tasks_cap`은 최대 작업 수 상한(`MAX_TASKS_CAP`, 기본 4)이고, `scale_metrics`는 자동 증설 기준 지표 3개(`value`는 AWS 값, `label`은 화면에 보일 이름 — 서버가 한 곳에서 정한다)다.
 
 ### POST `/api/pricing/estimate` 본문 `Estimate_Request`
 

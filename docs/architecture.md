@@ -22,7 +22,7 @@
 │   ├── explains/               ← scheme.py  services.py  ui/
 │   ├── envvars/                ← models.py  scheme.py  crud.py  scan.py  services.py  router.py  (환경변수 이름 감지·입력)
 │   ├── advice/                 ← scheme.py  services.py  router.py  (배포 전 분석, DB 없음)
-│   ├── pricing/                ← scheme.py  services.py  router.py  (비용 확인 - AWS 공개 가격 파일 읽기·캐시·추정, DB·AWS 호출 없음)
+│   ├── pricing/                ← scheme.py  services.py  router.py  ui/  (비용 확인 - AWS 공개 가격 파일 읽기·캐시·추정, DB·AWS 호출 없음)
 │   ├── accounts/               ← scheme.py  crud.py  services.py  router.py  cloudformation/  ui/  (M6, 진행 중)
 │   ├── watches/                ← services.py 만 (DB 없음, 상태는 Deploy에)  (M6, 진행 중 - 폴링만 완료)
 │   ├── health/                 ← models.py  scheme.py  crud.py  services.py  (D1 - 1분마다 헬스체크 이력, 감시 루프)
@@ -140,7 +140,7 @@ DB가 없는 기능(`repos`, `builds` …)은 `services.py`만 있다.
 
 ## 비용 확인 (`features/pricing`)
 
-배포를 만들기 전에 "얼마가 드는가"를 보여 주고, 떠 있는 동안 예정한 시간을 넘기면 알린다. 백엔드만 있다 (화면은 다음 계획). 계약은 [`api-spec.md`](./api-spec.md) "Pricing", 설계는 [`superpowers/specs/2026-11-16-cost-confirm-design.md`](./superpowers/specs/2026-11-16-cost-confirm-design.md).
+배포를 만들기 전에 "얼마가 드는가"를 보여 주고, 떠 있는 동안 예정한 시간을 넘기면 알린다. 화면은 웹 `ui/`에 있다 - `CostPanel`이 `/api/pricing/*`를 불러 그린다 (앱(Expo)에는 아직 없다). 계약은 [`api-spec.md`](./api-spec.md) "Pricing", 설계는 [`superpowers/specs/2026-11-16-cost-confirm-design.md`](./superpowers/specs/2026-11-16-cost-confirm-design.md).
 
 ```
 AWS 공개 가격 파일 (AmazonECS, AWSELB; 인증 없음, 리전별 index.json)

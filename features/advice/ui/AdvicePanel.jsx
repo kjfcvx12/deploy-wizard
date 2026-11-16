@@ -1,26 +1,11 @@
 import { useEffect, useRef } from 'react'
 
-import { confidenceLabel, needLabel, tierLabel } from './constants.js'
+import CostPanel from '@features/pricing/ui/CostPanel.jsx'
 
-const COST_UNKNOWN = '아직 계산할 수 없습니다 (실제 배포로 요금 구성을 확인한 뒤 표시됩니다). 트래픽에 따라 늘어납니다.'
+import { confidenceLabel, needLabel, tierLabel } from './constants.js'
 
 // 확신도에 따른 배지 모양 - 낮음은 주황(실험 지원 배지와 같은 모양), 높음은 초록
 const confidenceClass = (confidence) => (confidence === 'low' ? 'badge exp' : confidence === 'high' ? 'badge ok' : 'badge')
-
-// 비용 줄 - 숫자가 둘 다 있을 때만 범위를 보여 주고, 하나라도 없으면 "아직 계산할 수 없습니다" (0 이나 지어낸 숫자를 쓰지 않는다)
-function CostLine({ cost }) {
-  const known = Number.isFinite(cost?.monthly_min) && Number.isFinite(cost?.monthly_max)
-
-  if (!known) return <p className="advice-line">예상 비용: {COST_UNKNOWN}</p>
-
-  return (
-    <p className="advice-line">
-      예상 비용: {cost.monthly_min}~{cost.monthly_max} {cost.currency}/월
-      {cost.basis_date && <span className="muted small"> 기준일 {cost.basis_date}</span>}
-      {cost.note && <span className="muted small"> {cost.note}</span>}
-    </p>
-  )
-}
 
 // 필요한 것 한 줄 - 마법사가 만들어 주지 못하는 것은 흐리게 하고 이유를 붙인다
 function NeedItem({ need }) {
@@ -35,8 +20,9 @@ function NeedItem({ need }) {
   return <li className="advice-need">{label}{need.message && ` — ${need.message}`}</li>
 }
 
-// 배포 전 분석 결과 (S-20) - 보여 주기만 한다. 배포·초기화는 부모가 처리한다
-export default function AdvicePanel({ advice, busy, onDeploy, onReset }) {
+// 배포 전 분석 결과 (S-20) - 보여 주기만 한다. 배포·초기화·비용 옵션 보관은 부모가 처리한다
+// costState = { valid, hourly } - 옵션이 올바르지 않으면 배포 버튼을 막고, 시간당 금액이 있으면 버튼 문구에 붙인다
+export default function AdvicePanel({ advice, busy, costState, onCostChange, onDeploy, onReset }) {
   const headingRef = useRef(null)
 
   // 결과가 새로 나오면 제목으로 포커스를 옮겨 화면 읽기와 스크롤 위치를 맞춘다
@@ -75,7 +61,7 @@ export default function AdvicePanel({ advice, busy, onDeploy, onReset }) {
         </div>
       )}
 
-      <CostLine cost={advice.cost} />
+      <CostPanel cost={advice.cost} onChange={onCostChange} disabled={busy} />
 
       {needs.length > 0 && (
         <div className="advice-block">
@@ -92,7 +78,9 @@ export default function AdvicePanel({ advice, busy, onDeploy, onReset }) {
       )}
 
       <div className="advice-actions">
-        <button type="button" className="primary" onClick={onDeploy} disabled={busy}>이 레포로 배포</button>
+        <button type="button" className="primary" onClick={onDeploy} disabled={busy || costState?.valid === false}>
+          {costState?.hourly ? `이 레포로 배포 (시간당 약 ${costState.hourly})` : '이 레포로 배포'}
+        </button>
         <button type="button" onClick={onReset} disabled={busy}>다른 레포로</button>
       </div>
       <p className="muted small advice-foot">분석은 읽기만 합니다. 배포를 누르기 전에는 AWS에 아무것도 만들지 않습니다.</p>

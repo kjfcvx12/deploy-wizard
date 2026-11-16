@@ -6,6 +6,8 @@ import EnvVarsCard from '@features/envvars/ui/EnvVarsCard.jsx'
 import IncidentCard from '@features/incidents/ui/IncidentCard.jsx'
 import { isValidId } from '@shared/ui/isValidId.js'
 import NotFoundNotice from '@shared/ui/NotFoundNotice.jsx'
+import { describeDeployPlan } from '@features/pricing/ui/costLogic.js'
+import { pricingApi } from '@features/pricing/ui/api.js'
 
 import { deployApi } from './api.js'
 import { DEPLOY_NOT_FOUND_TEXT, HEALTH_STATE_LABEL, isProgress, repoName, showsEnvCard } from './constants.js'
@@ -17,6 +19,56 @@ import IssueHistory from './IssueHistory.jsx'
 
 // 떠 있는 배포를 다시 보는 간격(ms)
 const RUNNING_POLL_MS = 15000
+
+// 남은 시간 표시를 새로 그리는 간격(ms)
+const PLAN_TICK_MS = 60000
+
+// 사양·증설·사용 계획 한 줄 - 값이 모두 없으면 그리지 않고, 남은 시간은 1분마다 새로 센다
+function DeployPlanLine({ deploy }) {
+  const [options, setOptions] = useState(null)
+  const [now, setNow] = useState(() => new Date())
+  const needsOptions = Boolean(deploy.cpu || deploy.scale_metric)
+  const counting = Boolean(deploy.planned_hours && deploy.running_since)
+
+  // 사양 이름과 증설 기준 이름은 서버가 준 목록에서 - 못 받으면 값 그대로 보인다
+  useEffect(() => {
+    if (!needsOptions) return
+    let alive = true
+    pricingApi.getOptions().then((data) => alive && setOptions(data)).catch(() => {})
+    return () => { alive = false }
+  }, [needsOptions])
+
+  // 1분마다 현재 시각을 바꾼다 - 숨겨진 탭에서는 갱신하지 않고 다시 보일 때 바로 맞춘다
+  useEffect(() => {
+    if (!counting) return
+    let alive = true
+    let timer = null
+    const tick = () => {
+      if (!alive) return
+      if (!document.hidden) setNow(new Date())
+      timer = setTimeout(tick, PLAN_TICK_MS)
+    }
+    const onVisible = () => { if (alive && !document.hidden) setNow(new Date()) }
+    setNow(new Date())
+    timer = setTimeout(tick, PLAN_TICK_MS)
+    document.addEventListener('visibilitychange', onVisible)
+    return () => {
+      alive = false
+      clearTimeout(timer)
+      document.removeEventListener('visibilitychange', onVisible)
+    }
+  }, [counting, deploy.running_since, deploy.planned_hours])
+
+  const plan = describeDeployPlan(deploy, options, now)
+  if (!plan) return null
+  return (
+    <p className="plan-line">
+      <span>{plan.spec}</span>
+      {plan.scaling && <span>{plan.scaling}</span>}
+      {plan.plan && <span className={plan.over ? 'plan-over' : undefined}>{plan.plan}</span>}
+    </p>
+  )
+}
 
 // 배포 상세 화면 - 주소의 d_id 가 바뀌면 화면을 새로 만들고, 올바른 번호가 아니면 요청 없이 없는 배포 안내를 보인다
 export default function DeployDetailPage() {
@@ -191,6 +243,8 @@ function DeployDetail({ d_id }) {
             <StatusBadge status={deploy.status} />
           </div>
         </div>
+
+        <DeployPlanLine deploy={deploy} />
 
         <StepProgress status={deploy.status} errorStep={deploy.error_step} />
       </section>

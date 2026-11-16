@@ -87,12 +87,12 @@ describe('알림 설정 - 처음 값', () => {
     expect(notificationApi.getSettings).toHaveBeenCalledTimes(1)
   })
 
-  test('종류 스위치는 여섯 개이고 이름은 앱 상수와 같다', async () => {
+  test('종류 스위치는 일곱 개이고 이름은 앱 상수와 같다', async () => {
     await open()
-    for (const label of ['문제 감지', '복구 완료', '확인 필요', '배포 성공', '배포 실패', '새 커밋']) {
+    for (const label of ['문제 감지', '복구 완료', '확인 필요', '배포 성공', '배포 실패', '새 커밋', '예정 사용 시간 초과']) {
       expect(row(`${label} 알림`)).toBeTruthy()
     }
-    expect(screen.getAllByRole('switch')).toHaveLength(8)
+    expect(screen.getAllByRole('switch')).toHaveLength(9)
   })
 
   test('모르는 종류는 버린다', async () => {
@@ -183,6 +183,14 @@ describe('알림 설정 - 메일·종류 스위치', () => {
     await fireEvent.press(row('메일 받기'))
     expect(notificationApi.patchSettings).toHaveBeenCalledTimes(1)
     await act(async () => { pending.resolve({}) })
+  })
+
+  test('다른 종류를 끌 때도 plan_exceeded 는 보내는 목록에 남는다', async () => {
+    await open()
+    await fireEvent.press(row('새 커밋 알림'))
+    const body = notificationApi.patchSettings.mock.calls[0][0]
+    expect(body.kinds).toContain('plan_exceeded')
+    expect(body.kinds).toEqual(ALL.filter((k) => k !== 'new_commit'))
   })
 
   test('종류 끄기: 남은 종류 전체를 서버 순서로 보낸다 (교체 방식)', async () => {
@@ -437,10 +445,10 @@ describe('알림 설정 - 이 환경에서 푸시를 못 쓸 때', () => {
     await open()
     await fireEvent.press(row('푸시 받기'))
     expect(screen.getByRole('button', { name: '알림 켜기' })).toBeTruthy()
-    for (const label of ['문제 감지', '복구 완료', '확인 필요', '배포 성공', '배포 실패', '새 커밋']) {
+    for (const label of ['문제 감지', '복구 완료', '확인 필요', '배포 성공', '배포 실패', '새 커밋', '예정 사용 시간 초과']) {
       expect(row(`${label} 알림`)).toBeTruthy()
     }
-    expect(screen.getAllByRole('switch')).toHaveLength(8)
+    expect(screen.getAllByRole('switch')).toHaveLength(9)
   })
 
   test('프로젝트 연결 전(no_project): 스토어 빌드 준비 안내가 보이고 나머지는 동작', async () => {

@@ -334,6 +334,12 @@ async def test_pricing_options_endpoint(client):
     assert body["specs"][0]["memory"] == "512"
     assert [p["label"] for p in body["plans"]] == ["4시간", "하루", "일주일", "계속"]
     assert [p["hours"] for p in body["plans"]] == [4, 24, 168, None]
+    assert body["max_tasks_cap"] == settings.max_tasks_cap
+    assert body["scale_metrics"] == [
+        {"value": "AVERAGE_CPU", "label": "CPU 사용률"},
+        {"value": "AVERAGE_MEMORY", "label": "메모리 사용률"},
+        {"value": "REQUEST_COUNT_PER_TARGET", "label": "요청 수"},
+    ]
 
 
 @pytest.mark.asyncio

@@ -12,6 +12,7 @@ export const KIND_HINT = {
   deploy_succeeded: '배포가 끝나 실행 중이 됐을 때',
   deploy_failed: '배포가 실패했을 때',
   new_commit: '배포한 브랜치에 새 커밋이 올라왔을 때',
+  plan_exceeded: '예정한 사용 시간을 넘기면 알려 줍니다 (자동으로 끄지 않습니다)',
 }
 
 // 서버 응답에서 화면 값을 읽는다 - 모르는 종류는 버리고 서버 순서(NOTIFICATION_KINDS)로 맞춘다
