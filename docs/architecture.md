@@ -28,6 +28,7 @@
 │   ├── health/                 ← models.py  scheme.py  crud.py  services.py  (D1 - 1분마다 헬스체크 이력, 감시 루프)
 │   ├── incidents/              ← models.py  scheme.py  crud.py  services.py  recovery.py  recovery_state.py  router.py  ui/  (D1 - 인시던트, 규칙 표 설명, 자동 복구; recovery_state 는 기록 반영 재시도·서버 재개. ui/ 는 계획 E)
 │   ├── notifications/          ← models.py  scheme.py  crud.py  services.py  compose.py  dispatch.py  inbox.py  router.py  ui/  (D1 - 앱 안·메일·푸시 알림, 기기, 설정. ui/ 는 계획 E)
+│   ├── auth/                   ← models.py  scheme.py  crud.py  google.py  services.py  router.py  (로그인 계획 - Google 로그인, 토큰, 현재 사용자 의존성, 개인 토큰, 계정 삭제. UI 는 아직 없음)
 │   └── mcp/                    ← client.py  guard.py  scheme.py  services.py  server.py  __main__.py  (로컬 MCP 서버, DB·라우터 없음)
 │
 ├── shared/                     ← 모든 기능이 쓰는 것
@@ -37,6 +38,9 @@
 │   ├── aws_session.py          ← 세션 주입 (내 계정 / AssumeRole)
 │   ├── llm.py                  ← 구조화 출력 전용 LLM 클라이언트
 │   ├── masking.py              ← 토큰 마스킹
+│   ├── secrets.py · crypto_types.py ← Fernet(SECRET_KEY + SECRET_KEYS_OLD), 블라인드 인덱스·토큰 해시, 암호화 열 타입 Encrypted_Text
+│   ├── ownership.py            ← 소유권 조건(owner_where) - u_id 가 None 이면 거르지 않는다
+│   ├── migrate.py              ← 옛 DB 이전·시작 검사(동기, raw SQL) - scripts/migrate_login.py 가 쓴다
 │   ├── proc.py                 ← git·docker 실행
 │   └── ui/                     ← main.jsx, App.jsx, api.js, styles.css
 │
@@ -64,9 +68,20 @@ ui/         → 같은 기능의 api.js, shared/ui, 다른 기능의 ui 컴포�
 
 (D1) 운영 복구·알림 세 기능도 services 끼리만 부른다. `health.services`는 `deploys`(점검 대상 조회, 결과 반영)와 `incidents`(점검 결과 훅)를 부른다. `incidents.services`는 `express`(상태 조회)·`accounts`(세션)·`notifications`를, `incidents.recovery`는 거기에 `envvars`(복구 때도 환경변수를 같이 보낸다)를 더해 부르고, 필요할 때 `deploys`·`health`를 부른다. `deploys.services`는 목록의 `open_incident_id`를 채우려고 `incidents`를, `deploys.pipeline`과 `watches`는 알림을 보내려고 `notifications`를 부른다. `notifications.services`는 인시던트·배포를 읽으려고 `incidents`·`deploys`를 부른다. 순환 임포트가 되는 쪽(`incidents`↔`deploys`/`health`, `notifications`↔`incidents`/`deploys`)은 쓰는 함수 안에서 지연 임포트한다. 조립은 원래 `pipeline.py` 한 곳이라는 원칙의 예외가 하나 있다 — `incidents/recovery.py`가 복구 때 `express`의 갱신을 직접 부른다 (배포 파이프라인과 별개로, 이미 떠 있는 서비스에 두 가지 조치만 하는 자리라서).
 
+## 로그인과 소유권 (`features/auth`, 로그인 계획 2026-11-17)
+
+백엔드만 있다 — 웹·앱 로그인 화면은 아직 없다. **`AUTH_ENABLED` 기본은 `false`**라서 켜기 전까지 웹·앱·MCP 는 지금처럼 토큰 없이 동작하고 소유권 필터도 걸리지 않는다. 필요한 키는 `SECRET_KEY`+`BLIND_INDEX_KEY`(어느 모드에서나, 없으면 서버가 시작하지 않는다)와 `AUTH_JWT_KEY`(켤 때만).
+
+- **구성**: `google.py`(Google `id_token` 검증 - 공개키 캐시·재요청 쿨다운, `aud` 는 플랫폼의 클라이언트 ID 만), `services.py`(로그인·리프레시 회전·재사용 시 계열 폐기·`current_user` 의존성·개인 토큰·계정 삭제), `router.py`(`/api/auth/*`, `/api/me`). 서버는 Google 클라이언트 시크릿을 쓰지 않는다 (`id_token` 만 검증).
+- **로그인 플랫폼은 한 곳에서 정한다**: `features/auth/scheme.py` 의 `LOGIN_PLATFORMS` 매핑(`web`·`android` → 그 플랫폼의 클라이언트 ID 설정 이름)이 허용 플랫폼·`aud`·문서의 기준이다. iOS 는 2026-11-16 에 뺐지만 한 줄로 되살릴 수 있다 — `LOGIN_PLATFORMS` 에 `'ios'` 한 줄 + `GOOGLE_CLIENT_ID_IOS` 설정(`shared/settings.py`, `.env.example`) + 푸시 기기용 `SUPPORTED_PUSH_PLATFORMS`(`features/notifications/scheme.py`)에 `ios`. 나머지 iOS 작업(앱 설정·스토어 로그인 옵션 확인)은 [`app-web/README.md`](./app-web/README.md)의 "iOS 제거".
+- **토큰 흐름**: 웹 = 액세스 JWT(15분, 메모리) + 리프레시(`dwr_…`, 30일, `HttpOnly` 쿠키 `dw_refresh`, 쿠키로 오는 요청은 `Origin` 확인). 앱 = 액세스 + 리프레시를 본문으로 받아 안전한 저장소에. **MCP(stdio) = 개인 토큰(PAT, `dwp_…`, 기본 30일·최대 90일)을 `WIZARD_API_TOKEN` 으로** — `python scripts/auth_token.py create --email <주소> --name mcp`. 서버는 리프레시·개인 토큰을 SHA-256 해시로만 저장하고(고엔트로피라 HMAC 불필요), 사용자 찾기는 HMAC 블라인드 인덱스(`BLIND_INDEX_KEY`, 암호화 키와 별도)로 한다. MCP 서버는 모듈을 임포트하지 않고 REST 만 부르므로(위 절) 토큰 헤더만 붙이고, 로그인이 켜진 서버가 401 을 내면 토큰 만드는 방법을 한국어로 안내한다.
+- **소유권 규칙**: 소유 열(`u_id`)은 **최상위 표에만** 있다 — `deploys`·`aws_accounts`·`github_installations`·`connections`·`notifications`·`push_devices`·`notification_settings`. 자식 표(`deploy_logs`·`deploy_issues`·`deploy_releases`·`deploy_env_vars`·`health_checks`·`incidents`·`recovery_actions`)는 부모 배포를 따라간다. 새 표를 만들면 어느 쪽인지 정해야 하고, `tests/test_ownership_deploys.py::test_ownership_table_coverage`(소유 열 또는 부모 FK 체인 검사)가 빠뜨림을 막는다. 모든 라우터는 `Depends(current_user)`가 걸려 있어야 하고(공개 경로 `PUBLIC_PATHS` 제외) `tests/test_auth_current_user.py`가 모든 라우트를 훑어 확인한다. 남의 자원은 403 이 아니라 404. 서버 안 백그라운드(파이프라인·헬스·감시·자동 복구)는 주인과 상관없이 모든 배포를 다룬다. `AUTH_ENABLED=false` 에서는 소유권을 보지 않는다.
+- **`AUTH_ENABLED` 전환 순서** (실제 DB 는 아직 하지 않았다 - `docs/milestones.md` "소유자가 할 일"): 키 준비(`SECRET_KEY`·`BLIND_INDEX_KEY`·`AUTH_JWT_KEY`, 백업) → `.env` 에 `AUTH_ALLOWED_EMAILS`·`GOOGLE_CLIENT_ID_*` → 이전(`scripts/migrate_login.py`: backup → status → encrypt --yes → 서버 켜고 주인이 한 번 로그인 → assign-owner --email --yes) → `assign-owner` 한 번 더 → `AUTH_ENABLED=true`. 로그인 화면이 생기기 전에는 켜지 않는다. 켜기 전에 소유자가 정할 것 두 가지: GitHub 설치 콜백이 설치가 호출자의 것임을 증명하지 못한다(소유자 외에게 열기 전 필수 보강), 켠 모드에서 `aws_account_id` 없는 배포(또는 연결을 해제해 참조가 `NULL`이 된 배포)가 서버 자신의 AWS 세션으로 떨어진다.
+- 로그인한 사용자가 지우는 것·남기는 것(`DELETE /api/me`)은 [`api-spec.md`](./api-spec.md) "DELETE /api/me" — DB 기록만 지우고 AWS·GitHub 는 부르지 않는다 (하드 규칙 3).
+
 ## 로컬 MCP 서버 (`features/mcp`)
 
-Claude 같은 MCP 클라이언트가 stdio 로 붙는 별도 프로세스(`python -m features.mcp`)다. 서버 모듈(`deploys`·`accounts` 등)을 **임포트하지 않고** `client.py`의 `Wizard_Client`가 REST API 를 HTTP 로 부른다 (주소 `WIZARD_API_URL`, 토큰 `WIZARD_API_TOKEN` 은 2단계용). 그래서 의존 방향은 `features/mcp -> shared/settings`(설정)와 `shared/masking`(`guard.py`의 마스킹) 둘뿐이고, 아무도 `mcp`를 부르지 않는다. 같은 REST 를 웹·앱과 함께 쓰므로 API 스펙은 바뀌지 않는다.
+Claude 같은 MCP 클라이언트가 stdio 로 붙는 별도 프로세스(`python -m features.mcp`)다. 서버 모듈(`deploys`·`accounts` 등)을 **임포트하지 않고** `client.py`의 `Wizard_Client`가 REST API 를 HTTP 로 부른다 (주소 `WIZARD_API_URL`, 토큰 `WIZARD_API_TOKEN` 은 로그인이 켜졌을 때 Bearer 로 보내는 개인 토큰). 그래서 의존 방향은 `features/mcp -> shared/settings`(설정)와 `shared/masking`(`guard.py`의 마스킹) 둘뿐이고, 아무도 `mcp`를 부르지 않는다. 같은 REST 를 웹·앱과 함께 쓰므로 API 스펙은 바뀌지 않는다.
 
 - `services.py`: 도구 로직 (첫 인자 `Wizard_Client`). 응답을 허용 목록 요약으로 줄이고, 로그·오류·해설은 `guard.py`로 마스킹·자른 뒤 "신뢰할 수 없는 데이터" 표시로 감싼다.
 - `server.py`: 도구 13개 등록(읽기 8, 행동 5). 행동 도구는 `confirm_token` 이 없으면 미리보기를 만든 뒤, 클라이언트가 elicitation 을 지원하면 사용자에게 직접 묻고, 아니면 미리보기와 확인 토큰(`Confirm_Store`, 5분·1회용·도구와 인자에 묶임)을 돌려준다. 살아 있는 배포 한도(기본 3)는 서비스 한 곳에서 검사한다.
@@ -135,7 +150,7 @@ DB가 없는 기능(`repos`, `builds` …)은 `services.py`만 있다.
 - **루프 방지**: 되돌린 배포는 나쁜 커밋을 `deploys.bad_commit_sha`에 기억한다. 감시 폴링·웹훅이 같은 커밋을 보면 다시 배포하지 않고 표시만 한다.
 - **알림**: `Notification_Service`가 앱 안 줄(항상) -> 메일 -> 푸시 순으로 보내고 채널마다 줄을 남긴다. 헬스 감시 경로의 복구 알림과 파이프라인·폴링·웹훅의 알림은 백그라운드 태스크(`NOTIFICATION_TASKS` 또는 `INCIDENT_TASKS`)로 띄워 느린 SMTP·Expo 가 흐름을 붙잡지 않게 한다. 인시던트 처리 태스크 안의 알림은 같은 태스크에서 보낸다 (제한 시간 있음). 채널 하나가 실패해도 다른 채널과 호출한 쪽은 멈추지 않는다.
 - **서버 재시작**: `services_recovery_resume`이 `recovering` 인시던트는 `needs_action`(진행 중이던 조치는 `failed`)으로, 처리 중이던 `open`은 배포가 `running`이고 `auto_recover`가 켜져 있으면 처리를 다시 띄우고 아니면 `needs_action`으로 정리한다.
-- **아직 없는 것**: 컨테이너 로그·ECS 이벤트 수집(AWS 호출 미검증), 운영 에이전트(`docs/app-web` D12, 읽기 도구 + 조치 도구 둘을 LLM이 고르는 루프), 로그인별 알림(`u_id`는 로그인이 생길 때까지 null). 지금 원인 설명은 규칙 표뿐이다.
+- **아직 없는 것**: 컨테이너 로그·ECS 이벤트 수집(AWS 호출 미검증), 운영 에이전트(`docs/app-web` D12, 읽기 도구 + 조치 도구 둘을 LLM이 고르는 루프), (로그인별 알림은 구현됨 - "로그인과 소유권"). 지금 원인 설명은 규칙 표뿐이다.
 - **미검증**: 같은 이미지로 서비스를 갱신하면 실제로 작업이 다시 시작되는지, 이미지 갱신으로 되돌리기가 실제로 되는지(`docs/aws-notes.md` "운영 복구"), 실제 SMTP 서버와 Expo 푸시 서버로의 발송. 시험은 전부 가짜(점검기·갱신기·잠자기·메일·푸시)로 돌렸다.
 
 ## 비용 확인 (`features/pricing`)
@@ -201,6 +216,7 @@ tests/web/                   node:test 로직 테스트 (npm run test:web)
 
 기본은 SQLite 파일(`data/wizard.db`). 1인 도구라 서버 DB가 필요 없고, 어디서 멈춰도 돌아가는 상태를 유지하기 쉽다. `DB_URL`만 바꾸면 MySQL로 옮길 수 있다.
 
+- (로그인) `users`(`u_id`, 암호화 열 + 블라인드 인덱스) · `refresh_tokens`(`r_t_id`, 해시만) · `api_tokens`(`a_t_id`, 개인 토큰 해시) — 위 "로그인과 소유권". 최상위 표에는 `u_id`(nullable)가 붙었다. `aws_accounts.role_arn`·`aws_account_id`, `github_installations.account_login`, `push_devices.expo_token` 은 암호화 열이다
 - `deploys` — 배포 하나. 레포·브랜치·커밋, 판별 결과, 상태, Dockerfile, AWS 리소스 식별자, 주소, 에러와 해설, (M6) 연결된 `aws_account_id`/`github_installation_id`, `auto_redeploy`, `watch_*`
 - `deploy_logs` — 배포 로그 한 줄 (`d_id` FK, `ondelete=CASCADE`)
 - `deploy_issues` — 실패 이력 한 건 (`d_id` FK, `ondelete=CASCADE`) - 다시 배포해도 지워지지 않는다
@@ -213,7 +229,7 @@ tests/web/                   node:test 로직 테스트 (npm run test:web)
 - (D1) `incidents` — 인시던트 (`i_id`, `d_id`). `kind`·`status`·`summary`·`explain`(JSON)·`evidence`
 - (D1) `recovery_actions` — 자동 조치 한 건 (`r_a_id`, `i_id` FK, `action` `restart|rollback`, `result` `running|ok|failed`)
 - (D1) `deploy_releases` — running 에 닿을 때마다 한 줄 (`d_r_id`, `d_id`, `commit_sha`, `image_uri`, `state` `current|previous|old|failed`, `healthy_since`)
-- (D1) `notifications`(`n_id`) · `push_devices`(`p_d_id`) · `notification_settings` — 알림 줄, 푸시 기기, 한 줄짜리 설정. `u_id`는 로그인이 생길 때까지 null
+- (D1) `notifications`(`n_id`) · `push_devices`(`p_d_id`) · `notification_settings` — 알림 줄, 푸시 기기, 설정. `u_id`는 로그인을 켠 모드에서 주인, 끈 모드·옛 기록은 null (`notification_settings`는 사용자마다 한 줄, 옛 한 줄은 `id=1`)
 
 테이블은 시작할 때 `create_all`로 만든다 — SQLite `create_all`은 없는 테이블만 만들고, 있는 테이블에 컬럼을 추가하지 않는다. (D1) 그래서 `lifespan()`이 `create_all` 뒤에 `shared/database.py`의 `ensure_columns`를 부른다: `ENSURE_COLUMNS`에 적힌 열(지금은 `deploys`의 D1 네 열과 비용 확인 아홉 열)이 실제 표에 없으면 `ALTER TABLE ... ADD COLUMN`으로 더한다 (여러 번 불러도 안전, NOT NULL 열은 기본값이 있어야 한다). 새 열을 늘릴 때는 모델과 `ENSURE_COLUMNS`를 같이 고친다. 열을 지우거나 바꾸는 일은 여전히 못 한다 — 그런 일이 잦아지면 alembic을 붙인다. 시험에서는 옛 모양의 표로 보정이 되는 것을 확인했지만, 실제 `data/wizard.db`에서의 첫 실행은 아직 해 보지 않았다.
 
@@ -228,7 +244,7 @@ tests/web/                   node:test 로직 테스트 (npm run test:web)
 
 - 레포 주소는 `https://github.com/소유자/레포`만 받고, git 인자는 리스트 + `--`로 넘긴다.
 - **빌드는 남의 코드를 실행하는 일이다.** 지금은 내 컴퓨터의 Docker에서 돌린다. 남이 쓰게 하는 시점(M6)에는 격리된 빌더(CodeBuild 등)로 옮겨야 한다.
-- 인증이 없다. 로컬 전용이다. 외부에 열지 않는다.
+- 인증은 `AUTH_ENABLED`(기본 `false`)에 따른다. 꺼져 있으면 지금처럼 인증이 없고 로컬 전용이다 — 외부에 열지 않는다. 켜려면 위 "로그인과 소유권"의 순서와 소유자 결정 두 가지가 먼저다.
 - AWS 키는 받지도 저장하지도 않는다. 프로파일 이름만 `.env`에 둔다. (M6) 연결된 계정도 마찬가지 — 장기 키 대신 `role_arn`+`external_id`로 그때그때 `sts:AssumeRole` 임시 자격증명을 받는다.
 - (M6) `external_id`처럼 연결별로 다른 비밀값은 `shared/secrets.py`(Fernet, `SECRET_KEY`)로 암호화해 저장한다. GitHub App 개인키·웹훅 시크릿처럼 앱 전체에 하나뿐인 값은 `.env`에 그대로 둔다(`ANTHROPIC_API_KEY`와 같은 성격). GitHub 설치 액세스 토큰은 아예 저장하지 않는다 — 클론할 때마다 새로 발급.
 - (M6, CloudFormation 템플릿) `features/accounts/cloudformation/deploy_wizard_role.yaml`은 **미검증**이다 — 실제 두 번째 AWS 계정으로 테스트하기 전까지 신뢰하지 않는다 (`docs/aws-notes.md`).

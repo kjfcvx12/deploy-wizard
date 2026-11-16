@@ -36,7 +36,7 @@ Base URL: `http://localhost:8081` · 전부 JSON · 인증은 `AUTH_ENABLED`에 
 - `Api_Token_Create`: `{ "name": "mcp", "expires_in_days": 30 }` — `name` 앞뒤 공백 제거 후 1~50자(밖이면 422), `expires_in_days`는 생략하면 `AUTH_PAT_DEFAULT_DAYS`(30), 1 미만 422, `AUTH_PAT_MAX_DAYS`(90) 초과 400 `개인 토큰 기간은 최대 90일입니다`.
 - `Api_Token_Read`: `{ "a_t_id": 1, "name": "mcp", "last4": "AbCd", "expires_at": "…", "last_used_at": null, "created_at": "…" }` · `Api_Token_Issued` = `Api_Token_Read` + `"token": "dwp_…"`.
 - 서버는 SHA-256 해시와 끝 4자리만 저장한다. `last_used_at`은 1분에 한 번까지만 갱신한다. 폐기·만료된 토큰은 401.
-- 웹 로그인 화면 전에 MCP 토큰 받기: `python scripts/auth_token.py create --email <주소> --name mcp [--days 30]` (표준 출력에 원문 한 번) · `list --email <주소>` · `revoke --id <a_t_id>`. DB 는 `DB_URL`. 사용자는 먼저 Google 로그인으로 만들어져 있어야 한다. MCP 서버는 `.env`의 `WIZARD_API_TOKEN`에 이 토큰을 두면 Bearer 로 보낸다.
+- 웹 로그인 화면 전에 MCP 토큰 받기: `python scripts/auth_token.py create --email <주소> --name mcp [--days 30]` (표준 출력에 원문 한 번) · `list --email <주소>` · `revoke --id <a_t_id>`. DB 는 `DB_URL`. 사용자는 먼저 Google 로그인으로 만들어져 있어야 한다. MCP 서버는 `.env`(또는 MCP 등록의 `-e WIZARD_API_TOKEN=…`)의 `WIZARD_API_TOKEN`에 이 토큰을 두면 Bearer 로 보낸다. 로그인이 켜진 서버가 401 을 내면 MCP 는 `배포 마법사 로그인 토큰이 없거나 만료되었습니다. python scripts/auth_token.py create --email <주소> --name mcp 로 만들어 WIZARD_API_TOKEN 에 넣으세요` 로 안내한다 (토큰 원문은 싣지 않는다). 로그인이 꺼진 서버는 토큰이 없어도 그대로 동작한다.
 
 ## Auth (로그인 - 백엔드, 실제 Google 로그인 미확인)
 
@@ -50,7 +50,7 @@ Google `id_token`으로 로그인해 액세스 토큰(JWT, 900초)과 리프레�
 | GET | `/api/me` | 헤더 `Authorization: Bearer <액세스 토큰 또는 개인 토큰>` 필수 (`AUTH_ENABLED`와 무관) | 200 `User_Read` |
 | DELETE | `/api/me` | 계정 삭제 (A-04) - 본문 `{"confirm": true}` 필수. 로그인(액세스 토큰)으로만, 개인 토큰은 403. 아래 "DELETE /api/me" | 200 `Auth_Delete_Read` |
 
-- `platform`: `web` | `android`. 그 밖(`ios` 포함)은 422. 플랫폼마다 `aud`가 다르다 — `web`은 `GOOGLE_CLIENT_ID_WEB`, `android`는 `GOOGLE_CLIENT_ID_ANDROID`만 받는다. iOS 는 `features/auth/scheme.py`의 `LOGIN_PLATFORMS`에 한 줄 + `GOOGLE_CLIENT_ID_IOS` 설정으로 더한다.
+- `platform`: `web` | `android`. 그 밖(`ios` 포함)은 422. 플랫폼마다 `aud`가 다르다 — `web`은 `GOOGLE_CLIENT_ID_WEB`, `android`는 `GOOGLE_CLIENT_ID_ANDROID`만 받는다. iOS 는 `features/auth/scheme.py`의 `LOGIN_PLATFORMS`에 한 줄 + `GOOGLE_CLIENT_ID_IOS` 설정 + 푸시 기기용 `SUPPORTED_PUSH_PLATFORMS`(`features/notifications/scheme.py`)로 더한다.
 - **웹 (`platform="web"` 또는 쿠키로 온 refresh)**: 리프레시는 본문에 싣지 않고(`refresh_token: null`) `Set-Cookie: dw_refresh=…; HttpOnly; SameSite=strict; Path=/api/auth; Max-Age=2592000`(`AUTH_COOKIE_SECURE=true`이면 `Secure`). **앱**: 본문 `refresh_token`에 싣고, 앱이 안전한 저장소에 둔다.
 - **쿠키로 온 refresh·logout 과 `platform="web"` 로그인은 `Origin` 헤더가 `CORS_ORIGINS`에 있어야 한다.** 없거나 밖이면 403 (Google 검증도 토큰 사용도 하지 않는다). `android` 로그인은 `Origin`을 보지 않는다. 본문에 `refresh_token`이 있으면 쿠키보다 본문을 쓰고(이때는 `Origin` 확인이 없고 쿠키 토큰도 회전하지 않는다), 응답도 본문으로 준다.
 - 같은 Google 계정의 첫 로그인이 동시에 오면 한쪽은 유일 키에 막히지만, 되돌린 뒤 다시 읽어 있는 사용자로 이어 가므로 둘 다 200 이다. `AUTH_JWT_KEY`가 없으면 로그인·refresh 는 커밋 전에 503 으로 끝나 사용자·토큰 회전이 남지 않는다 (옛 리프레시 토큰이 그대로 살아 있다).

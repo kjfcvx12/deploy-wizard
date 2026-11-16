@@ -1,5 +1,7 @@
 # ERD와 테이블 구조
 
+> **구현 상태 (2026-11-17, 로그인 계획 `feat/login-backend`)**: `users`·`refresh_tokens`·`api_tokens`(PAT)와 모든 최상위 표의 `u_id`는 **구현됨**이다. 아래 표는 구현에 맞췄다 — 설계와 달라진 곳은 `users`(개인 정보 암호화 + 블라인드 인덱스, 알림 스위치는 `notification_settings`로), `refresh_tokens.family_id`, `api_tokens`(새 표), `notification_settings.u_id`다. 로그인 플랫폼은 `web`·`android`이고 iOS 는 2026-11-16 에 뺐지만 **한 줄로 되살릴 수 있다**: `features/auth/scheme.py`의 `LOGIN_PLATFORMS` 매핑에 `'ios'` 한 줄 + `GOOGLE_CLIENT_ID_IOS` 설정 + `features/notifications/scheme.py`의 `SUPPORTED_PUSH_PLATFORMS` 상수 ([iOS 제거](./README.md#ios-제거-2026-11-16-사용자-결정)).
+
 현재 테이블은 6개(`deploys`, `deploy_logs`, `deploy_issues`, `aws_accounts`, `github_installations`, `connections`)이고, 여기에 **사용자·인증·운영·알림·환경변수 테이블 9개**를 더한다 (D1 구현에서 한 줄짜리 `notification_settings`가 하나 더 생겼다). 이름 규칙은 `docs/conventions.md`를 따른다 (PK는 단어 머리글자: `u_id`, `r_t_id`).
 
 ## 1. ERD
@@ -7,6 +9,8 @@
 ```mermaid
 erDiagram
     users ||--o{ refresh_tokens : "로그인 유지"
+    users ||--o{ api_tokens : "개인 토큰(MCP)"
+    users ||--o| notification_settings : "알림 설정"
     users ||--o{ push_devices : "앱 기기"
     users ||--o{ connections : "소유"
     users ||--o{ aws_accounts : "소유"
@@ -32,18 +36,34 @@ erDiagram
 
     users {
         int u_id PK
-        string google_sub UK
-        string email
+        string google_sub "암호화"
+        string google_sub_bidx UK
+        string email "암호화"
+        string email_bidx
         string name
-        bool notify_email
-        bool notify_push
+        string status
     }
     refresh_tokens {
         int r_t_id PK
         int u_id FK
+        string family_id
         string token_hash UK
         datetime expires_at
         datetime revoked_at
+    }
+    api_tokens {
+        int a_t_id PK
+        int u_id FK
+        string token_hash UK
+        string last4
+        datetime expires_at
+        datetime revoked_at
+    }
+    notification_settings {
+        int id PK
+        int u_id FK "unique, null=옛 한 줄"
+        bool notify_email
+        bool notify_push
     }
     push_devices {
         int p_d_id PK
@@ -114,14 +134,14 @@ erDiagram
 
 | 테이블 | 변경 | 이유 |
 |---|---|---|
-| `deploys` | `u_id` FK(nullable) 추가 | 소유자. 3단계 전까지 null |
+| `deploys` | `u_id` FK(nullable) 추가 — **구현됨 (로그인 계획 Task 5)** | 소유자. `AUTH_ENABLED=false` 에서는 새 배포도 null, 켜면 만든 사용자. 옛 기록은 `migrate_login.py assign-owner` 로 채운다 |
 | `deploys` | `auto_recover` bool, 기본 true 추가 `[가정]` — **구현됨 (D1)** | 배포별 자동 복구 스위치 (D-09) |
 | `deploys` | `size_tier`(`small\|medium\|large`), `cpu`, `memory`(허용 값은 Express Mode 확인 후), `advice`(추천 결과 JSON, text), `advice_at` 추가 | 사용자가 고른 사양과 배포 시점의 추천을 함께 보관 (FR-21, I-09) |
 | `deploys` | `last_health_at`, `health_state`(`healthy\|unhealthy\|unknown`) 추가 — **구현됨 (D1)** | 목록에서 헬스 배지를 빠르게 보이려고. `health_checks`를 매번 세지 않는다 |
 | `deploys` | `bad_commit_sha` varchar(40), nullable 추가 — **구현됨 (D1, 설계에 없던 열)** | 자동 되돌리기가 기억하는 나쁜 커밋. 감시(폴링·웹훅)가 같은 커밋을 다시 배포하지 않게 한다. 더 새 커밋이 오면 비운다. API 응답에는 싣지 않는다 |
-| `aws_accounts` | `u_id` FK(nullable) 추가 | 소유자 |
-| `github_installations` | `u_id` FK(nullable) 추가 | 소유자. `installation_id`는 지금처럼 전역 unique |
-| `connections` | `u_id` FK(nullable) 추가 | 소유자 |
+| `aws_accounts` | `u_id` FK(nullable) 추가 — **구현됨** | 소유자. `role_arn`·`aws_account_id` 는 `Encrypted_Text`(암호화 저장, `==` 검색에 쓰지 않는다) |
+| `github_installations` | `u_id` FK(nullable) 추가 — **구현됨** | 소유자. `installation_id`는 지금처럼 전역 unique(평문 - 웹훅·콜백이 이 값으로 찾는다). `account_login` 은 `Encrypted_Text`. 이미 다른 사용자의 설치면 콜백이 `connected=github_taken` 으로 돌려보낸다 |
+| `connections` | `u_id` FK(nullable) 추가 — **구현됨** | 소유자 |
 | `deploy_logs`, `deploy_issues` | 변경 없음 | `d_id`로 소유자를 따라간다 |
 
 **상태값(`deploys.status`)은 원칙적으로 바꾸지 않는다.** 복구 중인지는 `incidents.status`가 가진다. (바꾸면 CLAUDE.md의 세 곳을 같이 고쳐야 한다.) 유일한 후보 변경은 환경변수 입력 대기용 `needs_input` 하나이고, 결정 D9가 정해지기 전까지는 추가하지 않는다.
@@ -130,38 +150,53 @@ erDiagram
 
 ## 3. 새 테이블
 
-### users — 사용자 (3단계)
+### users — 사용자 (3단계) — **구현됨 (로그인 계획 Task 3, 설계에서 달라짐)**
 | 컬럼 | 타입 | Null | 설명 |
 |---|---|---|---|
 | `u_id` | int PK | N | |
-| `google_sub` | varchar(64) | N | Google 계정의 고유 식별자. **unique**. 이메일이 바뀌어도 같은 사람 |
-| `email` | varchar(255) | N | 알림 메일 수신 주소 |
-| `name` | varchar(100) | Y | |
-| `picture_url` | varchar(500) | Y | |
-| `notify_email` | bool | N | 기본 true |
-| `notify_push` | bool | N | 기본 true |
-| `status` | varchar(20) | N | `active\|deleting\|deleted` |
+| `google_sub` | text(암호문) | N | Google 계정의 고유 식별자. `Encrypted_Text` 로 암호화 저장. 이메일이 바뀌어도 같은 사람 |
+| `google_sub_bidx` | varchar(64) | N | `blind_index("google_sub", sub)` — **unique**. 사용자 찾기는 이 값으로만 (`BLIND_INDEX_KEY` 의 HMAC) |
+| `email` | text(암호문) | N | 알림 메일 수신 주소 (로그인한 Google 이메일). 암호화 저장 |
+| `email_bidx` | varchar(64) | N | `blind_index("email", 소문자 이메일)` — index. `AUTH_ALLOWED_EMAILS`·`scripts/auth_token.py`·`assign-owner` 가 이 값으로 찾는다 |
+| `name` | text(암호문) | Y | |
+| `picture_url` | text(암호문) | Y | |
+| `status` | varchar(20) | N | `active\|deleted` (`deleting` 은 만들지 않았다) |
 | `last_login_at` | timestamp | Y | |
 | `created_at`, `updated_at` | timestamp | N | |
 
-### refresh_tokens — 로그인 유지 (3단계)
+### refresh_tokens — 로그인 유지 (3단계) — **구현됨**
 | 컬럼 | 타입 | Null | 설명 |
 |---|---|---|---|
 | `r_t_id` | int PK | N | |
 | `u_id` | int FK → users, index | N | 삭제 시 CASCADE |
-| `token_hash` | varchar(64) | N | **원문이 아니라 해시**를 저장. unique |
-| `platform` | varchar(10) | N | `web\|ios\|android` |
+| `family_id` | varchar(32) | N | 로그인 한 번 = 한 계열. 회전해도 같다. 폐기된 토큰이 다시 오면 이 계열 전체를 폐기 |
+| `token_hash` | varchar(64) | N | **원문이 아니라 SHA-256 hex** 를 저장. unique |
+| `platform` | varchar(10) | N | `web\|android` (ios 추가 가능 - 허용 값은 `features/auth/scheme.py` 의 `LOGIN_PLATFORMS` 하나가 정한다) |
 | `expires_at` | timestamp | N | |
 | `revoked_at` | timestamp | Y | 로그아웃·회전·탈취 의심 시 |
 | `replaced_by` | int | Y | 회전한 새 토큰 `r_t_id`. 이미 쓴 토큰이 다시 오면 계열 전체 폐기 |
+| `created_at` | timestamp | N | |
+
+### api_tokens — 개인 토큰 (PAT, MCP 용) — **구현됨 (설계에 없던 표, 로그인 계획 Task 4)**
+| 컬럼 | 타입 | Null | 설명 |
+|---|---|---|---|
+| `a_t_id` | int PK | N | |
+| `u_id` | int FK → users, index | N | 삭제 시 CASCADE |
+| `name` | varchar(50) | N | 사용자가 붙인 이름 (예: `mcp`) |
+| `token_hash` | varchar(64) | N | `dwp_…` 원문의 SHA-256 hex. unique. 원문은 발급 응답에 한 번만 나간다 |
+| `last4` | varchar(4) | N | 목록에서 구별하려고 끝 4자리만 |
+| `expires_at` | timestamp | Y | 기본 30일, 최대 90일 |
+| `last_used_at` | timestamp | Y | 1분에 한 번까지만 갱신 |
+| `revoked_at` | timestamp | Y | |
 | `created_at` | timestamp | N | |
 
 ### push_devices — 앱 기기 (2단계)
 | 컬럼 | 타입 | Null | 설명 |
 |---|---|---|---|
 | `p_d_id` | int PK | N | |
-| `u_id` | int FK, nullable(3단계 전) | Y | |
-| `expo_token` | varchar(255) | N | unique. 한 기기에 한 토큰 |
+| `u_id` | int FK, nullable(3단계 전) | Y | 로그인을 켠 모드에서 등록하면 그 사용자 |
+| `expo_token` | text(암호문) | N | 한 기기에 한 토큰. `Encrypted_Text` 로 암호화, API 응답에는 끝 6자리만 |
+| `expo_token_bidx` | varchar(64) | Y | `blind_index` — unique. 같은 토큰 찾기는 이 값으로만 |
 | `platform` | varchar(10) | N | `android` (iOS 추가 시 `ios`. 허용 값은 `SUPPORTED_PUSH_PLATFORMS`) |
 | `last_seen_at` | timestamp | N | 오래 안 보이면 정리 |
 | `created_at` | timestamp | N | |
@@ -245,10 +280,11 @@ erDiagram
 **`detail` 앞머리 표지(데이터 모델에 영향).** `action=rollback`, `result=failed`인 줄의 `detail`이 `AWS는 이전 이미지로 되돌아갔지만 배포 기록 반영에 실패했습니다`로 시작하면, AWS 는 이전 이미지로 돌아갔는데 배포 기록(`deploys.image_uri` 등)이 못 따라간 상태라는 표지다. 복구 코드는 이 표지를 보고, 그 줄의 `started_at`보다 새로운 `deploy_releases` 줄(= 사용자의 새 배포)이 생기기 전까지 그 배포의 자동 복구를 막는다 (기록이 거짓이라 잘못된 이미지로 재시작할 수 있어서). 별도 열이 없어 이 문구는 코드 상수(`BOOKKEEPING_DETAIL`)와 함께 바뀌어야 한다. 서버 재시작 때 끊긴 조치는 `failed`와 `서버가 다시 시작되어 자동 복구가 중단되었습니다`로 닫는다.
 
 ### notification_settings — 알림 설정 (D1, 설계에 없던 표)
-한 줄뿐인 표 - `id`는 항상 1. 처음 읽을 때 기본값으로 만든다. 로그인(3단계)이 생기면 사용자별로 옮긴다.
+사용자마다 한 줄 (**구현됨**, 로그인 계획 Task 7). `AUTH_ENABLED=false` 이거나 주인 없는 배포는 `id=1`, `u_id=null` 줄 하나를 쓴다. 로그인한 사용자는 처음 읽을 때 자기 줄이 기본값으로 만들어진다. 설계의 `users.notify_email`·`notify_push` 는 `users` 가 아니라 이 표에 있다.
 | 컬럼 | 타입 | Null | 설명 |
 |---|---|---|---|
-| `id` | int PK | N | 항상 1 |
+| `id` | int PK | N | 옛 한 줄은 1 |
+| `u_id` | int FK → users, unique, index | Y | 주인. null = 로그인 없는 옛 한 줄 |
 | `notify_email` | bool | N | 기본 true. 메일은 `.env`의 `MAIL_HOST`·`MAIL_TO`가 있어야 실제로 나간다 |
 | `notify_push` | bool | N | 기본 true. 등록된 기기가 있어야 실제로 나간다 |
 | `kinds` | text | N | 받을 알림 종류 JSON 배열 (기본 일곱 가지 전부) |
@@ -275,9 +311,11 @@ erDiagram
 
 | 대상 | 제약 |
 |---|---|
-| `users.google_sub` | unique |
-| `refresh_tokens.token_hash` | unique |
-| `push_devices.expo_token` | unique |
+| `users.google_sub_bidx` | unique |
+| `users.email_bidx` | index |
+| `refresh_tokens.token_hash`, `api_tokens.token_hash` | unique |
+| `notification_settings.u_id` | unique |
+| `push_devices.expo_token_bidx` | unique |
 | `github_installations.installation_id` | unique (기존) |
 | `deploy_logs.d_id`, `deploy_issues.d_id`, `health_checks.d_id`, `incidents.d_id` | index |
 | `notifications(u_id, read_at)` | 읽지 않은 알림 수 조회용 |
@@ -288,5 +326,5 @@ erDiagram
 | 지울 때 | 같이 지워지는 것 | 지우지 않는 것 |
 |---|---|---|
 | 배포 삭제(`deleted`) | 로그, 이슈, 릴리스, 헬스, 인시던트(CASCADE) | 알림은 남긴다 (`d_id`만 남고 링크는 끊김) |
-| 사용자 삭제 | 토큰, 기기, 알림, 사용자 소유 기록 | **AWS 리소스** — 자동으로 지우지 않는다 |
+| 사용자 삭제 (`DELETE /api/me`, **구현됨**) | 토큰(리프레시·개인), 기기, 알림, 알림 설정, 남은 배포 기록과 딸린 기록, 연결 블록·계정·설치 기록. `users` 행은 남기고 개인 정보만 지운다(`status=deleted`). 살아 있는 배포가 있으면 409 | **AWS 리소스** — 자동으로 지우지 않는다. 남은 ECR 저장소 이름은 응답 `leftover_ecr_repositories` 로 알린다 |
 | 연결 해제 | 그 연결로 만든 배포의 연결 FK를 null | 사용자 AWS 계정의 스택, GitHub 앱 설치 |

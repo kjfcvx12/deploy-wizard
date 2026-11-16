@@ -41,6 +41,21 @@ Claude 에서 배포 마법사를 쓰는 로컬 MCP 서버(`features/mcp`, 도�
 
 웹 분석 화면에 배포 직전 비용 영역(`features/pricing/ui/`: 구성 요소별 시간당 가격, 기간별 금액, 사양·사용 계획·자동 증설 선택, 선택한 옵션으로 배포), 배포 상세의 사양·사용 계획 줄, 배포 설정의 예정 사용 시간 폼이 들어왔다. 알림 종류 `plan_exceeded`는 웹·앱 상수에 반영됐다. 순수 로직은 `npm run test:web`, 화면 코드는 `npm run build`로만 확인했다 그리고 2026-11-16에 실제 브라우저·실제 API로 분석 화면을 읽기 전용으로 확인했다(옵션 변경 시 재계산, 오류·503 문구, 320~1280px 넘침 없음). **다크 모드·배포 상세 사용 계획 줄·설정 예정 시간 입력·[배포] 버튼은 확인하지 않았다(배포를 만들면 요금이 나가서).** 앱(Expo)에는 이 화면이 없다. 모양은 [`ui-spec.md`](./ui-spec.md) "배포 전 비용 영역", 계획은 [`superpowers/plans/2026-11-16-cost-web.md`](./superpowers/plans/2026-11-16-cost-web.md), 기록은 [`worklog/2026-11-16.md`](./worklog/2026-11-16.md).
 
+## 로그인 백엔드 (2026-11-17, 브랜치 `feat/login-backend`)
+
+Google 로그인(`features/auth`)·토큰 회전·`current_user`·개인 토큰(MCP)·소유권 필터(배포·계정·알림 등)·사용자 정보 암호화·계정 삭제·옛 DB 이전 스크립트(`scripts/migrate_login.py`)가 들어왔다. 구조는 [`architecture.md`](./architecture.md) "로그인과 소유권", API 는 [`api-spec.md`](./api-spec.md) "인증 공통"·"Auth". **`AUTH_ENABLED` 기본은 `false`** — 웹·앱·MCP 는 지금처럼 동작한다. `pytest`·`npm run test:web`·`npm run build`로만 확인했고 **실제 Google 로그인, 실제 `data/wizard.db` 이전, 로그인을 켠 상태의 웹·앱은 아직 확인 전이다.** 웹·앱 로그인 화면은 아직 없다 (별도 계획).
+
+### 소유자가 할 일 (열린 항목)
+
+1. `.env`에 `BLIND_INDEX_KEY`(로그인 켜기 전에는 `AUTH_JWT_KEY`도)를 추가하고, `SECRET_KEY`·`BLIND_INDEX_KEY`를 DB 백업과 따로 안전한 곳에 백업한다. 잃으면 암호화된 값은 되살릴 수 없다.
+2. **이 코드를 실제 DB 에 돌리기 전에 이전을 한다**: 백업 → `status` → `encrypt --yes` → 서버 켜고 주인이 Google 로그인 → `assign-owner --email … --yes` → (한 번 더) → `AUTH_ENABLED=true`. 그 전까지 실제 DB 의 연결 계정·기기 정보는 읽히지 않고 `session_end.py`·`cleanup.py`가 경고와 함께 2로 끝난다 (README "로그인 이전"). 서버는 평문이 남은 DB 로는 시작하지 않는다.
+3. **GitHub 설치 소유 확인 (소유자 외에게 열기 전 필수)**: 설치 콜백은 `installation_id`가 호출자의 것임을 증명하지 못한다. 로그인을 켠 상태에서 사용자 A 가 아직 우리 DB 에 없는 설치를 가로챌 수 있다. 설치 때 GitHub 사용자 인증을 받고 콜백 `code`로 `GET /user/installations`를 확인해야 한다 (GitHub 문서로 확인 필요, OAuth 클라이언트 ID·시크릿 필요). 하지 않았다.
+4. **서버 자신의 AWS 세션 대체 경로**: 로그인을 켠 모드에서도 `aws_account_id` 없는 배포는 서버 자신의 AWS 세션으로 만들어진다. 연결을 해제해 참조가 `NULL`이 된 배포도 같다. 남에게 열기 전에 막을지(실패로 닫기) 정한다. 지금은 허용 목록의 유일한 사용자가 소유자라 그대로 둔다.
+5. (선택) 멈춘 배포가 ECR 이미지를 남겼으면 계정 삭제를 막을지 — 지금은 막지 않고 응답 `leftover_ecr_repositories`로 알린다.
+6. Google Cloud OAuth 클라이언트 ID 만들기(웹 `GOOGLE_CLIENT_ID_WEB`, 안드로이드 `GOOGLE_CLIENT_ID_ANDROID`)와, 앱의 안드로이드 로그인을 위한 EAS 설정. iOS 는 2026-11-16 에 빠졌고 한 줄로 되살릴 수 있다 (`LOGIN_PLATFORMS`).
+7. 에이전트가 실수로 만든 `C:\c` 폴더(시험용 가짜 DB 하나)를 소유자가 지운다 — 시스템 경로라 에이전트가 지우지 못했다.
+8. 웹·앱 로그인 화면은 아직 없다. 화면이 생기기 전에는 `AUTH_ENABLED=true`로 켜지 않는다. 켜기 전까지 웹 UI·앱·MCP 는 토큰 없이 동작한다.
+
 ## 다음에 할 일
 
 지금 상태(2026-10-07): 연결 블록 `test` = AWS 계정(역할 위임 확인, 템플릿 버전 2) + GitHub(`kjfcvx12`, All repositories). 배포 기록은 아직 없다. 자세한 것은 [`worklog/2026-10-07.md`](./worklog/2026-10-07.md) "State at save point".

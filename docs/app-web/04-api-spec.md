@@ -6,11 +6,13 @@
 
 **Base URL**: 개발 `http://localhost:8081` · 상용 `https://<서버 주소>` (D7 미정)
 
-**인증 (3단계부터)**: `Authorization: Bearer <access_token>`. 웹은 리프레시 토큰을 httpOnly 쿠키로, 앱은 본문으로 주고받는다 `[가정]`.
+> **구현 상태 (2026-11-17)**: 이 절과 §1 은 로그인 계획(`feat/login-backend`)으로 구현되었다. 실제 동작·상태 코드·문구의 기준은 [`docs/api-spec.md`](../api-spec.md)의 "인증 공통"·"Auth"다. 아래는 설계 기록이고 달라진 곳을 표시했다. `AUTH_ENABLED` 기본은 `false`(웹 로그인 화면이 생기기 전까지)이다.
 
-**1~2단계 (로그인 전)**: 인증 헤더를 요구하지 않는다. 서버는 "현재 사용자"를 한 함수(`get_current_user`)로만 얻고, 이 단계에서는 고정 개발 사용자(`u_id = null`)를 돌려준다. 3단계에서 이 함수만 토큰 검증으로 바꾼다.
+**인증**: `AUTH_ENABLED=true` 일 때 `Authorization: Bearer <access_token 또는 개인 토큰(dwp_…)>`. 웹은 리프레시 토큰을 httpOnly 쿠키(`dw_refresh`)로, 앱은 본문으로 주고받는다. MCP 는 개인 토큰(PAT)을 `WIZARD_API_TOKEN` 으로 보낸다.
 
-**소유권 (3단계부터)**: 모든 목록은 현재 사용자의 것만 돌려준다. 남의 `d_id`, `c_id` 등을 부르면 **404** (존재 여부를 숨긴다).
+**로그인 끔 (`AUTH_ENABLED=false`, 기본)**: 인증 헤더를 요구하지 않고 소유권 필터도 없다. 서버는 "현재 사용자"를 한 의존성(`current_user`)으로만 얻으므로, 켜면 모든 `/api/*`가 토큰 검증을 거친다 (공개 경로는 `PUBLIC_PATHS`).
+
+**소유권 (`AUTH_ENABLED=true`)**: 모든 목록은 현재 사용자의 것만 돌려준다. 남의 `d_id`, `c_id` 등을 부르면 **404** (존재 여부를 숨긴다).
 
 | 코드 | 의미 |
 |---|---|
@@ -19,7 +21,7 @@
 | 409 | 지금 상태에서 할 수 없는 동작 |
 | 429 | 요청이 너무 많음 (상용 단계) |
 
-## 1. Auth (3단계)
+## 1. Auth (3단계) — 구현됨
 
 | Method | Endpoint | 설명 | 성공 |
 |---|---|---|---|
@@ -27,7 +29,8 @@
 | POST | `/api/auth/refresh` | 리프레시 토큰으로 새 토큰 발급 (회전: 쓴 토큰은 폐기) | 200 `Auth_Token` |
 | POST | `/api/auth/logout` | 현재 리프레시 토큰 폐기 | 200 `{message}` |
 | GET | `/api/me` | 내 정보 | 200 `User_Read` |
-| PATCH | `/api/me/settings` | 알림 설정 (`notify_email`, `notify_push`) | 200 `User_Read` |
+| ~~PATCH~~ | ~~`/api/me/settings`~~ | **만들지 않았다** — 알림 설정은 기존 `GET`·`PATCH /api/notifications/settings` 를 사용자별 한 줄로 쓴다 | - |
+| POST·GET·DELETE | `/api/auth/tokens`, `/api/auth/tokens/{a_t_id}` | **신규** 개인 토큰(PAT) 만들기·목록·폐기. 로그인(액세스 토큰)으로만 부를 수 있다 | 201·200 |
 | DELETE | `/api/me` | 계정 삭제. 본문 `{confirm: true}`. 살아 있는 배포가 있으면 409와 목록 | 200 `{message}` |
 
 ### POST `/api/auth/google`
@@ -35,7 +38,8 @@
 { "id_token": "<Google이 발급한 ID 토큰>", "platform": "web" }
 ```
 - 서버는 서명, `aud`(우리 클라이언트 ID), `exp`, `iss`를 검증한다. 하나라도 어긋나면 401.
-- `platform`: `web|ios|android`. 클라이언트 ID가 플랫폼마다 다르다.
+- `platform`: `web|android` (ios 추가 가능). 클라이언트 ID가 플랫폼마다 다르다 (`GOOGLE_CLIENT_ID_WEB`·`GOOGLE_CLIENT_ID_ANDROID`). 허용 플랫폼은 `features/auth/scheme.py` 의 `LOGIN_PLATFORMS` 매핑 하나가 정한다 — iOS 를 더할 때는 그 매핑에 한 줄, `GOOGLE_CLIENT_ID_IOS` 설정, 푸시 기기용 `SUPPORTED_PUSH_PLATFORMS`(`features/notifications/scheme.py`)에 `ios` 를 넣는다 ([iOS 제거](./README.md#ios-제거-2026-11-16-사용자-결정)).
+- 로그인은 `AUTH_ALLOWED_EMAILS` 허용 목록의 이메일만 된다 (D-L1, 비면 아무도 못 한다).
 
 ### `Auth_Token`
 ```json
@@ -45,8 +49,9 @@
 
 ### `User_Read`
 ```json
-{ "u_id": 1, "email": "me@example.com", "name": "홍길동", "picture_url": "…", "notify_email": true, "notify_push": true }
+{ "u_id": 1, "email": "me@example.com", "name": "홍길동", "picture_url": "…" }
 ```
+`notify_email`·`notify_push` 는 `User_Read` 에 없다 (알림 설정 API 로 본다).
 
 ## 2. Deploys (변경)
 
@@ -192,7 +197,7 @@
 | `GET /api/accounts/github/callback` | `state`로 돌려보낼 곳(웹 주소 또는 앱 딥링크)을 정한다. 지금은 웹 `/accounts`만 |
 | `Aws_Account_Setup.our_account_id` 등 | 변경 없음 |
 
-모든 계정·연결 엔드포인트는 3단계부터 인증과 소유권 필터가 붙는다. `installation_id`는 이미 다른 사용자가 연결한 것이면 409.
+모든 계정·연결 엔드포인트는 3단계부터 인증과 소유권 필터가 붙는다. `installation_id`는 이미 다른 사용자가 연결한 것이면 콜백이 저장 없이 `/accounts?connected=github_taken` 으로 돌려보낸다 (구현: 409 가 아니라 리다이렉트 쿼리). 콜백은 서명된 `state`(HS256, 15분)로 보호하고 공개 경로다.
 
 ## 7. 서버가 보내는 것 (클라이언트가 부르는 API가 아님)
 

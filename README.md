@@ -37,6 +37,7 @@ GitHub 주소 → 클론 → 언어 판별(규칙) → Dockerfile(템플릿+LLM)
 │   ├── express/           ← ECS Express Mode 호출
 │   ├── explains/          ← 한국어 에러 해설 + 화면(ui/)
 │   ├── accounts/          ← (M6, 진행 중) 사용자 AWS·GitHub 계정 연결 + 화면(ui/)
+│   ├── auth/              ← (로그인 백엔드, 기본 꺼짐) Google 로그인·토큰·개인 토큰·계정 삭제
 │   └── mcp/               ← 로컬 MCP 서버 (Claude에서 배포 마법사 쓰기, REST 클라이언트)
 ├── shared/                ← 공용 (설정, DB, AWS 세션, LLM, 마스킹, ui/)
 ├── scripts/               ← M1 배포, 역할 생성, 정리, CLI
@@ -94,7 +95,7 @@ python scripts/migrate_login.py assign-owner --email <그 이메일> --yes   # 6
 ```
 
 - **쓰기 전 확인**: `:8081` 검사는 IPv4 `127.0.0.1:8081` 에 접속해 보는 것뿐이다. 다른 포트의 서버, `deploy_cli.py`, `session_end.py` 처럼 DB 에 쓰는 다른 프로그램은 검사하지 못하니 직접 멈춘 뒤 실행한다(쓰는 중이면 "다른 프로그램이 DB 에 쓰는 중" 오류로 멈춘다).
-- **실패했을 때**: 값 변경(암호화·주인 지정)은 한 번에 되돌려진다. 열·인덱스 더하기(표 만들기·`ADD COLUMN`·`CREATE INDEX`)는 바로 반영되지만 여러 번 해도 안전하니 같은 명령을 다시 실행하면 된다. `encrypt --yes`는 지금 키로 못 읽는 값이 있으면(키가 틀렸거나 옛 키를 잃은 것) 아무것도 쓰지 않고 거절한다 — `status`의 "지금 키로 못 읽는 값"이 0건이 되도록 `SECRET_KEY`·`SECRET_KEYS_OLD`부터 맞춘다. 암호화는 끝났는데 "옛 값 지우기(VACUUM)에 실패했습니다"가 나오면 변경은 저장된 상태이고 옛 값이 파일 빈 공간에 남아 있을 수 있다 — 원인을 해결하고 같은 `encrypt --yes`를 다시 실행하면 바꿀 것이 없어도 지우기만 다시 한다.
+- **실패했을 때**: 값 변경(암호화·키 회전·주인 지정)은 한 번에 되돌려진다. 열·인덱스 더하기(표 만들기·`ADD COLUMN`·`CREATE INDEX`)는 바로 반영되지만 여러 번 해도 안전하니 같은 명령을 다시 실행하면 된다. `encrypt --yes`는 지금 키로 못 읽는 값이 있으면(키가 틀렸거나 옛 키를 잃은 것) 아무것도 쓰지 않고 거절한다 — `status`의 "지금 키로 못 읽는 값"이 0건이 되도록 `SECRET_KEY`·`SECRET_KEYS_OLD`부터 맞춘다. **못 읽는 값이 남아 거절될 때**(암호문 모양인데 지금 키로 풀리지 않음 = 키가 틀렸거나 잃음): ① 이 DB 를 암호화한 올바른 키를 `.env`에 되돌린다(예전 키는 `SECRET_KEYS_OLD`에 쉼표로 이어 둔다). ② 옛 키를 정말 잃었다면 먼저 `backup`을 한 뒤, `status`가 보여 주는 열 이름으로 해당 행의 값을 직접 `NULL`로 만들거나 행을 지우고(그 값은 되살릴 수 없다 - 연결 계정은 화면에서 다시 연결) `encrypt --yes`를 다시 실행한다. 암호화는 끝났는데 "옛 값 지우기(VACUUM)에 실패했습니다"가 나오면 변경은 저장된 상태이고 옛 값이 파일 빈 공간에 남아 있을 수 있다 — 원인을 해결하고 같은 `encrypt --yes`를 다시 실행하면 바꿀 것이 없어도 지우기만 다시 한다. `rotate-keys --yes`에서 같은 문구가 나오면 사정이 다르다 — 다시 실행하면 옛 키 암호문을 모두 새로 암호화하고 백업도 하나 더 만든다(값이 이미 새 키로 바뀌었어도 그렇다).
 - **되돌리기**: 서버를 끄고 `python scripts/migrate_login.py restore --from data/backups/wizard-….db --yes`. 지금 파일도 먼저 백업한 뒤 되돌린다.
 - **키 회전**: 새 키를 `SECRET_KEY`에, 예전 키를 `SECRET_KEYS_OLD`에 넣고 `rotate-keys --yes`. 되돌리는 명령은 없다 — 되돌리려면 `restore --from`과 예전 `.env` 키로. `status`로 못 읽는 값이 0건인지 본 뒤 `SECRET_KEYS_OLD`를 지운다.
 - ⚠️ **키 백업**: `SECRET_KEY`(와 `SECRET_KEYS_OLD`)·`BLIND_INDEX_KEY`를 잃으면 암호화된 값은 되살릴 수 없다. `.env`를 DB 백업과 따로, 안전한 곳에 함께 보관한다. 백업 파일에는 암호화 전 값이 그대로 있으니 이전을 확인한 뒤 안전한 곳에 두거나 지운다.
@@ -128,7 +129,13 @@ Claude Code·Claude Desktop 같은 MCP 클라이언트에서 말로 분석·배�
 claude mcp add deploy-wizard -e PYTHONPATH=<프로젝트 경로> -- <프로젝트 경로>/.venv/Scripts/python.exe -m features.mcp
 ```
 
-Claude Desktop 은 설정 JSON 의 `mcpServers` 에 같은 내용을 넣는다. 작업 폴더가 프로젝트가 아닐 수 있으니 `PYTHONPATH` 를 프로젝트 경로로 주고, 환경변수는 `env` 에 직접 적는다.
+로그인이 켜진 서버(`AUTH_ENABLED=true`)에 붙일 때만 개인 토큰을 같이 등록한다 — 토큰은 채팅에 붙여넣지 말고 환경변수로만 준다:
+
+```bash
+claude mcp add deploy-wizard -e PYTHONPATH=<프로젝트 경로> -e WIZARD_API_TOKEN=<dwp_ 로 시작하는 토큰> -- <프로젝트 경로>/.venv/Scripts/python.exe -m features.mcp
+```
+
+Claude Desktop 은 설정 JSON 의 `mcpServers` 에 같은 내용을 넣는다 (로그인이 켜진 서버라면 `env`에 `WIZARD_API_TOKEN`도). 작업 폴더가 프로젝트가 아닐 수 있으니 `PYTHONPATH` 를 프로젝트 경로로 주고, 환경변수는 `env` 에 직접 적는다.
 
 ```json
 {
@@ -164,9 +171,11 @@ Claude Desktop 은 설정 JSON 의 `mcpServers` 에 같은 내용을 넣는다. 
 | 환경변수 | 기본값 | 뜻 |
 |----------|--------|----|
 | `WIZARD_API_URL` | `http://localhost:8081` | 부를 REST API 주소 |
-| `WIZARD_API_TOKEN` | (없음) | 로그인이 생기면(2단계) 쓰는 토큰 |
+| `WIZARD_API_TOKEN` | (없음) | 로그인이 켜진 서버(`AUTH_ENABLED=true`)에 보내는 개인 토큰. 만들기: `python scripts/auth_token.py create --email <주소> --name mcp` (아래 "로그인 토큰"). 로그인이 꺼진 서버에는 필요 없다 |
 | `MCP_MAX_LIVE_DEPLOYS` | `3` | 살아 있는 배포 한도 |
 | `MCP_CONFIRM_TTL_SECONDS` | `300` | 확인 토큰 유효 시간(초) |
+
+**로그인 토큰**: 서버가 401 을 내면 MCP 가 "배포 마법사 로그인 토큰이 없거나 만료되었습니다. python scripts/auth_token.py create --email <주소> --name mcp 로 만들어 WIZARD_API_TOKEN 에 넣으세요" 라고 알려 준다. 토큰(`dwp_…`)은 만들 때 한 번만 출력되고(기본 30일, 최대 90일), `list --email <주소>`·`revoke --id <번호>`로 보고 폐기한다. 사용자는 먼저 Google 로그인으로 만들어져 있어야 한다. 토큰 원문은 로그·오류·채팅에 싣지 않는다.
 
 설계: [`docs/superpowers/specs/2026-11-16-mcp-design.md`](./docs/superpowers/specs/2026-11-16-mcp-design.md). 2026-11-16 Claude Code(2.1.325)에서 `claude mcp add` 등록 → `✔ Connected` → 읽기 도구 실제 호출까지 확인했고, 행동 도구(`deploy`)를 허용하지 않으면 호스트가 호출을 막는 것도 확인했다. 확인 창이 사람에게 보이는 모습과 MCP 를 통한 실제 배포 한 바퀴는 아직 확인 전이다.
 
