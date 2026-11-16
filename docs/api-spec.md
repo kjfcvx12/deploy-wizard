@@ -12,7 +12,7 @@ Base URL: `http://localhost:8081` · 전부 JSON · 인증은 `AUTH_ENABLED`에 
 
 - **`AUTH_ENABLED=false` (기본)**: 지금처럼 토큰 없이 모든 API 가 동작한다(소유권 필터 없음). 웹·앱·MCP stdio 서버가 로그인 화면 전까지 그대로 쓴다. 보내온 `Authorization` 헤더는 무시한다 — 단 `/api/me`·`/api/auth/tokens*`는 꺼진 모드에서도 로그인 사용자가 있어야 한다.
 - **`AUTH_ENABLED=true`**: 아래 공개 경로를 뺀 모든 `/api/*`에 `Authorization: Bearer <토큰>`이 필요하다. 토큰은 액세스 JWT(`POST /api/auth/google`·`/refresh`가 준 것) 또는 개인 토큰(`dwp_…`, MCP 용). 사용자가 없거나 `active`가 아니면 401. 개인 토큰은 사용자의 이메일이 `AUTH_ALLOWED_EMAILS`에 아직 있어야 한다.
-- 켤 때 `.env`에 `AUTH_JWT_KEY`·`BLIND_INDEX_KEY`·`SECRET_KEY`가 모두 있어야 한다. 하나라도 없으면 서버가 시작하지 않는다(`로그인을 켜려면 .env 에 … 가 필요합니다`).
+- `SECRET_KEY`·`BLIND_INDEX_KEY`는 **어느 모드에서나** `.env`에 있어야 한다(암호화 열·블라인드 인덱스를 늘 쓴다). 없으면 서버가 시작하지 않는다(`서버를 시작하려면 .env 에 … 가 필요합니다` + 생성 명령). 켤 때는 `AUTH_JWT_KEY`도 있어야 한다(`로그인을 켜려면 .env 에 AUTH_JWT_KEY 가 필요합니다`).
 - **공개 경로** (`features/auth/services.py`의 `PUBLIC_PATHS`): `/api/health`, `/api/watches/webhook`(서명 검증), `/api/accounts/github/callback`(서명된 `state`로 보호, 아래 Accounts), `/api/accounts/aws/template`(사용자 정보 없는 정적 파일), `/api/auth/google`, `/api/auth/refresh`, `/api/auth/logout`. 그 밖의 경로는 `tests/test_auth_current_user.py`가 모든 라우트를 훑어 인증 의존성이 걸려 있는지 확인한다 — 새 라우트도 빠지면 시험이 실패한다.
 - 401 응답에는 언제나 `WWW-Authenticate: Bearer` 헤더가 붙고 `detail`은 `로그인이 필요합니다`. 남의 자원은 403 이 아니라 **404**(존재를 숨긴다).
 
@@ -625,7 +625,7 @@ Hard rule 3 의 자동 조치는 두 가지뿐이다. **재시작**(서비스를
 소유권 (로그인 계획 Task 7):
 - `AUTH_ENABLED=true`: 알림 목록·읽지 않은 수·읽음·모두 읽음은 내 것만 (`notifications.u_id` = 대상 배포의 주인). 남의 `n_id`·`p_d_id`는 404. 설정은 사용자마다 한 줄 (처음 읽을 때 기본값으로 만든다).
 - `POST /api/devices`는 기기의 주인을 현재 사용자로 저장한다. 같은 토큰을 다른 사용자가 등록하면 그 사용자 기기로 옮긴다 (행은 하나). 토큰은 DB 에 Fernet 암호문(`Encrypted_Text`)으로, 찾기는 `expo_token_bidx`(블라인드 인덱스)로만 한다. 응답은 그대로 (끝 6자리만).
-- 발송: 배포·인시던트 알림은 그 배포 주인의 설정·기기·이메일(로그인한 Google 이메일)로만 간다. 주인 없는 배포(옛 기록·인증 끔)는 지금처럼 `id=1` 설정, 전체 기기, `MAIL_TO`. 이메일 주소는 알림 줄·오류 문장·로그에 남지 않는다.
+- 발송: 배포·인시던트 알림은 그 배포 주인의 설정·기기·이메일(로그인한 Google 이메일)로만 간다. 주인 없는 배포(옛 기록·인증 끔)는 `id=1` 설정과 `MAIL_TO`. 푸시는 인증 끔이면 지금처럼 전체 기기, 인증 켬이면 주인 없는(`u_id` null) 기기에만 간다 (사용자 기기에는 가지 않는다). 이메일 주소는 알림 줄·오류 문장·로그에 남지 않는다.
 - `AUTH_ENABLED=false`: 사용자 필터 없이 지금과 같다 (설정은 `id=1` 줄).
 
 | Method | Endpoint | 설명 | 성공 |

@@ -255,20 +255,39 @@ def test_auth_every_route_requires_user():
     assert PUBLIC_PATHS <= api_paths, sorted(PUBLIC_PATHS - api_paths)
 
 
-# 서버 시작 검사 - 켜진 모드에 키가 빠지면 한국어 오류, 꺼진 모드면 통과
+# 서버 시작 검사 - SECRET_KEY·BLIND_INDEX_KEY 는 어느 모드에서나, AUTH_JWT_KEY 는 켜진 모드에서만. 빠지면 한국어 오류
 def test_auth_startup_check(monkeypatch):
     from features.auth.services import Auth_Service
 
+    # 꺼진 모드 + 두 키 있음 - JWT 키 없이도 통과
     monkeypatch.setattr(settings, "auth_enabled", False)
     monkeypatch.setattr(settings, "auth_jwt_key", None)
     Auth_Service.services_auth_startup_check()
 
+    # 꺼진 모드에서도 BLIND_INDEX_KEY 가 없으면 멈춘다 (생성 명령을 알려 준다)
+    monkeypatch.setattr(settings, "blind_index_key", None)
+    with pytest.raises(RuntimeError) as error:
+        Auth_Service.services_auth_startup_check()
+    assert "서버를 시작하려면 .env 에" in str(error.value) and "BLIND_INDEX_KEY" in str(error.value)
+    assert "secrets.token_urlsafe(48)" in str(error.value)
+
+    # 꺼진 모드에서도 SECRET_KEY 가 없으면 멈춘다
+    monkeypatch.setattr(settings, "blind_index_key", "test-blind-index-key-not-a-real-key")
+    secret_key=settings.secret_key
+    monkeypatch.setattr(settings, "secret_key", None)
+    with pytest.raises(RuntimeError) as error:
+        Auth_Service.services_auth_startup_check()
+    assert "SECRET_KEY" in str(error.value) and "Fernet.generate_key()" in str(error.value)
+    monkeypatch.setattr(settings, "secret_key", secret_key)
+
+    # 켜진 모드 - AUTH_JWT_KEY 가 없으면 멈춘다
     monkeypatch.setattr(settings, "auth_enabled", True)
     with pytest.raises(RuntimeError) as error:
         Auth_Service.services_auth_startup_check()
     assert "로그인을 켜려면 .env 에" in str(error.value)
     assert "AUTH_JWT_KEY" in str(error.value)
 
+    # 켜진 모드 - BLIND_INDEX_KEY 가 없어도 멈춘다
     monkeypatch.setattr(settings, "auth_jwt_key", "test-auth-jwt-key-not-a-real-key-0123456789")
     monkeypatch.setattr(settings, "blind_index_key", None)
     with pytest.raises(RuntimeError) as error:

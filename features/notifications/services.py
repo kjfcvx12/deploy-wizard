@@ -172,12 +172,13 @@ class Notification_Service:
 
 
     # 푸시 대상 기기 - 저장된 토큰을 한 줄씩 복호화한다. 읽을 수 없는 줄(이전 전 평문 등)은 마스킹한 경고만 남기고 건너뛴다
+    # 주인 없는 배포(u_id None)는 인증 끔이면 전체 기기, 인증 켬이면 주인 없는 기기에만 (볼 수 없는 배포의 알림이 사용자 폰에 가지 않게)
     @staticmethod
     async def services_notification_devices(db:AsyncSession, u_id:int|None) -> list[Push_Target]:
         decoder=Encrypted_Text()
         devices=[]
 
-        for p_d_id, raw in await Notification_Crud.crud_notification_device_list_raw(db, u_id):
+        for p_d_id, raw in await Notification_Crud.crud_notification_device_list_raw(db, u_id, unowned_only=settings.auth_enabled):
             try:
                 devices.append(Push_Target(p_d_id=p_d_id, expo_token=decoder.process_result_value(raw, None)))
             except Exception as e:
@@ -231,8 +232,15 @@ class Notification_Service:
             error=dispatch_scrub(f"{type(e).__name__}: {e}")[:ERROR_MAX]
 
         await Notification_Crud.crud_notification_update_status(db, row, state, error, sent_at)
-        await Notification_Crud.crud_notification_device_delete_by_tokens(db, invalid_tokens)
         await db.commit()
+
+        # 쓸 수 없는 토큰 정리는 따로 - 실패해도 위에서 남긴 발송 상태는 그대로 둔다 (예외 종류만 경고)
+        try:
+            await Notification_Crud.crud_notification_device_delete_by_tokens(db, invalid_tokens)
+            await db.commit()
+        except Exception as e:
+            await db.rollback()
+            logger.warning("푸시 무효 토큰 정리 실패 : %s", type(e).__name__)
 
 
     # 배포 알림을 백그라운드로 띄운다 - 파이프라인·폴링은 기다리지 않는다 (느린 SMTP·Expo 가 흐름을 붙잡지 않게)

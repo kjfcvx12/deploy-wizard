@@ -16,6 +16,7 @@ from auth_helpers import make_user, auth_header
 
 TOKEN_A="ExponentPushToken[aaaaaaaaaaaaaaaaaaaaaa]"
 TOKEN_B="ExponentPushToken[bbbbbbbbbbbbbbbbbbbbbb]"
+TOKEN_NONE="ExponentPushToken[nnnnnnnnnnnnnnnnnnnnnn]"
 EMAIL_A="a@example.com"
 EMAIL_B="b@example.com"
 
@@ -168,11 +169,23 @@ async def test_notification_fire_targets_owner(client, monkeypatch):
     assert mailer.calls == [EMAIL_A] and pusher.calls == [[TOKEN_A]]
     assert {row.u_id for row in await notification_rows()} == {a}
 
-    # 주인 없는 배포 - 받는 사람을 넘기지 않고(MAIL_TO), 기기는 전체
+    # 주인 없는 배포 (인증 켬) - 받는 사람을 넘기지 않고(MAIL_TO), 푸시는 주인 없는 기기에만 (A·B 기기에는 가지 않는다)
+    from features.notifications.models import Push_Device
+    async with AsyncSessionLocal() as db:
+        db.add(Push_Device(expo_token=TOKEN_NONE, platform='android'))
+        await db.commit()
+
     d_none=await deploy_make(None)
     mailer, pusher=Fake_Mailer(), Fake_Pusher()
     await fire(d_none, 'deploy_failed', mailer, pusher)
-    assert mailer.calls == [None] and pusher.calls == [sorted([TOKEN_A, TOKEN_B])]
+    assert mailer.calls == [None] and pusher.calls == [[TOKEN_NONE]]
+
+    # 인증 끔 - 지금처럼 전체 기기
+    monkeypatch.setattr(settings, "auth_enabled", False)
+    mailer, pusher=Fake_Mailer(), Fake_Pusher()
+    await fire(d_none, 'deploy_succeeded', mailer, pusher)
+    assert mailer.calls == [None] and pusher.calls == [sorted([TOKEN_A, TOKEN_B, TOKEN_NONE])]
+    monkeypatch.setattr(settings, "auth_enabled", True)
 
     # 메일 실패 문장에 받는 사람 주소가 남지 않는다
     mailer=Fake_Mailer(error=RuntimeError(f"수신 거부 <{EMAIL_A}>"))
@@ -240,6 +253,32 @@ async def test_device_legacy_plaintext_row_is_skipped(client, monkeypatch):
     await fire(d_none, 'deploy_failed', Fake_Mailer(), pusher)
     assert pusher.calls == [[TOKEN_A]]
     assert [row.status for row in await notification_rows() if row.channel == 'push'] == ['sent']
+
+# 무효 토큰 정리가 실패해도(BLIND_INDEX_KEY 없음 등) 발송 줄은 실제 상태(sent)로 남고 백그라운드 작업은 오류 없이 끝난다
+@pytest.mark.asyncio
+async def test_push_cleanup_failure_keeps_status(client, monkeypatch):
+    from shared.secrets import Secret_Error
+    from features.notifications.crud import Notification_Crud
+
+    assert (await client.post("/api/devices", json={"expo_token": TOKEN_A, "platform": "android"})).status_code == 201
+
+    async def boom(db, tokens):
+        raise Secret_Error("BLIND_INDEX_KEY가 설정되지 않았습니다 (.env 확인)")
+
+    monkeypatch.setattr(Notification_Crud, "crud_notification_device_delete_by_tokens", staticmethod(boom))
+
+    class Invalid_Pusher(Fake_Pusher):
+        async def __call__(self, devices, title, body, link):
+            self.calls.append(sorted(device.expo_token for device in devices))
+            return Push_Result(sent=1, failed=1, invalid_tokens=[TOKEN_B], error=None)
+
+    d_none=await deploy_make(None)
+    pusher=Invalid_Pusher()
+    await fire(d_none, 'deploy_failed', Fake_Mailer(), pusher)
+
+    assert pusher.calls == [[TOKEN_A]]
+    assert [row.status for row in await notification_rows() if row.channel == 'push'] == ['sent']
+
 
 # 옛 DB - push_devices 에 expo_token_bidx, notification_settings 에 u_id 열과 유일 인덱스가 생기고 기존 줄은 그대로 (두 번째는 아무것도 안 한다)
 def test_notification_ensure_columns_on_old_db(tmp_path):

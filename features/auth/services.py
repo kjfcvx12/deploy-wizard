@@ -350,16 +350,18 @@ class Auth_Service:
         return u_id
 
 
-    # 서버 시작 검사 - 로그인을 켰는데 키가 빠졌으면 시작하지 않는다
+    # 서버 시작 검사 - 암호화 열·블라인드 인덱스는 어느 모드에서나 쓰므로 SECRET_KEY·BLIND_INDEX_KEY 는 항상, AUTH_JWT_KEY 는 로그인을 켰을 때만 필요하다
     @staticmethod
     def services_auth_startup_check() -> None:
-        if not settings.auth_enabled:
-            return None
-
-        missing=[name for name, value in (("AUTH_JWT_KEY", settings.auth_jwt_key), ("BLIND_INDEX_KEY", settings.blind_index_key),
-                                          ("SECRET_KEY", settings.secret_key)) if not value]
+        missing=[name for name, value in (("SECRET_KEY", settings.secret_key), ("BLIND_INDEX_KEY", settings.blind_index_key)) if not value]
         if missing:
-            raise RuntimeError(f"로그인을 켜려면 .env 에 {', '.join(missing)} 가 필요합니다 (AUTH_ENABLED=true)")
+            raise RuntimeError(f"서버를 시작하려면 .env 에 {', '.join(missing)} 가 필요합니다. "
+                               f"SECRET_KEY 생성: python -c \"from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())\" / "
+                               f"BLIND_INDEX_KEY 생성: python -c \"import secrets; print(secrets.token_urlsafe(48))\"")
+
+        if settings.auth_enabled and not settings.auth_jwt_key:
+            raise RuntimeError("로그인을 켜려면 .env 에 AUTH_JWT_KEY 가 필요합니다 (AUTH_ENABLED=true). "
+                               "생성: python -c \"import secrets; print(secrets.token_urlsafe(48))\"")
         return None
 
 

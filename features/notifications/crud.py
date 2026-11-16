@@ -123,11 +123,13 @@ class Notification_Crud:
 
 
     # 푸시를 보낼 기기 - (p_d_id, 저장된 토큰 그대로) 목록. 복호화는 서비스가 한 줄씩 한다 (옛 평문 한 줄이 목록 전체를 깨지 않게)
-    # u_id 가 있으면 그 사용자 기기만, None 이면 전체
+    # u_id 가 있으면 그 사용자 기기만, None 이면 전체 (unowned_only 면 주인 없는 기기만)
     @staticmethod
-    async def crud_notification_device_list_raw(db:AsyncSession, u_id:int|None=None) -> list[tuple[int, str]]:
-        query=select(Push_Device.p_d_id, type_coerce(Push_Device.expo_token, String).label("expo_token_raw"))
-        result=await db.execute(owner_where(query, Push_Device.u_id, u_id).order_by(Push_Device.p_d_id))
+    async def crud_notification_device_list_raw(db:AsyncSession, u_id:int|None=None, unowned_only:bool=False) -> list[tuple[int, str]]:
+        query=owner_where(select(Push_Device.p_d_id, type_coerce(Push_Device.expo_token, String).label("expo_token_raw")), Push_Device.u_id, u_id)
+        if u_id is None and unowned_only:
+            query=query.where(Push_Device.u_id.is_(None))
+        result=await db.execute(query.order_by(Push_Device.p_d_id))
         return [(row.p_d_id, row.expo_token_raw) for row in result.all()]
 
 

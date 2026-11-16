@@ -79,7 +79,8 @@ python scripts/cleanup.py --yes                               # 완전히 정리
 `/accounts` 화면에서 AWS·GitHub 계정을 연결하면, 개발자 자신의 계정이 아닌 곳에 배포할 수 있다. 둘 다 아래 값들을 한 번 수동으로 준비해야 한다(`setup_roles.py`와 같은 성격의 1회성 단계).
 
 - **AWS**: 화면에서 "새 AWS 계정 연결" → `.env`에 `SECRET_KEY` 필요(생성: `python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"`) → 나머지는 화면이 안내한다.
-- **로그인 키**(`AUTH_ENABLED=true` 로 켤 때): `SECRET_KEY`(위 명령)와 별개로 `BLIND_INDEX_KEY`·`AUTH_JWT_KEY`를 만든다(생성: `python -c "import secrets; print(secrets.token_urlsafe(48))"`, 각각 따로 한 번씩). `SECRET_KEY`를 바꿀 때는 예전 키를 `SECRET_KEYS_OLD`(쉼표)에 남겨 둬야 이미 저장된 값을 읽는다.
+- **암호화 키(항상 필요)**: `SECRET_KEY`(위 명령)와 `BLIND_INDEX_KEY`(생성: `python -c "import secrets; print(secrets.token_urlsafe(48))"`)는 로그인을 끈 모드에서도 있어야 서버가 뜬다(푸시 토큰 등 암호화 열·블라인드 인덱스를 늘 쓴다). 두 키를 잃으면 이미 암호화된 값을 되살릴 수 없으니 따로 보관한다.
+- **로그인 키**(`AUTH_ENABLED=true` 로 켤 때): 위 두 키에 더해 `AUTH_JWT_KEY`를 만든다(같은 명령으로 따로 한 번). `SECRET_KEY`를 바꿀 때는 예전 키를 `SECRET_KEYS_OLD`(쉼표)에 남겨 둬야 이미 저장된 값을 읽는다.
 - **GitHub App**: [github.com/settings/apps/new](https://github.com/settings/apps/new)에서 한 번 등록. 권한은 최소로 — Repository permissions의 **Contents: Read-only**, **Metadata: Read-only**만. 등록하면 발급되는 값들을 `.env`에:
   ```
   GITHUB_APP_ID=...
