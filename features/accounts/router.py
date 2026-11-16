@@ -84,7 +84,7 @@ async def router_github_install_url(c_id:int|None=None, db:AsyncSession=Depends(
 @router.get('/github/callback', include_in_schema=False)
 async def router_github_callback(installation_id:int, setup_action:str|None=None, state:str|None=None,
                                  db:AsyncSession=Depends(get_db)):
-    return RedirectResponse(url=await Github_Service.services_github_callback(db, installation_id, state))
+    return RedirectResponse(url=await Github_Service.services_github_callback(db, installation_id, state, setup_action))
 
 
 # GET 전 연결 블록 조회 - 블록마다 AWS 계정과 GitHub 설치를 함께

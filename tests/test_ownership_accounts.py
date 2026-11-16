@@ -389,3 +389,91 @@ async def test_accounts_legacy_plaintext_clear_error(client):
 
     assert "migrate_login.py" in str(exc.value)
     assert ROLE_ARN not in str(exc.value)
+
+
+# 같은 새 installation_id 로 콜백 둘이 동시에 - 읽기 두 번(처음 확인·upsert 안)을 둘 다 마친 뒤 같이 저장하게 맞춘다 (진짜 경쟁)
+def race_two_callbacks(monkeypatch):
+    import asyncio
+
+    barrier=asyncio.Barrier(2)
+    seen={"count": 0}
+    real_get=accounts_module.Github_Installation_Crud.crud_github_installation_get_by_installation_id
+
+    async def synced_get(db, installation_id):
+        found=await real_get(db, installation_id)
+        seen["count"]+=1
+
+        # 두 콜백의 앞선 읽기 두 번씩(모두 "없음")만 맞춰 세운다 - 지고 난 뒤 다시 읽을 때는 기다리지 않는다
+        if seen["count"] <= 4:
+            await barrier.wait()
+        return found
+
+    monkeypatch.setattr(accounts_module.Github_Installation_Crud, "crud_github_installation_get_by_installation_id", staticmethod(synced_get))
+
+
+# 첫 콜백 경쟁 (같은 사용자) - 하나는 저장하고 하나는 유일 제약에 걸려도 500 이 아니라 둘 다 연결 완료로 돌아간다. 설치 줄은 하나
+@pytest.mark.asyncio
+async def test_github_callback_race_same_user(client, monkeypatch):
+    import asyncio
+    from features.accounts.models import Github_Installation
+
+    a, _=await users_on(monkeypatch)
+    state_one=await install_state(client, auth_header(a))
+    state_two=await install_state(client, auth_header(a))
+    race_two_callbacks(monkeypatch)
+
+    first, second=await asyncio.gather(
+        client.get("/api/accounts/github/callback", params={"installation_id": 888, "state": state_one}, follow_redirects=False),
+        client.get("/api/accounts/github/callback", params={"installation_id": 888, "state": state_two}, follow_redirects=False))
+
+    assert first.status_code in (302, 307) and second.status_code in (302, 307)
+    assert first.headers["location"] == "/accounts?connected=github" and second.headers["location"] == "/accounts?connected=github"
+
+    async with AsyncSessionLocal() as db:
+        installation=(await db.execute(select(Github_Installation))).scalars().one()
+        assert installation.installation_id == 888 and installation.u_id == a
+
+
+# 첫 콜백 경쟁 (다른 사용자) - 먼저 저장한 쪽이 주인, 진 쪽은 500 이 아니라 github_taken. 주인은 바뀌지 않는다
+@pytest.mark.asyncio
+async def test_github_callback_race_different_users(client, monkeypatch):
+    import asyncio
+    from features.accounts.models import Github_Installation
+
+    a, b=await users_on(monkeypatch)
+    state_a=await install_state(client, auth_header(a))
+    state_b=await install_state(client, auth_header(b))
+    race_two_callbacks(monkeypatch)
+
+    first, second=await asyncio.gather(
+        client.get("/api/accounts/github/callback", params={"installation_id": 889, "state": state_a}, follow_redirects=False),
+        client.get("/api/accounts/github/callback", params={"installation_id": 889, "state": state_b}, follow_redirects=False))
+
+    locations=sorted([first.headers["location"], second.headers["location"]])
+    assert locations == ["/accounts?connected=github", "/accounts?connected=github_taken"]
+
+    async with AsyncSessionLocal() as db:
+        installation=(await db.execute(select(Github_Installation))).scalars().one()
+        winner=a if first.headers["location"] == "/accounts?connected=github" else b
+        assert installation.u_id == winner
+
+
+# 켬 모드에서 GitHub 가 설치를 바꾸고 돌려보낸 요청(setup_action=update, state 없음) - 오류가 아니라 /accounts 로 조용히 돌려보내고 아무것도 저장하지 않는다
+@pytest.mark.asyncio
+async def test_github_callback_update_without_state_is_neutral(client, monkeypatch):
+    from features.accounts.models import Github_Installation
+
+    await users_on(monkeypatch)
+
+    response=await client.get("/api/accounts/github/callback", params={"installation_id": 555, "setup_action": "update"}, follow_redirects=False)
+    assert response.status_code in (302, 307)
+    assert response.headers["location"] == "/accounts"
+
+    # 그 밖에 state 없는 콜백(install 등)은 여전히 오류
+    for params in ({"installation_id": 555}, {"installation_id": 555, "setup_action": "install"}):
+        response=await client.get("/api/accounts/github/callback", params=params, follow_redirects=False)
+        assert response.headers["location"] == "/accounts?connected=github_error"
+
+    async with AsyncSessionLocal() as db:
+        assert (await db.execute(select(Github_Installation))).scalars().all() == []
+    assert client.calls == []

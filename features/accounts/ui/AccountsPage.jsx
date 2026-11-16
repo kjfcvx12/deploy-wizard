@@ -5,6 +5,7 @@ import { accountsApi } from './api.js'
 import AwsStackGuide from './AwsStackGuide.jsx'
 import AwsStackUpdateGuide from './AwsStackUpdateGuide.jsx'
 import { ACCOUNTS_CHANNEL, openGuideWindow } from './guideWindow.js'
+import { githubCallbackResult } from './logic.js'
 import { readPickedBlock, writePickedBlock } from './pickedBlock.js'
 
 const AWS_STATUS_LABEL = { pending: '역할 등록 대기', verified: '연결됨', invalid: '확인 실패' }
@@ -34,6 +35,8 @@ export default function AccountsPage() {
   const [pickedBlock, setPickedBlock] = useState(readPickedBlock)
   const [error, setError] = useState('')
   const [notice, setNotice] = useState('')
+  // GitHub 설치 콜백이 실패로 돌려보낸 안내 - 목록을 읽을 때마다 지워지는 error 와 따로 둔다
+  const [callbackError, setCallbackError] = useState('')
   const [busy, setBusy] = useState(false)
 
   const [label, setLabel] = useState('')
@@ -109,10 +112,12 @@ export default function AccountsPage() {
   useEffect(() => {
     load()
 
-    // GitHub 설치를 마치고 돌아온 경우 - 주소를 정리하고, 안내 창이 닫히게 알리고, 연결이 잘 됐는지 확인한다
-    if (new URLSearchParams(window.location.search).get('connected') === 'github') {
-      window.history.replaceState(null, '', '/accounts')
+    // GitHub 설치를 마치고 돌아온 경우 - 주소를 정리하고, 안내 창이 닫히게 알리고, 연결이 잘 됐는지 확인한다. 실패로 돌아왔으면 이유를 알린다
+    const result = githubCallbackResult(window.location.search)
+    if (result.known) window.history.replaceState(null, '', '/accounts')
+    if (result.error) setCallbackError(result.error)
 
+    if (result.connected) {
       const channel = new BroadcastChannel(ACCOUNTS_CHANNEL)
       channel.postMessage({ type: 'github-connected' })
       setTimeout(() => channel.close(), 1000)
@@ -268,6 +273,7 @@ export default function AccountsPage() {
     const guide = openGuideWindow('github')
     setBusy(true)
     setError('')
+    setCallbackError('')
     try {
       const { url } = await accountsApi.getGithubInstallUrl(c_id)
       window.location.href = url
@@ -377,6 +383,7 @@ export default function AccountsPage() {
   return (
     <>
       {error && <div className="notice err" style={{ marginBottom: 16 }}>{error}</div>}
+      {callbackError && <div className="notice err" style={{ marginBottom: 16 }}>{callbackError}</div>}
       {notice && <div className="notice ok" style={{ marginBottom: 16 }}>{notice}</div>}
 
       <div className="row spread" style={{ marginBottom: 12 }}>

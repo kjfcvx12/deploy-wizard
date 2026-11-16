@@ -12,6 +12,7 @@ import jwt
 from botocore.exceptions import ClientError, ParamValidationError
 from fastapi import HTTPException, status
 
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from shared.settings import settings
@@ -52,6 +53,9 @@ GH_STATE_KEY_LABEL=b"deploy-wizard:github-install-state"
 GH_CALLBACK_OK="/accounts?connected=github"
 GH_CALLBACK_ERROR="/accounts?connected=github_error"
 GH_CALLBACK_TAKEN="/accounts?connected=github_taken"
+# GitHub 쪽에서 설치를 바꾸고 돌아온 요청(setup_action=update, state 없음) - 오류가 아니라 조용히 목록 화면으로
+GH_CALLBACK_NEUTRAL="/accounts"
+GH_SETUP_ACTION_UPDATE="update"
 
 
 class Aws_Account_Service:
@@ -448,11 +452,12 @@ class Github_Service:
     # 설치 콜백 - state 를 확인해 설치를 그 사용자에게 주고 그 사용자의 블록에 잇는다. 돌아갈 화면 주소를 돌려준다
     # 서명 불량·만료·옛 숫자 state -> 저장 없이 github_error. 이미 다른 사용자의 설치 -> 그대로 두고 github_taken (브라우저 리다이렉트라 409 대신)
     # state 없음은 인증 끔 모드에서만 받는다 (GitHub 쪽에서 설치를 바꾸고 돌아온 경우, 지금까지처럼 블록 없이 저장)
+    # 켬 모드에서 state 없이 setup_action=update 로 온 것은 GitHub 가 설치 변경 뒤 돌려보낸 것이라 오류로 보지 않고 아무것도 저장하지 않은 채 /accounts 로 보낸다
     @staticmethod
-    async def services_github_callback(db:AsyncSession, installation_id:int, state:str|None) -> str:
+    async def services_github_callback(db:AsyncSession, installation_id:int, state:str|None, setup_action:str|None=None) -> str:
         if state is None:
             if settings.auth_enabled:
-                return GH_CALLBACK_ERROR
+                return GH_CALLBACK_NEUTRAL if setup_action == GH_SETUP_ACTION_UPDATE else GH_CALLBACK_ERROR
             u_id, c_id=None, None
 
         else:
@@ -471,6 +476,10 @@ class Github_Service:
             return GH_CALLBACK_TAKEN
 
         installation=await Github_Service.services_github_installation_upsert(db, installation_id, u_id)
+
+        # 같은 설치를 동시에 처음 저장하려던 다른 사용자의 콜백이 먼저 저장했을 수 있다 - 다시 읽은 주인이 다르면 그대로 두고 github_taken
+        if u_id is not None and installation.u_id != u_id:
+            return GH_CALLBACK_TAKEN
 
         if c_id is not None:
             await Connection_Service.services_connection_link_github(db, c_id, installation.g_id, u_id)
@@ -500,6 +509,7 @@ class Github_Service:
 
 
     # 설치 정보 저장 - GitHub 콜백에서 installation_id 만 받아서 나머지는 조회해 채운다. 새 설치의 주인은 u_id
+    # 같은 새 설치를 동시에 저장하려다 유일 제약(installation_id)에 걸리면 되돌리고 먼저 저장된 줄을 다시 읽어 돌려준다 (호출한 쪽이 주인을 비교한다)
     @staticmethod
     async def services_github_installation_upsert(db:AsyncSession, installation_id:int, u_id:int|None=None):
         try:
@@ -515,6 +525,13 @@ class Github_Service:
 
         except HTTPException:
             raise
+
+        except IntegrityError:
+            await db.rollback()
+            saved=await Github_Installation_Crud.crud_github_installation_get_by_installation_id(db, installation_id)
+            if saved is None:
+                raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="GitHub 설치 확인 실패 :저장이 겹쳤지만 저장된 설치를 찾지 못했습니다")
+            return saved
 
         except Exception as e:
             await db.rollback()
