@@ -3,8 +3,20 @@ from sqlalchemy.future import select
 from sqlalchemy import update, func
 from datetime import datetime
 
+from shared.database import Base
+
 from features.incidents.models import Incident, Recovery_Action
 from features.incidents.scheme import INCIDENT_UNRESOLVED_STATUSES
+
+
+# 주인 조건 - incidents 에는 u_id 가 없고 배포(deploys.u_id)를 따라간다. u_id 가 None(인증 끔·백그라운드)이면 그대로
+# deploys 모델은 다른 기능이라 import 하지 않고 같은 Base 에 올라간 표를 쓴다
+def incident_owner_where(query, u_id:int|None):
+    if u_id is None:
+        return query
+
+    deploys=Base.metadata.tables["deploys"]
+    return query.join(deploys, deploys.c.d_id == Incident.d_id).where(deploys.c.u_id == u_id)
 
 
 class Incident_Crud:
@@ -23,10 +35,10 @@ class Incident_Crud:
         return {incident.d_id: incident for incident in result.scalars().all()}
 
 
-    # 인시던트 i_id 찾기
+    # 인시던트 i_id 찾기 - u_id 를 주면 그 사용자 배포의 것일 때만
     @staticmethod
-    async def crud_incident_get_by_i_id(db:AsyncSession, i_id:int) -> Incident | None:
-        result=await db.execute(select(Incident).where(Incident.i_id == i_id))
+    async def crud_incident_get_by_i_id(db:AsyncSession, i_id:int, u_id:int|None=None) -> Incident | None:
+        result=await db.execute(incident_owner_where(select(Incident).where(Incident.i_id == i_id), u_id))
         return result.scalars().first()
 
 
@@ -73,10 +85,10 @@ class Incident_Crud:
         return result.rowcount
 
 
-    # 인시던트 목록 - 최신순, after 는 i_id 커서(그보다 오래된 것만)
+    # 인시던트 목록 - 최신순, after 는 i_id 커서(그보다 오래된 것만). u_id 를 주면 그 사용자 배포의 것만
     @staticmethod
-    async def crud_incident_list(db:AsyncSession, status:str|None=None, d_id:int|None=None, after:int|None=None, limit:int=100) -> list[Incident]:
-        query=select(Incident)
+    async def crud_incident_list(db:AsyncSession, status:str|None=None, d_id:int|None=None, after:int|None=None, limit:int=100, u_id:int|None=None) -> list[Incident]:
+        query=incident_owner_where(select(Incident), u_id)
 
         if status is not None:
             query=query.where(Incident.status == status)

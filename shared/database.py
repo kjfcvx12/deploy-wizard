@@ -32,16 +32,29 @@ async def get_db():
 ENSURE_COLUMNS={
     "notification_settings": ["kinds_version"],
     "deploys": ["auto_recover", "health_state", "last_health_at", "bad_commit_sha",
-                "cpu", "memory", "min_tasks", "max_tasks", "scale_metric", "scale_target", "planned_hours", "running_since", "plan_notified_at"],
+                "cpu", "memory", "min_tasks", "max_tasks", "scale_metric", "scale_target", "planned_hours", "running_since", "plan_notified_at",
+                "u_id"],
+    "aws_accounts": ["u_id"],
+    "github_installations": ["u_id"],
+    "connections": ["u_id"],
+}
+
+# 기존 표에 뒤늦게 늘어난 인덱스 - 표 이름 -> [(인덱스 이름, 열들, unique)]. 이름은 create_all 이 index=True 로 짓는 것과 같게 (ix_<표>_<열>)
+ENSURE_INDEXES: dict[str, list[tuple[str, list[str], bool]]]={
+    "deploys": [("ix_deploys_u_id", ["u_id"], False)],
+    "aws_accounts": [("ix_aws_accounts_u_id", ["u_id"], False)],
+    "github_installations": [("ix_github_installations_u_id", ["u_id"], False)],
+    "connections": [("ix_connections_u_id", ["u_id"], False)],
 }
 
 
-# 서버 시작과 같은 DB 준비 - 없는 표를 만들고(create_all) 옛 표에 모자란 열을 더한다. 반환: 이번에 더한 "표.열" 목록
+# 서버 시작과 같은 DB 준비 - 없는 표를 만들고(create_all) 옛 표에 모자란 열·인덱스를 더한다. 반환: 이번에 더한 "표.열"·인덱스 이름 목록
 # 모델은 부르는 쪽이 미리 import 해 둬야 create_all 이 표를 안다 (main.py · scripts/*.py 가 같이 쓴다)
 async def bootstrap_schema(engine=None) -> list[str]:
     async with (engine or async_engine).begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
-        return await conn.run_sync(ensure_columns)
+        added=await conn.run_sync(ensure_columns)
+        return added + await conn.run_sync(ensure_indexes)
 
 
 # 열 기본값을 DDL 상수로 - 모델의 파이썬 기본값(bool/숫자/문자열)만 다룬다
@@ -89,3 +102,28 @@ def ensure_columns(conn) -> list[str]:
             added.append(f"{table_name}.{name}")
 
     return added
+
+
+# 옛 DB 보정 - ENSURE_INDEXES 중 실제 표에 없는 인덱스만 CREATE [UNIQUE] INDEX IF NOT EXISTS 로 만든다. 여러 번 불러도 안전하다
+# 반환: 이번에 만든 인덱스 이름 목록. 표나 열이 없으면 건너뛴다 (ensure_columns 뒤에 부른다). conn 은 동기 연결
+def ensure_indexes(conn) -> list[str]:
+    inspector=inspect(conn)
+    existing_tables=set(inspector.get_table_names())
+    created=[]
+
+    for table_name, indexes in ENSURE_INDEXES.items():
+        if table_name not in existing_tables:
+            continue
+
+        present={index["name"] for index in inspector.get_indexes(table_name)}
+        columns={c["name"] for c in inspector.get_columns(table_name)}
+
+        for name, column_names, unique in indexes:
+            if name in present or not set(column_names) <= columns:
+                continue
+
+            unique_sql="UNIQUE " if unique else ""
+            conn.exec_driver_sql(f'CREATE {unique_sql}INDEX IF NOT EXISTS {name} ON {table_name} ({", ".join(column_names)})')
+            created.append(name)
+
+    return created

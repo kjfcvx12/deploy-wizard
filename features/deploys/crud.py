@@ -3,25 +3,28 @@ from sqlalchemy.future import select
 from sqlalchemy import update
 from datetime import datetime
 
+from shared.ownership import owner_where
+
 from features.deploys.models import Deploy, Deploy_Log, Deploy_Issue, Deploy_Release
 from features.deploys.scheme import Deploy_Create
 
 
 class Deploy_Crud:
 
-    # 모든 배포 조회 (삭제된 것 제외, 최신순)
+    # 모든 배포 조회 (삭제된 것 제외, 최신순) - u_id 를 주면 그 사용자 것만 (백그라운드는 주지 않는다)
     @staticmethod
-    async def crud_deploy_get_all(db: AsyncSession) -> list[Deploy]:
-        result=await db.execute(select(Deploy)
-                                .where(Deploy.status != 'deleted')
-                                .order_by(Deploy.d_id.desc()))
+    async def crud_deploy_get_all(db: AsyncSession, u_id:int|None=None) -> list[Deploy]:
+        query=(select(Deploy)
+               .where(Deploy.status != 'deleted')
+               .order_by(Deploy.d_id.desc()))
+        result=await db.execute(owner_where(query, Deploy.u_id, u_id))
         return result.scalars().all()
 
 
-    # 배포 d_id 찾기
+    # 배포 d_id 찾기 - u_id 를 주면 그 사용자 것일 때만
     @staticmethod
-    async def crud_deploy_get_by_d_id(db:AsyncSession, d_id:int) -> Deploy | None:
-        result = await db.execute(select(Deploy).filter(Deploy.d_id == d_id))
+    async def crud_deploy_get_by_d_id(db:AsyncSession, d_id:int, u_id:int|None=None) -> Deploy | None:
+        result = await db.execute(owner_where(select(Deploy).filter(Deploy.d_id == d_id), Deploy.u_id, u_id))
         return result.scalars().first()
 
 
@@ -32,10 +35,10 @@ class Deploy_Crud:
         return result.scalars().all()
 
 
-    # 배포 생성
+    # 배포 생성 - u_id 는 만든 사용자 (인증 끔이면 None)
     @staticmethod
-    async def crud_deploy_create(db:AsyncSession, deploy: Deploy_Create) -> Deploy:
-        db_deploy=Deploy(**deploy.model_dump(), status='queued')
+    async def crud_deploy_create(db:AsyncSession, deploy: Deploy_Create, u_id:int|None=None) -> Deploy:
+        db_deploy=Deploy(**deploy.model_dump(), status='queued', u_id=u_id)
         db.add(db_deploy)
         await db.flush()
         return db_deploy

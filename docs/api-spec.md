@@ -14,7 +14,15 @@ Base URL: `http://localhost:8081` · 전부 JSON · 인증은 `AUTH_ENABLED`에 
 - **`AUTH_ENABLED=true`**: 아래 공개 경로를 뺀 모든 `/api/*`에 `Authorization: Bearer <토큰>`이 필요하다. 토큰은 액세스 JWT(`POST /api/auth/google`·`/refresh`가 준 것) 또는 개인 토큰(`dwp_…`, MCP 용). 사용자가 없거나 `active`가 아니면 401. 개인 토큰은 사용자의 이메일이 `AUTH_ALLOWED_EMAILS`에 아직 있어야 한다.
 - 켤 때 `.env`에 `AUTH_JWT_KEY`·`BLIND_INDEX_KEY`·`SECRET_KEY`가 모두 있어야 한다. 하나라도 없으면 서버가 시작하지 않는다(`로그인을 켜려면 .env 에 … 가 필요합니다`).
 - **공개 경로** (`features/auth/services.py`의 `PUBLIC_PATHS`): `/api/health`, `/api/watches/webhook`(서명 검증), `/api/accounts/github/callback`(서명된 `state`는 Task 6), `/api/accounts/aws/template`(사용자 정보 없는 정적 파일), `/api/auth/google`, `/api/auth/refresh`, `/api/auth/logout`. 그 밖의 경로는 `tests/test_auth_current_user.py`가 모든 라우트를 훑어 인증 의존성이 걸려 있는지 확인한다 — 새 라우트도 빠지면 시험이 실패한다.
-- 401 응답에는 언제나 `WWW-Authenticate: Bearer` 헤더가 붙고 `detail`은 `로그인이 필요합니다`. 남의 자원은 403 이 아니라 **404**(존재를 숨긴다 — 소유권 필터는 다음 Task).
+- 401 응답에는 언제나 `WWW-Authenticate: Bearer` 헤더가 붙고 `detail`은 `로그인이 필요합니다`. 남의 자원은 403 이 아니라 **404**(존재를 숨긴다).
+
+### 소유권 (로그인 계획 Task 5)
+
+- 최상위 표(`deploys`·`aws_accounts`·`github_installations`·`connections`)에 주인 `u_id`가 있다. 자식 표(로그·이슈·릴리스·환경변수·헬스·인시던트·복구 시도)는 부모 배포를 따라간다.
+- `AUTH_ENABLED=true`: 목록은 내 것만, `d_id`·`i_id`를 받는 경로는 남의 것이면 없는 것과 같이 **404**. 배포 만들기·분석·브랜치 조회 본문의 `aws_account_id`·`github_installation_id`도 내 것이어야 한다 (남의 것·없는 것 404, 그 자격증명은 쓰이지 않는다). 새 배포의 주인은 만든 사용자.
+- `AUTH_ENABLED=false`: 주인을 보지 않는다 (주인 없는 옛 기록도 전부 보인다). 단 본문의 `aws_account_id`·`github_installation_id`는 있는 것이어야 한다 (없으면 404).
+- 서버 안 백그라운드(파이프라인·헬스 점검·감시·자동 복구)는 주인과 상관없이 모든 배포를 다룬다.
+- 계정 라우터(`/api/accounts/*`)의 주인 필터는 Task 6.
 
 ### 개인 토큰 (PAT, MCP 용)
 
@@ -76,7 +84,7 @@ Google `id_token`으로 로그인해 액세스 토큰(JWT, 900초)과 리프레�
 
 | Method | Endpoint | 설명 | 성공 |
 |--------|----------|------|------|
-| GET | `/api/deploys` | 전 배포 조회 (삭제된 것 제외, 최신순) | 200 `Deploy_Read[]` |
+| GET | `/api/deploys` | 전 배포 조회 (삭제된 것 제외, 최신순). 인증 켬이면 내 것만 | 200 `Deploy_Read[]` |
 | GET | `/api/deploys/remote?repo_url=&github_installation_id=` | 레포의 브랜치 목록과 기본 브랜치 (`git ls-remote`). `github_installation_id`(M6, 선택) 주면 그 설치 토큰으로 private 레포도 조회 | 200 `Repo_Remote` |
 | POST | `/api/deploys` | 배포 생성 → 파이프라인 시작 | 201 `Deploy_Read` |
 | GET | `/api/deploys/{d_id}` | 특정 배포 조회 | 200 `Deploy_Read` |
@@ -95,7 +103,7 @@ Google `id_token`으로 로그인해 액세스 토큰(JWT, 900초)과 리프레�
 | 상태 코드 | 언제 |
 |-----------|------|
 | 400 | 레포 주소·브랜치 형식이 틀림, 레포 조회 실패, 설정 변경 본문이 비어 있음 |
-| 404 | 없는 `d_id`, 이미 삭제된 배포 |
+| 404 | 없는 `d_id`, 이미 삭제된 배포, **남의 배포**(인증 켬) / 본문·쿼리의 `aws_account_id`·`github_installation_id`가 없거나 남의 것 (`해당 id의 AWS 계정이 없습니다` / `해당 id의 GitHub 설치가 없습니다`) |
 | 409 | 진행 중인 배포에 다시 배포·삭제 요청 |
 | 500 | AWS 삭제 실패 등 |
 | 501 | 시크릿 종류 환경변수에 값을 보냄 (저장 미지원 - 아래 "Env") |
@@ -258,6 +266,8 @@ Google `id_token`으로 로그인해 액세스 토큰(JWT, 900초)과 리프레�
 | DELETE | `/api/deploys/{d_id}/env/{name}/value` | 저장된 값만 지운다. 변수 행은 남는다 | 200 `Env_Read` |
 | POST | `/api/deploys/{d_id}/env/continue` | 이어서 배포 (위 Deploy 표). 값이 빈 필수 변수가 남았으면 409 | 200 `Deploy_Read` |
 
+남의 배포(인증 켬)의 환경변수 경로는 모두 404 `해당 id의 배포가 없습니다` — 이름 형식 검사(400)보다 먼저 본다.
+
 ### PUT `/api/deploys/{d_id}/env/{name}` 본문 `Env_Update`
 
 ```json
@@ -326,7 +336,7 @@ Google `id_token`으로 로그인해 액세스 토큰(JWT, 900초)과 리프레�
 { "repo_url": "https://github.com/kjfcvx12/private-test", "branch": "main", "github_installation_id": 1 }
 ```
 
-본문은 `POST /api/deploys`와 같다 (`repo_url` 필수, `branch`·`aws_account_id`·`github_installation_id` 선택). `github_installation_id`를 주면 그 설치의 토큰으로 private 레포도 읽는다. `aws_account_id`는 받기만 하고 쓰지 않는다 (AWS 호출이 없다).
+본문은 `POST /api/deploys`와 같다 (`repo_url` 필수, `branch`·`aws_account_id`·`github_installation_id` 선택). `github_installation_id`를 주면 그 설치의 토큰으로 private 레포도 읽는다. `aws_account_id`는 받기만 하고 쓰지 않는다 (AWS 호출이 없다). 둘 다 내 것이어야 한다 — 없거나 남의 것이면 404 (레포를 읽지 않는다).
 
 ### `Deploy_Advice`
 
@@ -375,6 +385,7 @@ Google `id_token`으로 로그인해 액세스 토큰(JWT, 900초)과 리프레�
 | 400 | 브랜치 형식이 틀림 | `브랜치 이름이 올바르지 않습니다.` |
 | 400 | 커밋 조회 실패 | `레포를 조회할 수 없습니다 :<마스킹된 사유>` |
 | 400 | 클론 실패 | `레포를 가져올 수 없습니다 :<마스킹된 사유>` |
+| 404 | `aws_account_id`·`github_installation_id`가 없거나 남의 것 | `해당 id의 AWS 계정이 없습니다` / `해당 id의 GitHub 설치가 없습니다` |
 | 400 | 지원하는 프로젝트가 아님 | `매니페스트 파일을 찾지 못했습니다. 지원하는 형식의 프로젝트가 아닙니다.` |
 | 500 | 그 밖의 분석 실패 | `분석 실패 :<마스킹된 사유>` |
 
@@ -382,7 +393,7 @@ Google `id_token`으로 로그인해 액세스 토큰(JWT, 900초)과 리프레�
 
 ## Pricing (비용 확인 - 백엔드)
 
-AWS 공개 가격 파일(인증 없음)에서 Fargate·ALB 시간당 단가를 읽어 추정한다. 단가는 서버 파일 캐시(`PRICING_CACHE_HOURS`, 기본 24시간)에 두고, 읽기에 실패하면 낡은 캐시를 쓴다. 리전은 서버 설정(`AWS_REGION`)을 따른다. AWS 호출·DB 쓰기는 없다. 금액은 전부 USD 온디맨드 **추정치**다.
+AWS 공개 가격 파일(인증 없음)에서 Fargate·ALB 시간당 단가를 읽어 추정한다. 단가는 서버 파일 캐시(`PRICING_CACHE_HOURS`, 기본 24시간)에 두고, 읽기에 실패하면 낡은 캐시를 쓴다. 리전은 서버 설정(`AWS_REGION`)을 따른다. AWS 호출·DB 쓰기는 없다. 금액은 전부 USD 온디맨드 **추정치**다. 사용자 데이터가 없어 소유권 필터는 없고, 인증 켬이면 로그인만 필요하다.
 
 | Method | Endpoint | 설명 | 응답 |
 |--------|----------|------|------|
@@ -549,6 +560,7 @@ AWS 공개 가격 파일(인증 없음)에서 Fargate·ALB 시간당 단가를 �
 
 - `status`는 `open` `recovering` `resolved` `needs_action` 중 하나 (그 밖의 값은 400). `d_id`는 선택 필터. `after`는 `i_id` 커서(1 이상, 아니면 422) - 그보다 오래된(`i_id`가 작은) 것부터 최신순으로 100건.
 - `/api/deploys/{d_id}/incidents` 는 인시던트 라우터(`features/incidents/router.py`)가 받는다. 없는 배포(삭제된 배포 포함)는 404 `해당 id의 배포가 없습니다`. 없는 `i_id`는 404 `해당 id의 인시던트가 없습니다`.
+- 인증 켬: 목록은 내 배포의 인시던트만 (`incidents`에는 주인 열이 없고 `deploys.u_id`로 거른다). 남의 배포의 `d_id`·`i_id`는 404 (`d_id` 필터는 빈 목록).
 
 ### 인시던트가 열리고 닫히는 때
 

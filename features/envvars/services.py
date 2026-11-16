@@ -192,11 +192,11 @@ class Env_Service:
         return names[:MAX_ERROR_NAMES]
 
 
-    # 배포 존재 확인 - 없으면 404 (deploys 서비스는 순환 import 를 피하려고 호출 시점에 불러온다)
+    # 배포 존재·소유 확인 - 없거나 남의 것이면 404 (deploys 서비스는 순환 import 를 피하려고 호출 시점에 불러온다)
     @staticmethod
-    async def services_env_get_deploy(db:AsyncSession, d_id:int):
+    async def services_env_get_deploy(db:AsyncSession, d_id:int, u_id:int|None=None):
         from features.deploys.services import Deploy_Service
-        return await Deploy_Service.services_deploy_get_d_id(db, d_id)
+        return await Deploy_Service.services_deploy_get_owned(db, d_id, u_id)
 
 
     # 행 -> 응답 - 값은 복사하지 않고 있는지 없는지(has_value)만 담는다
@@ -235,21 +235,22 @@ class Env_Service:
 
     # 배포의 환경변수 목록 - 값은 싣지 않는다
     @staticmethod
-    async def services_env_get_all(db:AsyncSession, d_id:int) -> list[Env_Read]:
-        await Env_Service.services_env_get_deploy(db, d_id)
+    async def services_env_get_all(db:AsyncSession, d_id:int, u_id:int|None=None) -> list[Env_Read]:
+        await Env_Service.services_env_get_deploy(db, d_id, u_id)
         rows=await Env_Crud.crud_env_get_by_d_id(db, d_id)
         return [Env_Service.services_env_to_read(row) for row in rows]
 
 
     # 값 입력·종류 지정·건너뛰기 - 이름이 없으면 사용자가 직접 추가한 것으로 만든다
     @staticmethod
-    async def services_env_update(db:AsyncSession, d_id:int, name:str, body:Env_Update) -> Env_Read:
+    async def services_env_update(db:AsyncSession, d_id:int, name:str, body:Env_Update, u_id:int|None=None) -> Env_Read:
         try:
+            # 남의 배포는 이름 검사보다 먼저 404 (존재를 숨긴다)
+            deploy=await Env_Service.services_env_get_deploy(db, d_id, u_id)
+
             if not ENV_NAME_RE.match(name):
                 raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST,
                                     detail='환경변수 이름이 올바르지 않습니다')
-
-            deploy=await Env_Service.services_env_get_deploy(db, d_id)
 
             if body.kind is not None and body.kind not in ENV_KINDS:
                 raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST,
@@ -323,9 +324,9 @@ class Env_Service:
 
     # 저장된 값 지우기 - 값만 비우고 변수 행은 남긴다
     @staticmethod
-    async def services_env_clear_value(db:AsyncSession, d_id:int, name:str) -> Env_Read:
+    async def services_env_clear_value(db:AsyncSession, d_id:int, name:str, u_id:int|None=None) -> Env_Read:
         try:
-            deploy=await Env_Service.services_env_get_deploy(db, d_id)
+            deploy=await Env_Service.services_env_get_deploy(db, d_id, u_id)
             db_env=await Env_Crud.crud_env_get(db, d_id, name)
 
             if db_env is None:

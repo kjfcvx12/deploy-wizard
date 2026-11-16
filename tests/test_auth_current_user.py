@@ -8,7 +8,7 @@ from httpx import AsyncClient, ASGITransport
 from sqlalchemy import text
 
 from shared.database import Base, async_engine
-from shared.secrets import blind_index, token_hash
+from shared.secrets import token_hash
 from shared.settings import settings
 
 
@@ -40,13 +40,10 @@ async def sql(query:str, **params):
 # 사용자 하나를 바로 만든다 (Google 로그인 없이) - 반환: u_id
 async def user_make(email:str="me@example.com", status:str="active") -> int:
     from shared.database import AsyncSessionLocal
-    from features.auth.crud import Auth_Crud
+    from auth_helpers import make_user
 
     async with AsyncSessionLocal() as db:
-        db_user=await Auth_Crud.crud_user_create(db, {"google_sub": "sub-" + email, "google_sub_bidx": blind_index("google_sub", "sub-" + email),
-                                                      "email": email, "email_bidx": blind_index("email", email), "status": status})
-        await db.commit()
-        return db_user.u_id
+        return await make_user(db, email, status)
 
 
 # 액세스 토큰 헤더

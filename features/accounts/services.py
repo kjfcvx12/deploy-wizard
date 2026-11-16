@@ -61,6 +61,18 @@ class Aws_Account_Service:
         return account
 
 
+    # AWS 계정 소유 확인 - 없거나 남의 것이면 404 (존재를 숨긴다). u_id 가 None(인증 끔)이면 있는지만 본다. 다른 기능(deploys, advice)이 부른다
+    @staticmethod
+    async def services_aws_account_assert_owned(db:AsyncSession, a_id:int, u_id:int|None):
+        account=await Aws_Account_Crud.crud_aws_account_get_by_id(db, a_id)
+
+        if not account or (u_id is not None and account.u_id != u_id):
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND,
+                                detail='해당 id의 AWS 계정이 없습니다')
+
+        return account
+
+
     # 콘솔 CloudFormation 주소 - 사용자가 메뉴를 찾아 들어가지 않게 바로 연다. 리전은 사용자 입력이라 형식이 맞을 때만 쓴다
     @staticmethod
     def services_aws_account_console_url(region:str|None, page:str="stacks") -> str:
@@ -417,6 +429,18 @@ class Github_Service:
             raise ValueError("GitHub 연결이 끊어졌습니다. 다시 설치해 주세요.")
 
         return await Github_Service.services_github_installation_token(installation.installation_id)
+
+
+    # GitHub 설치 소유 확인 - 없거나 남의 것이면 404 (존재를 숨긴다). u_id 가 None(인증 끔)이면 있는지만 본다. 다른 기능(deploys, advice)이 부른다
+    @staticmethod
+    async def services_github_assert_owned(db:AsyncSession, g_id:int, u_id:int|None):
+        installation=await Github_Installation_Crud.crud_github_installation_get_by_id(db, g_id)
+
+        if not installation or (u_id is not None and installation.u_id != u_id):
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND,
+                                detail='해당 id의 GitHub 설치가 없습니다')
+
+        return installation
 
 
     # 연결 확인 - 설치 토큰을 실제로 받아 접근 가능한 레포를 세어 본다 (연결 직후와 [연결 확인] 버튼)

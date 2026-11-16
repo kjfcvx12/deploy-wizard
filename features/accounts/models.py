@@ -10,6 +10,8 @@ class Aws_Account(Base):
     __tablename__ = "aws_accounts"
 
     a_id: Mapped[int] = mapped_column(primary_key=True)
+    # 주인 (로그인 계획 Task 5) - 비면 인증 끔 시절의 것. ENSURE_COLUMNS·ENSURE_INDEXES 와 같아야 한다
+    u_id: Mapped[Optional[int]] = mapped_column(ForeignKey("users.u_id"), index=True)
 
     label: Mapped[str] = mapped_column(String(100), nullable=False)
     role_arn: Mapped[Optional[str]] = mapped_column(String(255))
@@ -32,6 +34,8 @@ class Github_Installation(Base):
     __tablename__ = "github_installations"
 
     g_id: Mapped[int] = mapped_column(primary_key=True)
+    # 주인 (로그인 계획 Task 5) - 비면 인증 끔 시절의 것. ENSURE_COLUMNS·ENSURE_INDEXES 와 같아야 한다
+    u_id: Mapped[Optional[int]] = mapped_column(ForeignKey("users.u_id"), index=True)
 
     installation_id: Mapped[int] = mapped_column(nullable=False, unique=True)
     account_login: Mapped[str] = mapped_column(String(100), nullable=False)
@@ -53,6 +57,8 @@ class Connection(Base):
     __tablename__ = "connections"
 
     c_id: Mapped[int] = mapped_column(primary_key=True)
+    # 주인 (로그인 계획 Task 5) - 비면 인증 끔 시절의 것. ENSURE_COLUMNS·ENSURE_INDEXES 와 같아야 한다
+    u_id: Mapped[Optional[int]] = mapped_column(ForeignKey("users.u_id"), index=True)
 
     label: Mapped[str] = mapped_column(String(100), nullable=False)
     # 둘 다 아직 연결 전이면 비어 있다 ([+]로 블록부터 만들고 안에서 하나씩 연결한다)

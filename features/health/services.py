@@ -186,14 +186,14 @@ class Health_Service:
         return await Health_Crud.crud_health_count_successes_after_last_failure(db, d_id)
 
 
-    # 헬스체크 이력 - 최근 hours 시간, 최신 1440건을 시간순(오래된 것부터)으로
+    # 헬스체크 이력 - 최근 hours 시간, 최신 1440건을 시간순(오래된 것부터)으로. u_id 를 주면 그 사용자 배포만 (남의 것 404)
     @staticmethod
-    async def services_health_history(db:AsyncSession, d_id:int, hours:int=24, now:datetime|None=None) -> list[Health_Check]:
+    async def services_health_history(db:AsyncSession, d_id:int, hours:int=24, now:datetime|None=None, u_id:int|None=None) -> list[Health_Check]:
         if hours < 1 or hours > 168:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST,
                                 detail='조회 시간은 1~168시간 사이여야 합니다')
 
-        await Deploy_Service.services_deploy_get_d_id(db, d_id)
+        await Deploy_Service.services_deploy_get_owned(db, d_id, u_id)
 
         now=now or Health_Service.services_health_now()
         rows=await Health_Crud.crud_health_get_since(db, d_id, now - timedelta(hours=hours), HEALTH_HISTORY_MAX)

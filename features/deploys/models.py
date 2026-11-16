@@ -10,6 +10,8 @@ class Deploy(Base):
     __tablename__ = "deploys"
 
     d_id: Mapped[int] = mapped_column(primary_key=True)
+    # 주인 (로그인 계획 Task 5) - 비면 인증 끔 시절의 배포. ENSURE_COLUMNS·ENSURE_INDEXES 와 같아야 한다
+    u_id: Mapped[Optional[int]] = mapped_column(ForeignKey("users.u_id"), index=True)
 
     repo_url: Mapped[str] = mapped_column(String(255), nullable=False)
     branch: Mapped[Optional[str]] = mapped_column(String(100))

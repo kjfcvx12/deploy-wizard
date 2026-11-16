@@ -16,6 +16,7 @@ from features.envvars import models as envvar_models
 from features.health import models as health_models
 from features.incidents import models as incident_models
 from features.notifications import models as notification_models
+from features.auth import models as auth_models
 
 from features.deploys.services import Deploy_Service
 from features.accounts.services import Aws_Account_Service

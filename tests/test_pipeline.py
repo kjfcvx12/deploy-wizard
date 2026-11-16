@@ -184,7 +184,9 @@ async def test_pipeline_passes_connected_aws_account_id(client, monkeypatch):
 # M6 - GitHub 설치가 연결돼 있으면 클론 전에 설치 토큰을 받아서 그대로 넘긴다
 @pytest.mark.asyncio
 async def test_pipeline_clone_uses_github_installation_token(client, monkeypatch):
-    d_id=(await client.post("/api/deploys", json={"repo_url": "https://github.com/o/r", "github_installation_id": 9})).json()["d_id"]
+    d_id=(await client.post("/api/deploys", json={"repo_url": "https://github.com/o/r"})).json()["d_id"]
+    # 만들 때는 있는 설치여야 하므로(로그인 계획 Task 5) 연결은 나중에 채운다 - 시험 대상은 파이프라인이 설치 토큰을 쓰는가
+    await stub_progress(d_id, github_installation_id=9)
 
     seen_installation_ids=[]
     async def fake_token(db, g_id):

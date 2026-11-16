@@ -12,7 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from fastapi import HTTPException, status
 
 from features.advice.scheme import Advice_Request, Advice_Need, Advice_Cost, Advice_Signals, Deploy_Advice
-from features.accounts.services import Github_Service
+from features.accounts.services import Aws_Account_Service, Github_Service
 from features.envvars.scheme import Env_Found
 from features.envvars.services import Env_Service
 from features.pricing.services import Pricing_Service
@@ -321,13 +321,19 @@ class Advice_Service:
         return result
 
 
-    # 분석만 하기 - 임시 폴더에 클론해 읽고 항상 지운다. 배포 기록·AWS 호출 없음 (기획서 I절)
+    # 분석만 하기 - 임시 폴더에 클론해 읽고 항상 지운다. 배포 기록·AWS 호출 없음 (기획서 I절). 본문의 계정·설치가 남의 것이면 404
     @staticmethod
-    async def services_advice_analyze(db:AsyncSession, req:Advice_Request) -> Deploy_Advice:
-        # 1. 주소·브랜치 검증과 커밋 확인
+    async def services_advice_analyze(db:AsyncSession, req:Advice_Request, u_id:int|None=None) -> Deploy_Advice:
+        # 1. 주소·브랜치 검증, 계정·설치 소유 확인과 커밋 확인
         try:
             repo_url=Repo_Service.services_repo_check_url(req.repo_url)
             branch=Repo_Service.services_repo_check_branch(req.branch)
+
+            if req.aws_account_id is not None:
+                await Aws_Account_Service.services_aws_account_assert_owned(db, req.aws_account_id, u_id)
+            if req.github_installation_id is not None:
+                await Github_Service.services_github_assert_owned(db, req.github_installation_id, u_id)
+
             token=await Github_Service.services_github_token_by_g_id(db, req.github_installation_id) if req.github_installation_id else None
             commit_sha=await asyncio.to_thread(Repo_Service.services_repo_commit_sha, repo_url, branch, token)
 

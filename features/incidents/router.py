@@ -17,16 +17,16 @@ router=APIRouter(prefix='/api',tags=['Incident'])
 # GET 인시던트 목록 (최신순 100건)
 @router.get('/incidents', response_model=list[Incident_Read])
 async def router_incident_get_all(status:str|None=None, d_id:int|None=None, after:int|None=Query(None, ge=1), db:AsyncSession=Depends(get_db), user:Current_User=Depends(Auth_Service.services_auth_current_user)):
-    return await Incident_Service.services_incident_get_all(db, status, d_id, after)
+    return await Incident_Service.services_incident_get_all(db, status, d_id, after, user.u_id)
 
 
 # GET 인시던트 한 건과 복구 시도 이력
 @router.get('/incidents/{i_id}', response_model=Incident_Detail)
 async def router_incident_get_i_id(i_id:int, db:AsyncSession=Depends(get_db), user:Current_User=Depends(Auth_Service.services_auth_current_user)):
-    return await Incident_Service.services_incident_get_detail(db, i_id)
+    return await Incident_Service.services_incident_get_detail(db, i_id, user.u_id)
 
 
 # GET 한 배포의 인시던트들
 @router.get('/deploys/{d_id}/incidents', response_model=list[Incident_Read])
 async def router_incident_get_by_deploy(d_id:int, after:int|None=Query(None, ge=1), db:AsyncSession=Depends(get_db), user:Current_User=Depends(Auth_Service.services_auth_current_user)):
-    return await Incident_Service.services_incident_get_by_deploy(db, d_id, after)
+    return await Incident_Service.services_incident_get_by_deploy(db, d_id, after, user.u_id)

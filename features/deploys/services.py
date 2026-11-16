@@ -31,10 +31,10 @@ DEPLOY_CHANGED_DETAIL="복구 중에 배포가 변경되어 기록을 반영하�
 
 class Deploy_Service:
 
-    # 전 배포 조회
+    # 전 배포 조회 - u_id 를 주면 그 사용자 것만 (라우터가 현재 사용자를 넘긴다)
     @staticmethod
-    async def services_deploy_get_all(db:AsyncSession):
-        deploys=await Deploy_Crud.crud_deploy_get_all(db)
+    async def services_deploy_get_all(db:AsyncSession, u_id:int|None=None):
+        deploys=await Deploy_Crud.crud_deploy_get_all(db, u_id)
         pending=await Env_Service.services_env_pending_many(db, [d.d_id for d in deploys])
 
         open_states=await Incident_Service.services_incident_open_states(db, [d.d_id for d in deploys])
@@ -46,14 +46,23 @@ class Deploy_Service:
         return deploys
 
 
-    # 배포 d_id 조회
+    # 배포 소유 확인 - 없거나 지웠거나 남의 것이면 404 (존재를 숨긴다). u_id 가 None(인증 끔·백그라운드)이면 주인을 보지 않는다
+    # d_id 를 받는 배포·환경변수·인시던트 라우트는 모두 이것으로 먼저 확인한다
     @staticmethod
-    async def services_deploy_get_d_id(db: AsyncSession, d_id: int):
-        deploy = await Deploy_Crud.crud_deploy_get_by_d_id(db, d_id)
+    async def services_deploy_get_owned(db: AsyncSession, d_id: int, u_id: int | None):
+        deploy = await Deploy_Crud.crud_deploy_get_by_d_id(db, d_id, u_id)
 
         if not deploy or deploy.status == 'deleted':
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND,
                                 detail='해당 id의 배포가 없습니다')
+
+        return deploy
+
+
+    # 배포 d_id 조회 - u_id 를 주면 그 사용자 것만 (백그라운드는 주지 않는다)
+    @staticmethod
+    async def services_deploy_get_d_id(db: AsyncSession, d_id: int, u_id: int | None = None):
+        deploy = await Deploy_Service.services_deploy_get_owned(db, d_id, u_id)
 
         deploy.env_pending=await Env_Service.services_env_pending_count(db, d_id)
         deploy.open_incident_id, deploy.open_incident_status=(await Incident_Service.services_incident_open_states(db, [d_id]))[d_id]
@@ -62,8 +71,8 @@ class Deploy_Service:
 
     # 배포 로그 조회
     @staticmethod
-    async def services_deploy_get_logs(db: AsyncSession, d_id: int, after: int):
-        await Deploy_Service.services_deploy_get_d_id(db, d_id)
+    async def services_deploy_get_logs(db: AsyncSession, d_id: int, after: int, u_id: int | None = None):
+        await Deploy_Service.services_deploy_get_owned(db, d_id, u_id)
         return await Deploy_Crud.crud_deploy_log_get_after(db, d_id, after)
 
 
@@ -101,14 +110,17 @@ class Deploy_Service:
 
     # 문제 이력 조회 - 다시 배포해도 지워지지 않는 지난 실패들
     @staticmethod
-    async def services_deploy_get_issues(db: AsyncSession, d_id: int):
-        await Deploy_Service.services_deploy_get_d_id(db, d_id)
+    async def services_deploy_get_issues(db: AsyncSession, d_id: int, u_id: int | None = None):
+        await Deploy_Service.services_deploy_get_owned(db, d_id, u_id)
         return await Deploy_Crud.crud_deploy_issue_get_by_d_id(db, d_id)
 
 
-    # 레포 브랜치 목록 조회 - GitHub 설치가 있으면 그 토큰으로 (private 레포도 가능)
+    # 레포 브랜치 목록 조회 - GitHub 설치가 있으면 그 토큰으로 (private 레포도 가능). 남의 설치는 404
     @staticmethod
-    async def services_deploy_get_remote(db:AsyncSession, repo_url:str, github_installation_id:int|None=None) -> Repo_Remote:
+    async def services_deploy_get_remote(db:AsyncSession, repo_url:str, github_installation_id:int|None=None, u_id:int|None=None) -> Repo_Remote:
+        if github_installation_id:
+            await Github_Service.services_github_assert_owned(db, github_installation_id, u_id)
+
         try:
             token=await Github_Service.services_github_token_by_g_id(db, github_installation_id) if github_installation_id else None
             return await asyncio.to_thread(Repo_Service.services_repo_remote, repo_url, token)
@@ -151,20 +163,25 @@ class Deploy_Service:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=message)
 
 
-    # 배포 생성 - 기록을 만들고 파이프라인을 띄운다
+    # 배포 생성 - 기록을 만들고 파이프라인을 띄운다. 주인은 u_id, 본문의 계정·설치는 그 사용자 것이어야 한다 (남의 것 404)
     @staticmethod
-    async def services_deploy_create(db:AsyncSession, deploy:Deploy_Create):
+    async def services_deploy_create(db:AsyncSession, deploy:Deploy_Create, u_id:int|None=None):
         try:
             repo_url=Repo_Service.services_repo_check_url(deploy.repo_url)
             branch=Repo_Service.services_repo_check_branch(deploy.branch)
             Deploy_Service.services_deploy_check_options(deploy)
+
+            if deploy.aws_account_id is not None:
+                await Aws_Account_Service.services_aws_account_assert_owned(db, deploy.aws_account_id, u_id)
+            if deploy.github_installation_id is not None:
+                await Github_Service.services_github_assert_owned(db, deploy.github_installation_id, u_id)
 
             new_deploy=await Deploy_Crud.crud_deploy_create(db, Deploy_Create(
                 repo_url=repo_url, branch=branch,
                 aws_account_id=deploy.aws_account_id, github_installation_id=deploy.github_installation_id,
                 cpu=deploy.cpu, memory=deploy.memory, min_tasks=deploy.min_tasks, max_tasks=deploy.max_tasks,
                 scale_metric=deploy.scale_metric, scale_target=deploy.scale_target,
-                planned_hours=None if deploy.planned_hours is None else float(deploy.planned_hours)))
+                planned_hours=None if deploy.planned_hours is None else float(deploy.planned_hours)), u_id)
 
             await db.commit()
             await db.refresh(new_deploy)
@@ -187,9 +204,9 @@ class Deploy_Service:
 
     # 다시 배포 - 사용자가 버튼을 눌렀을 때만
     @staticmethod
-    async def services_deploy_redeploy(db:AsyncSession, d_id:int):
+    async def services_deploy_redeploy(db:AsyncSession, d_id:int, u_id:int|None=None):
         try:
-            deploy=await Deploy_Service.services_deploy_get_d_id(db, d_id)
+            deploy=await Deploy_Service.services_deploy_get_d_id(db, d_id, u_id)
 
             if deploy.status in PROGRESS_STATUSES:
                 raise HTTPException(status_code=status.HTTP_409_CONFLICT,
@@ -215,9 +232,9 @@ class Deploy_Service:
 
     # 이어서 배포 - 환경변수 입력을 마친 배포를 배포 단계부터 다시 돌린다. 사용자가 버튼을 눌렀을 때만
     @staticmethod
-    async def services_deploy_env_continue(db:AsyncSession, d_id:int):
+    async def services_deploy_env_continue(db:AsyncSession, d_id:int, u_id:int|None=None):
         try:
-            deploy=await Deploy_Service.services_deploy_get_d_id(db, d_id)
+            deploy=await Deploy_Service.services_deploy_get_d_id(db, d_id, u_id)
 
             if deploy.status != 'needs_input':
                 raise HTTPException(status_code=status.HTTP_409_CONFLICT,
@@ -255,9 +272,9 @@ class Deploy_Service:
 
     # 멈춤 - 요금이 나가는 ECS 서비스만 내린다. 이미지와 기록은 남겨 [다시 켜기]가 빌드 없이 끝나게 한다. 사용자가 확인한 뒤에만 부른다
     @staticmethod
-    async def services_deploy_stop(db:AsyncSession, d_id:int):
+    async def services_deploy_stop(db:AsyncSession, d_id:int, u_id:int|None=None):
         try:
-            deploy=await Deploy_Service.services_deploy_get_d_id(db, d_id)
+            deploy=await Deploy_Service.services_deploy_get_d_id(db, d_id, u_id)
 
             if deploy.status != 'running' or not deploy.service_arn:
                 raise HTTPException(status_code=status.HTTP_409_CONFLICT,
@@ -283,9 +300,9 @@ class Deploy_Service:
 
     # 다시 켜기 - 멈춘 배포를 남겨 둔 이미지로 다시 띄운다 (클론·빌드·푸시 없이 배포 단계만). 사용자가 버튼을 눌렀을 때만
     @staticmethod
-    async def services_deploy_start(db:AsyncSession, d_id:int):
+    async def services_deploy_start(db:AsyncSession, d_id:int, u_id:int|None=None):
         try:
-            deploy=await Deploy_Service.services_deploy_get_d_id(db, d_id)
+            deploy=await Deploy_Service.services_deploy_get_d_id(db, d_id, u_id)
 
             if deploy.status != 'stopped':
                 raise HTTPException(status_code=status.HTTP_409_CONFLICT,
@@ -371,9 +388,9 @@ class Deploy_Service:
 
     # 배포 삭제 - AWS 리소스 정리. 사용자가 확인한 뒤에만 부른다
     @staticmethod
-    async def services_deploy_delete(db: AsyncSession, d_id: int) -> dict:
+    async def services_deploy_delete(db: AsyncSession, d_id: int, u_id: int | None = None) -> dict:
         try:
-            deploy=await Deploy_Service.services_deploy_get_d_id(db, d_id)
+            deploy=await Deploy_Service.services_deploy_get_d_id(db, d_id, u_id)
 
             if deploy.status in PROGRESS_STATUSES:
                 raise HTTPException(status_code=status.HTTP_409_CONFLICT,
@@ -413,8 +430,8 @@ class Deploy_Service:
 
     # 헬스체크 - 이미 공개된 주소를 부르는 것이라 AWS 권한이 필요 없다 (기획서 03장)
     @staticmethod
-    async def services_deploy_health(db: AsyncSession, d_id: int) -> Deploy_Health:
-        deploy=await Deploy_Service.services_deploy_get_d_id(db, d_id)
+    async def services_deploy_health(db: AsyncSession, d_id: int, u_id: int | None = None) -> Deploy_Health:
+        deploy=await Deploy_Service.services_deploy_get_owned(db, d_id, u_id)
 
         if not deploy.endpoint:
             return Deploy_Health(d_id=d_id, health='unknown', detail='아직 주소가 없습니다')
@@ -566,9 +583,9 @@ class Deploy_Service:
     # 배포별 설정 변경 - 보낸 항목만 바꾼다 (자동 재배포, 자동 복구, 예정 사용 시간)
     # 예정 사용 시간은 null 을 보내면 계획을 지운다. 보낼 때마다 시간 초과 알림 기록(plan_notified_at)을 비워 알림을 다시 켠다
     @staticmethod
-    async def services_deploy_settings_update(db: AsyncSession, d_id: int, body: Deploy_Settings_Update):
+    async def services_deploy_settings_update(db: AsyncSession, d_id: int, body: Deploy_Settings_Update, u_id: int | None = None):
         try:
-            await Deploy_Service.services_deploy_get_d_id(db, d_id)
+            await Deploy_Service.services_deploy_get_owned(db, d_id, u_id)
 
             changes=body.model_dump(exclude_none=True, exclude={"planned_hours"})
 
@@ -584,7 +601,7 @@ class Deploy_Service:
             await Deploy_Crud.crud_deploy_update(db, d_id, changes)
             await db.commit()
 
-            return await Deploy_Service.services_deploy_get_d_id(db, d_id)
+            return await Deploy_Service.services_deploy_get_d_id(db, d_id, u_id)
 
         except HTTPException:
             raise
