@@ -8,6 +8,46 @@ Base URL: `http://localhost:8081` · 전부 JSON · 인증 없음(로컬 전용)
 { "detail": "해당 id의 배포가 없습니다" }
 ```
 
+## Auth (로그인 - 백엔드, 실제 Google 로그인 미확인)
+
+Google `id_token`으로 로그인해 액세스 토큰(JWT, 900초)과 리프레시 토큰(`dwr_…`, 30일, 회전)을 받는다. 로그인은 `AUTH_ALLOWED_EMAILS`(쉼표)에 있는 이메일만 된다. 다른 라우터는 아직 인증을 요구하지 않는다(`AUTH_ENABLED`는 다음 단계).
+
+| Method | Endpoint | 설명 | 성공 |
+|--------|----------|------|------|
+| POST | `/api/auth/google` | 본문 `{id_token, platform}`. Google 서명·`aud`(그 플랫폼의 클라이언트 ID)·`iss`·`exp`·`email_verified` 검증 → 사용자를 찾거나(`google_sub`) 만들고 새 계열로 토큰 발급. 있는 사용자는 이메일·이름·사진을 갱신 | 200 `Auth_Token` |
+| POST | `/api/auth/refresh` | 본문 `{refresh_token}`(앱) 또는 쿠키 `dw_refresh`(웹, 본문 생략·`null`). 쓴 토큰은 폐기하고 같은 계열의 새 토큰 발급. **이미 폐기된 토큰이 다시 오면 그 계열 전체를 폐기하고 401.** 같은 토큰으로 동시에 두 번 오면 하나만 200 | 200 `Auth_Token` |
+| POST | `/api/auth/logout` | 그 토큰의 계열 폐기 + 쿠키 삭제. 토큰이 없거나 몰라도 200 | 200 `{"message": "로그아웃했습니다"}` |
+| GET | `/api/me` | 헤더 `Authorization: Bearer <access_token>` 필수 (`AUTH_ENABLED`와 무관) | 200 `User_Read` |
+
+- `platform`: `web` | `android`. 그 밖(`ios` 포함)은 422. 플랫폼마다 `aud`가 다르다 — `web`은 `GOOGLE_CLIENT_ID_WEB`, `android`는 `GOOGLE_CLIENT_ID_ANDROID`만 받는다. iOS 는 `features/auth/scheme.py`의 `LOGIN_PLATFORMS`에 한 줄 + `GOOGLE_CLIENT_ID_IOS` 설정으로 더한다.
+- **웹 (`platform="web"` 또는 쿠키로 온 refresh)**: 리프레시는 본문에 싣지 않고(`refresh_token: null`) `Set-Cookie: dw_refresh=…; HttpOnly; SameSite=strict; Path=/api/auth; Max-Age=2592000`(`AUTH_COOKIE_SECURE=true`이면 `Secure`). **앱**: 본문 `refresh_token`에 싣고, 앱이 안전한 저장소에 둔다.
+- **쿠키로 온 refresh·logout 은 `Origin` 헤더가 `CORS_ORIGINS`에 있어야 한다.** 없거나 밖이면 403 (토큰은 쓰지 않는다). 본문에 `refresh_token`이 있으면 쿠키보다 본문을 쓴다.
+- 서버는 리프레시 토큰을 SHA-256 해시로만 저장한다. 원문은 발급 응답에 한 번만 나간다. 사용자 이메일·이름·사진·`google_sub`는 DB 에 암호화해 둔다.
+
+### `Auth_Token`
+```json
+{ "access_token": "eyJ…", "expires_in": 900, "refresh_token": "dwr_…", "user": { "u_id": 1, "email": "me@example.com", "name": "홍길동", "picture_url": "https://…" } }
+```
+웹 응답은 `refresh_token: null` (쿠키로 간다). 액세스 토큰: HS256(`AUTH_JWT_KEY`), 클레임 `sub`(u_id 문자열)·`typ="access"`·`iss="deploy-wizard"`·`aud="deploy-wizard-api"`·`iat`·`exp`.
+
+### `User_Read`
+```json
+{ "u_id": 1, "email": "me@example.com", "name": "홍길동", "picture_url": "https://…" }
+```
+`name`·`picture_url`은 `null`일 수 있다.
+
+### 상태 코드와 `detail`
+
+| 코드 | 언제 | `detail` |
+|------|------|----------|
+| 401 | Google `id_token`이 틀림·만료·`aud`/`iss` 불일치·이메일 미확인 | `Google 로그인 정보를 확인할 수 없습니다. 다시 로그인해 주세요` |
+| 403 | 허용 목록 밖의 이메일 또는 탈퇴한 사용자 | `로그인이 허용된 계정이 아닙니다` |
+| 422 | `platform`이 `web`·`android`가 아님, 본문 타입이 틀림 | FastAPI 기본 검증 오류 목록 |
+| 503 | Google 공개키를 못 받음 / 그 플랫폼의 클라이언트 ID 미설정 / `AUTH_JWT_KEY` 없음 | `Google 로그인 서버에 연결할 수 없습니다. 잠시 뒤 다시 시도해 주세요` / `Google 로그인이 아직 설정되지 않았습니다 (GOOGLE_CLIENT_ID_* 확인)` / `로그인 설정이 완료되지 않았습니다 (AUTH_JWT_KEY 확인)` |
+| 401 | refresh: 토큰 없음·모름·만료·폐기됨(재사용 → 계열 폐기)·동시 요청에서 짐·탈퇴한 사용자 | `로그인이 만료되었습니다. 다시 로그인해 주세요` |
+| 403 | 쿠키로 온 refresh·logout 의 `Origin`이 없거나 허용 목록 밖 | `허용되지 않은 출처입니다` |
+| 401 | `/api/me`: 액세스 토큰 없음·틀림·만료·다른 용도(`typ`) (응답 헤더 `WWW-Authenticate: Bearer`) | `로그인이 필요합니다` |
+
 ## Deploy
 
 | Method | Endpoint | 설명 | 성공 |
