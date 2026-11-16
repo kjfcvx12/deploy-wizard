@@ -6,6 +6,7 @@ import {
   buildDeployOptions, buildEstimateBody, describeEstimate, estimateFromCost, parsePlannedHours, validateScaling,
 } from './costLogic.js'
 import { createLatest } from './latest.js'
+import { rejectText } from './rejectText.js'
 
 const EMPTY_SCALING = { enabled: false, min: '', max: '', metric: '', target: '' }
 const BLANK_SCALING_TEXT = '증설 값을 모두 적거나, 자동 증설 체크를 풀어 주세요'
@@ -24,12 +25,12 @@ function ComponentTable({ view }) {
         {view.componentRows.map((row, i) => (
           <tr key={`${row.name}-${i}`}>
             <td>{row.name}{row.note && <span className="muted small cost-note">{row.note}</span>}</td>
-            <td className="num">{row.hourly}</td>
+            <td className="num">{row.hourly ?? '-'}</td>
           </tr>
         ))}
       </tbody>
       <tfoot>
-        <tr><th scope="row">시간당 합계</th><td className="num">{view.hourly}</td></tr>
+        <tr><th scope="row">시간당 합계</th><td className="num">{view.hourly ?? '-'}</td></tr>
       </tfoot>
     </table>
   )
@@ -62,7 +63,7 @@ export default function CostPanel({ cost, onChange, disabled }) {
   const [plannedText, setPlannedText] = useState('')
   const [scaling, setScaling] = useState(EMPTY_SCALING)
   const [estimate, setEstimate] = useState(null)
-  const [status, setStatus] = useState('loading')
+  const [status, setStatus] = useState(() => (estimateFromCost(cost) ? 'ready' : 'loading'))
   const [rejected, setRejected] = useState('')
   const latestRef = useRef(null)
   const onChangeRef = useRef(onChange)
@@ -98,12 +99,17 @@ export default function CostPanel({ cost, onChange, disabled }) {
   const problem = planned.error || scalingProblem
   const valid = !problem && !rejected
 
-  // 옵션이 바뀌면 잠시 뒤 추정을 다시 부른다 - 낡은 응답은 요청 번호로 버린다
+  const pristine = !specKey && !plannedText.trim() && !scaling.enabled
+  const fromCost = useMemo(() => estimateFromCost(cost), [cost])
+  const useCost = Boolean(pristine && fromCost)
+
+  // 옵션이 바뀌면 잠시 뒤 추정을 다시 부른다 (손대지 않았고 분석 비용이 있으면 부르지 않는다) - 낡은 응답은 요청 번호로 버린다
   useEffect(() => {
     const latest = latestRef.current
     if (!latest) return undefined
     const id = latest.start()
     setRejected('')
+    if (useCost) { setStatus('ready'); return undefined }
     if (problem) { setStatus('stale'); return undefined }
     setStatus('loading')
     const timer = setTimeout(async () => {
@@ -116,20 +122,17 @@ export default function CostPanel({ cost, onChange, disabled }) {
         if (!latest.accept(id)) return
         setEstimate(null)
         setStatus('error')
-        if (e.status === 400 || e.status === 422) setRejected(e.message)
+        if (e.status === 400 || e.status === 422) setRejected(rejectText(e.message))
       }
     }, ESTIMATE_DEBOUNCE_MS)
     return () => clearTimeout(timer)
-  }, [selection, problem])
+  }, [selection, problem, useCost])
 
-  const pristine = !specKey && !plannedText.trim() && !scaling.enabled
-  const fromCost = useMemo(() => estimateFromCost(cost), [cost])
   let shown = null
-  if (status === 'ready') shown = estimate
-  else if (pristine && fromCost) shown = fromCost
-  else if (status === 'loading' || status === 'stale') shown = estimate
+  if (useCost) shown = fromCost
+  else if (status === 'ready' || status === 'loading' || status === 'stale') shown = estimate
   const view = useMemo(() => (shown ? describeEstimate(shown) : null), [shown])
-  const hourly = view && (status === 'ready' || (pristine && status !== 'loading')) ? view.hourly : null
+  const hourly = view && (useCost || status === 'ready') ? view.hourly : null
 
   const deployOptions = useMemo(() => buildDeployOptions(selection, cap, metrics), [selection, cap, metrics])
 
@@ -153,6 +156,7 @@ export default function CostPanel({ cost, onChange, disabled }) {
   }
   const setScalingField = (field) => (event) => setScaling((prev) => ({ ...prev, [field]: event.target.value }))
 
+  const scalingA11y = { 'aria-invalid': Boolean(scalingProblem), 'aria-describedby': scalingProblem ? `${uid}-scaling-err` : undefined }
   const targetHint = scaling.metric === 'REQUEST_COUNT_PER_TARGET' ? '요청 수는 1~100000' : 'CPU·메모리 사용률(%)은 1~100'
   const canScale = Boolean(options && cap && metrics?.length)
   const priceMissing = !view && status !== 'loading' && !problem
@@ -199,7 +203,7 @@ export default function CostPanel({ cost, onChange, disabled }) {
             aria-invalid={Boolean(planned.error)} aria-describedby={planned.error ? `${uid}-hours-err` : undefined}
             onChange={(e) => setPlannedText(e.target.value)}
           />
-          {planned.error && <p id={`${uid}-hours-err`} className="cost-err small">{planned.error}</p>}
+          <p id={`${uid}-hours-err`} className="cost-err small" role="status" aria-live="polite">{planned.error || ''}</p>
           <p className="muted small cost-hint">정한 시간을 넘기면 알림만 보냅니다. 자동으로 끄지 않습니다.</p>
         </div>
 
@@ -214,26 +218,26 @@ export default function CostPanel({ cost, onChange, disabled }) {
                 <div className="cost-grid">
                   <div className="cost-field">
                     <label htmlFor={`${uid}-min`}>최소 개수</label>
-                    <input id={`${uid}-min`} type="text" inputMode="numeric" autoComplete="off" value={scaling.min} disabled={disabled} onChange={setScalingField('min')} />
+                    <input id={`${uid}-min`} type="text" inputMode="numeric" autoComplete="off" value={scaling.min} disabled={disabled} {...scalingA11y} onChange={setScalingField('min')} />
                   </div>
                   <div className="cost-field">
                     <label htmlFor={`${uid}-max`}>최대 개수</label>
-                    <input id={`${uid}-max`} type="text" inputMode="numeric" autoComplete="off" value={scaling.max} disabled={disabled} onChange={setScalingField('max')} />
+                    <input id={`${uid}-max`} type="text" inputMode="numeric" autoComplete="off" value={scaling.max} disabled={disabled} {...scalingA11y} onChange={setScalingField('max')} />
                   </div>
                   <div className="cost-field">
                     <label htmlFor={`${uid}-metric`}>늘리는 기준</label>
-                    <select id={`${uid}-metric`} value={scaling.metric} disabled={disabled} onChange={setScalingField('metric')}>
+                    <select id={`${uid}-metric`} value={scaling.metric} disabled={disabled} {...scalingA11y} onChange={setScalingField('metric')}>
                       <option value="">기준 고르기</option>
                       {metrics.map((m) => <option key={m.value} value={m.value}>{m.label}</option>)}
                     </select>
                   </div>
                   <div className="cost-field">
                     <label htmlFor={`${uid}-target`}>목표값</label>
-                    <input id={`${uid}-target`} type="text" inputMode="numeric" autoComplete="off" value={scaling.target} disabled={disabled} onChange={setScalingField('target')} />
+                    <input id={`${uid}-target`} type="text" inputMode="numeric" autoComplete="off" value={scaling.target} disabled={disabled} {...scalingA11y} onChange={setScalingField('target')} />
                   </div>
                 </div>
                 <p className="muted small cost-hint">작업 개수는 1~{cap}개까지. 목표값: {targetHint}. 늘어난 만큼 요금도 늘어납니다.</p>
-                {scalingProblem && <p className="cost-err small">{scalingProblem}</p>}
+                <p id={`${uid}-scaling-err`} className="cost-err small" role="status" aria-live="polite">{scalingProblem || ''}</p>
               </>
             )}
           </div>
@@ -241,15 +245,15 @@ export default function CostPanel({ cost, onChange, disabled }) {
         {optionsFailed && <p className="muted small cost-hint">사양·증설 선택지를 가져오지 못해 기본 사양으로 배포합니다. 사용 계획은 직접 적을 수 있습니다.</p>}
       </div>
 
+      {status === 'loading' && !useCost && <p className="muted small cost-hint" aria-hidden="true">가격을 계산하는 중...</p>}
       <div className="cost-live" role="status" aria-live="polite">
-        {status === 'loading' && <p className="muted small cost-hint">가격을 계산하는 중...</p>}
         {rejected && <p className="notice err">{rejected}</p>}
         {priceMissing && !rejected && (
           <p className="notice warn">{PRICE_FAIL_TEXT}{cost?.note ? ` (${cost.note})` : ''}</p>
         )}
         {view && (
           <>
-            <p className="cost-total">시간당 합계 <strong>{view.hourly}</strong></p>
+            <p className="cost-total">시간당 합계 <strong>{view.hourly ?? '-'}</strong></p>
             {view.planned && <p className="cost-total">예정 사용: {view.planned}</p>}
             {view.max && <p className="cost-total">{view.max}</p>}
             {status === 'stale' && <p className="muted small cost-hint">값을 고치면 금액을 다시 계산합니다.</p>}

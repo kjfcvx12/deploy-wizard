@@ -306,6 +306,12 @@ details.env-group > summary { font-size: 14px; }
 .cost-note { display: block; }
 .cost-billing { margin-top: 14px; }
 
+/* 폰 폭 - 빠른 선택 버튼과 자동 증설 체크 줄의 터치 크기 */
+@media (max-width: 640px) {
+  .cost-quick button { min-height: 40px; padding: 8px 14px; }
+  .cost-check { min-height: 40px; padding-block: 8px; }
+}
+
 /* 목록 - 긴 레포 이름·주소가 칸을 밀어내지 않게 줄바꿈한다 */
 .deploy-item > div { min-width: 0; }
 .deploy-item .badge { flex: none; }
