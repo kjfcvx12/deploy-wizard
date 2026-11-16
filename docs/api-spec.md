@@ -1,6 +1,6 @@
 # API 스펙
 
-Base URL: `http://localhost:8081` · 전부 JSON · 인증 없음(로컬 전용) · 대화형 문서 `/docs`
+Base URL: `http://localhost:8081` · 전부 JSON · 인증은 `AUTH_ENABLED`에 따른다(기본 `false` = 지금처럼 인증 없음, 로컬 전용. 아래 "인증 공통") · 대화형 문서 `/docs`
 
 에러는 FastAPI 기본 형태다. `detail`은 한국어이며 화면에 그대로 보여 준다.
 
@@ -8,16 +8,37 @@ Base URL: `http://localhost:8081` · 전부 JSON · 인증 없음(로컬 전용)
 { "detail": "해당 id의 배포가 없습니다" }
 ```
 
+## 인증 공통 (로그인 계획 Task 4)
+
+- **`AUTH_ENABLED=false` (기본)**: 지금처럼 토큰 없이 모든 API 가 동작한다(소유권 필터 없음). 웹·앱·MCP stdio 서버가 로그인 화면 전까지 그대로 쓴다. 보내온 `Authorization` 헤더는 무시한다 — 단 `/api/me`·`/api/auth/tokens*`는 꺼진 모드에서도 로그인 사용자가 있어야 한다.
+- **`AUTH_ENABLED=true`**: 아래 공개 경로를 뺀 모든 `/api/*`에 `Authorization: Bearer <토큰>`이 필요하다. 토큰은 액세스 JWT(`POST /api/auth/google`·`/refresh`가 준 것) 또는 개인 토큰(`dwp_…`, MCP 용). 사용자가 없거나 `active`가 아니면 401. 개인 토큰은 사용자의 이메일이 `AUTH_ALLOWED_EMAILS`에 아직 있어야 한다.
+- 켤 때 `.env`에 `AUTH_JWT_KEY`·`BLIND_INDEX_KEY`·`SECRET_KEY`가 모두 있어야 한다. 하나라도 없으면 서버가 시작하지 않는다(`로그인을 켜려면 .env 에 … 가 필요합니다`).
+- **공개 경로** (`features/auth/services.py`의 `PUBLIC_PATHS`): `/api/health`, `/api/watches/webhook`(서명 검증), `/api/accounts/github/callback`(서명된 `state`는 Task 6), `/api/accounts/aws/template`(사용자 정보 없는 정적 파일), `/api/auth/google`, `/api/auth/refresh`, `/api/auth/logout`. 그 밖의 경로는 `tests/test_auth_current_user.py`가 모든 라우트를 훑어 인증 의존성이 걸려 있는지 확인한다 — 새 라우트도 빠지면 시험이 실패한다.
+- 401 응답에는 언제나 `WWW-Authenticate: Bearer` 헤더가 붙고 `detail`은 `로그인이 필요합니다`. 남의 자원은 403 이 아니라 **404**(존재를 숨긴다 — 소유권 필터는 다음 Task).
+
+### 개인 토큰 (PAT, MCP 용)
+
+| Method | Endpoint | 설명 | 성공 |
+|--------|----------|------|------|
+| POST | `/api/auth/tokens` | 본문 `Api_Token_Create`. 원문 `token`은 이 응답에만 나간다. 로그인(액세스 토큰)으로만 — 개인 토큰으로 부르면 403 | 201 `Api_Token_Issued` |
+| GET | `/api/auth/tokens` | 내 토큰 중 폐기 전 것 (만료된 것 포함), 최근 것부터. 원문 없이 끝 4자리만 | 200 `list[Api_Token_Read]` |
+| DELETE | `/api/auth/tokens/{a_t_id}` | 폐기. 남의 것·없는 것·이미 폐기한 것은 404 | 200 `{"message": "개인 토큰을 폐기했습니다"}` |
+
+- `Api_Token_Create`: `{ "name": "mcp", "expires_in_days": 30 }` — `name` 앞뒤 공백 제거 후 1~50자(밖이면 422), `expires_in_days`는 생략하면 `AUTH_PAT_DEFAULT_DAYS`(30), 1 미만 422, `AUTH_PAT_MAX_DAYS`(90) 초과 400 `개인 토큰 기간은 최대 90일입니다`.
+- `Api_Token_Read`: `{ "a_t_id": 1, "name": "mcp", "last4": "AbCd", "expires_at": "…", "last_used_at": null, "created_at": "…" }` · `Api_Token_Issued` = `Api_Token_Read` + `"token": "dwp_…"`.
+- 서버는 SHA-256 해시와 끝 4자리만 저장한다. `last_used_at`은 1분에 한 번까지만 갱신한다. 폐기·만료된 토큰은 401.
+- 웹 로그인 화면 전에 MCP 토큰 받기: `python scripts/auth_token.py create --email <주소> --name mcp [--days 30]` (표준 출력에 원문 한 번) · `list --email <주소>` · `revoke --id <a_t_id>`. DB 는 `DB_URL`. 사용자는 먼저 Google 로그인으로 만들어져 있어야 한다. MCP 서버는 `.env`의 `WIZARD_API_TOKEN`에 이 토큰을 두면 Bearer 로 보낸다.
+
 ## Auth (로그인 - 백엔드, 실제 Google 로그인 미확인)
 
-Google `id_token`으로 로그인해 액세스 토큰(JWT, 900초)과 리프레시 토큰(`dwr_…`, 30일, 회전)을 받는다. 로그인은 `AUTH_ALLOWED_EMAILS`(쉼표)에 있는 이메일만 된다. 다른 라우터는 아직 인증을 요구하지 않는다(`AUTH_ENABLED`는 다음 단계).
+Google `id_token`으로 로그인해 액세스 토큰(JWT, 900초)과 리프레시 토큰(`dwr_…`, 30일, 회전)을 받는다. 로그인은 `AUTH_ALLOWED_EMAILS`(쉼표)에 있는 이메일만 된다. 다른 라우터의 인증은 위 "인증 공통"을 따른다.
 
 | Method | Endpoint | 설명 | 성공 |
 |--------|----------|------|------|
 | POST | `/api/auth/google` | 본문 `{id_token, platform}`. Google 서명·`aud`(그 플랫폼의 클라이언트 ID)·`iss`·`exp`·`email_verified` 검증 → 사용자를 찾거나(`google_sub`) 만들고 새 계열로 토큰 발급. 있는 사용자는 이메일·이름·사진을 갱신 | 200 `Auth_Token` |
 | POST | `/api/auth/refresh` | 본문 `{refresh_token}`(앱) 또는 쿠키 `dw_refresh`(웹, 본문 생략·`null`). 쓴 토큰은 폐기하고 같은 계열의 새 토큰 발급. **이미 폐기된 토큰이 다시 오면 그 계열 전체를 폐기하고 401.** 같은 토큰으로 동시에 두 번 오면 하나만 200 | 200 `Auth_Token` |
 | POST | `/api/auth/logout` | 그 토큰의 계열 폐기 + 쿠키 삭제. 토큰이 없거나 몰라도 200 | 200 `{"message": "로그아웃했습니다"}` |
-| GET | `/api/me` | 헤더 `Authorization: Bearer <access_token>` 필수 (`AUTH_ENABLED`와 무관) | 200 `User_Read` |
+| GET | `/api/me` | 헤더 `Authorization: Bearer <액세스 토큰 또는 개인 토큰>` 필수 (`AUTH_ENABLED`와 무관) | 200 `User_Read` |
 
 - `platform`: `web` | `android`. 그 밖(`ios` 포함)은 422. 플랫폼마다 `aud`가 다르다 — `web`은 `GOOGLE_CLIENT_ID_WEB`, `android`는 `GOOGLE_CLIENT_ID_ANDROID`만 받는다. iOS 는 `features/auth/scheme.py`의 `LOGIN_PLATFORMS`에 한 줄 + `GOOGLE_CLIENT_ID_IOS` 설정으로 더한다.
 - **웹 (`platform="web"` 또는 쿠키로 온 refresh)**: 리프레시는 본문에 싣지 않고(`refresh_token: null`) `Set-Cookie: dw_refresh=…; HttpOnly; SameSite=strict; Path=/api/auth; Max-Age=2592000`(`AUTH_COOKIE_SECURE=true`이면 `Secure`). **앱**: 본문 `refresh_token`에 싣고, 앱이 안전한 저장소에 둔다.
@@ -46,7 +67,10 @@ Google `id_token`으로 로그인해 액세스 토큰(JWT, 900초)과 리프레�
 | 503 | Google 공개키를 못 받음 / 그 플랫폼의 클라이언트 ID 미설정 / `AUTH_JWT_KEY` 없음 | `Google 로그인 서버에 연결할 수 없습니다. 잠시 뒤 다시 시도해 주세요` / `Google 로그인이 아직 설정되지 않았습니다 (GOOGLE_CLIENT_ID_* 확인)` / `로그인 설정이 완료되지 않았습니다 (AUTH_JWT_KEY 확인)` |
 | 401 | refresh: 토큰 없음·모름·만료·폐기됨(재사용 → 계열 폐기)·동시 요청에서 짐·탈퇴한 사용자 | `로그인이 만료되었습니다. 다시 로그인해 주세요` |
 | 403 | 쿠키로 온 refresh·logout 의 `Origin`이 없거나 허용 목록 밖 | `허용되지 않은 출처입니다` |
-| 401 | `/api/me`: 액세스 토큰 없음·틀림·만료·다른 용도(`typ`) (응답 헤더 `WWW-Authenticate: Bearer`) | `로그인이 필요합니다` |
+| 401 | 보호 경로(`AUTH_ENABLED=true`)·`/api/me`·`/api/auth/tokens*`: 토큰 없음·틀림·만료·다른 용도(`typ`)·폐기된 개인 토큰·없는/탈퇴한 사용자 (응답 헤더 `WWW-Authenticate: Bearer`) | `로그인이 필요합니다` |
+| 403 | `/api/auth/tokens*`를 개인 토큰으로 부름 | `개인 토큰으로는 개인 토큰을 관리할 수 없습니다. 로그인해서 관리해 주세요` |
+| 400 | `POST /api/auth/tokens`: `expires_in_days`가 상한 초과 | `개인 토큰 기간은 최대 90일입니다` |
+| 404 | `DELETE /api/auth/tokens/{a_t_id}`: 남의 것·없음·이미 폐기 | `개인 토큰을 찾을 수 없습니다` |
 
 ## Deploy
 

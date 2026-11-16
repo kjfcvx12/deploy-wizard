@@ -2,9 +2,9 @@ from datetime import datetime
 
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
-from sqlalchemy import update
+from sqlalchemy import update, or_
 
-from features.auth.models import User, Refresh_Token
+from features.auth.models import User, Refresh_Token, Api_Token
 
 
 class Auth_Crud:
@@ -21,6 +21,13 @@ class Auth_Crud:
     async def crud_user_get_by_google_sub_bidx(db:AsyncSession, google_sub_bidx:str) -> User | None:
         result=await db.execute(select(User).filter(User.google_sub_bidx == google_sub_bidx))
         return result.scalars().first()
+
+
+    # 사용자를 이메일 블라인드 인덱스로 찾기 - 유일하지 않을 수 있어 목록으로
+    @staticmethod
+    async def crud_user_get_all_by_email_bidx(db:AsyncSession, email_bidx:str) -> list[User]:
+        result=await db.execute(select(User).filter(User.email_bidx == email_bidx).order_by(User.u_id))
+        return list(result.scalars().all())
 
 
     # 사용자 생성
@@ -84,5 +91,58 @@ class Auth_Crud:
         result=await db.execute(update(Refresh_Token)
                                 .where(Refresh_Token.family_id == family_id, Refresh_Token.revoked_at.is_(None))
                                 .values(revoked_at=now)
+                                .execution_options(synchronize_session=False))
+        return result.rowcount
+
+
+    # 개인 토큰 생성 - 원문이 아니라 해시와 끝 4자리만 받는다
+    @staticmethod
+    async def crud_api_token_create(db:AsyncSession, u_id:int, name:str, token_hash:str, last4:str, expires_at:datetime | None) -> Api_Token:
+        db_token=Api_Token(u_id=u_id, name=name, token_hash=token_hash, last4=last4, expires_at=expires_at)
+        db.add(db_token)
+        await db.flush()
+        return db_token
+
+
+    # 개인 토큰을 해시로 찾기
+    @staticmethod
+    async def crud_api_token_get_by_hash(db:AsyncSession, token_hash:str) -> Api_Token | None:
+        result=await db.execute(select(Api_Token).filter(Api_Token.token_hash == token_hash))
+        return result.scalars().first()
+
+
+    # 개인 토큰 a_t_id 찾기
+    @staticmethod
+    async def crud_api_token_get_by_a_t_id(db:AsyncSession, a_t_id:int) -> Api_Token | None:
+        result=await db.execute(select(Api_Token).filter(Api_Token.a_t_id == a_t_id))
+        return result.scalars().first()
+
+
+    # 사용자의 살아 있는(폐기 전) 개인 토큰 목록 - 최근 것부터
+    @staticmethod
+    async def crud_api_token_get_all_by_u_id(db:AsyncSession, u_id:int) -> list[Api_Token]:
+        result=await db.execute(select(Api_Token)
+                                .filter(Api_Token.u_id == u_id, Api_Token.revoked_at.is_(None))
+                                .order_by(Api_Token.a_t_id.desc()))
+        return list(result.scalars().all())
+
+
+    # 개인 토큰 폐기 - 아직 폐기 전일 때만. 반환: 바뀐 행 수
+    @staticmethod
+    async def crud_api_token_revoke(db:AsyncSession, a_t_id:int, now:datetime) -> int:
+        result=await db.execute(update(Api_Token)
+                                .where(Api_Token.a_t_id == a_t_id, Api_Token.revoked_at.is_(None))
+                                .values(revoked_at=now)
+                                .execution_options(synchronize_session=False))
+        return result.rowcount
+
+
+    # 개인 토큰 마지막 사용 시각 - 마지막 갱신이 기준 시각(before)보다 오래됐을 때만 바꾼다. 반환: 바뀐 행 수
+    @staticmethod
+    async def crud_api_token_touch(db:AsyncSession, a_t_id:int, now:datetime, before:datetime) -> int:
+        result=await db.execute(update(Api_Token)
+                                .where(Api_Token.a_t_id == a_t_id,
+                                       or_(Api_Token.last_used_at.is_(None), Api_Token.last_used_at < before))
+                                .values(last_used_at=now)
                                 .execution_options(synchronize_session=False))
         return result.rowcount

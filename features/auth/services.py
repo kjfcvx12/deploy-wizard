@@ -2,10 +2,11 @@ import secrets as py_secrets
 from datetime import datetime, timedelta, timezone
 
 import jwt
-from fastapi import HTTPException, status
+from fastapi import Depends, HTTPException, Request, status
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from shared.database import get_db
 from shared.settings import settings
 from shared.secrets import blind_index, token_hash
 from shared.masking import mask_text
@@ -14,7 +15,7 @@ from features.auth import google
 from features.auth.google import Google_Auth_Error
 from features.auth.crud import Auth_Crud
 from features.auth.models import User
-from features.auth.scheme import LOGIN_PLATFORMS, Auth_Token, User_Read
+from features.auth.scheme import LOGIN_PLATFORMS, Auth_Token, User_Read, Current_User, Api_Token_Create, Api_Token_Read, Api_Token_Issued
 
 # 로그인 (로그인 계획 Task 3) - Google id_token 으로 사용자를 찾거나 만들고, 액세스 JWT + 회전하는 리프레시 토큰을 준다
 # 토큰 원문·id_token·이메일은 로그·오류 문구에 싣지 않는다. 리프레시 토큰은 SHA-256 hex 만 저장한다
@@ -24,11 +25,21 @@ ACCESS_ISSUER="deploy-wizard"
 ACCESS_AUDIENCE="deploy-wizard-api"
 ACCESS_TYPE="access"
 REFRESH_PREFIX="dwr_"
+PAT_PREFIX="dwp_"
+# 개인 토큰 마지막 사용 시각 갱신 간격 (매 요청마다 쓰지 않게)
+PAT_TOUCH_SECONDS=60
+
+# 인증 없이 열린 경로 (로그인 계획 Task 4). 여기에 없는 /api 경로는 모두 services_auth_current_user 를 거쳐야 한다 (tests/test_auth_current_user.py 가 지킨다)
+# 웹훅은 서명(GITHUB_WEBHOOK_SECRET), GitHub 콜백은 서명된 state(Task 6), 템플릿은 사용자 정보 없는 정적 파일
+PUBLIC_PATHS={"/api/health", "/api/watches/webhook", "/api/accounts/github/callback", "/api/accounts/aws/template",
+              "/api/auth/google", "/api/auth/refresh", "/api/auth/logout"}
 
 MESSAGE_EXPIRED="로그인이 만료되었습니다. 다시 로그인해 주세요"
 MESSAGE_LOGIN_REQUIRED="로그인이 필요합니다"
 MESSAGE_NOT_ALLOWED="로그인이 허용된 계정이 아닙니다"
 MESSAGE_ORIGIN="허용되지 않은 출처입니다"
+MESSAGE_PAT_MANAGE="개인 토큰으로는 개인 토큰을 관리할 수 없습니다. 로그인해서 관리해 주세요"
+MESSAGE_PAT_NOT_FOUND="개인 토큰을 찾을 수 없습니다"
 MESSAGE_JWT_KEY_MISSING="로그인 설정이 완료되지 않았습니다 (AUTH_JWT_KEY 확인)"
 
 
@@ -239,3 +250,184 @@ class Auth_Service:
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=MESSAGE_LOGIN_REQUIRED,
                                 headers={"WWW-Authenticate": "Bearer"})
         return User_Read.model_validate(db_user)
+
+
+    # 401 - 로그인이 필요하다 (Bearer 로 다시 보내라는 헤더를 붙인다)
+    @staticmethod
+    def services_auth_unauthorized() -> HTTPException:
+        return HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=MESSAGE_LOGIN_REQUIRED,
+                             headers={"WWW-Authenticate": "Bearer"})
+
+
+    # Authorization: Bearer 에서 토큰을 꺼낸다 - 없거나 다른 방식이면 401
+    @staticmethod
+    def services_auth_bearer_pick(request:Request) -> str:
+        scheme, _, token=(request.headers.get("authorization") or "").partition(" ")
+        token=token.strip()
+        if scheme.lower() != "bearer" or not token:
+            raise Auth_Service.services_auth_unauthorized()
+        return token
+
+
+    # 개인 토큰 확인 - 해시로 찾고 폐기·만료면 401. 마지막 사용 시각은 1분에 한 번까지만 갱신한다. 반환: u_id
+    @staticmethod
+    async def services_auth_pat_check(db:AsyncSession, raw:str) -> int:
+        now=Auth_Service.services_auth_now()
+        db_token=await Auth_Crud.crud_api_token_get_by_hash(db, token_hash(raw))
+        if db_token is None or db_token.revoked_at is not None or (db_token.expires_at is not None and db_token.expires_at <= now):
+            raise Auth_Service.services_auth_unauthorized()
+
+        touched=await Auth_Crud.crud_api_token_touch(db, db_token.a_t_id, now, now - timedelta(seconds=PAT_TOUCH_SECONDS))
+        if touched:
+            await db.commit()
+        return db_token.u_id
+
+
+    # Bearer 토큰으로 사용자 확인 - dwp_ 면 개인 토큰, 아니면 액세스 JWT. 사용자가 없거나 active 가 아니면 401
+    # 개인 토큰은 오래 살아서 허용 목록(AUTH_ALLOWED_EMAILS)도 매번 다시 본다 (리프레시와 같은 규칙)
+    @staticmethod
+    async def services_auth_bearer_user(request:Request, db:AsyncSession) -> Current_User:
+        try:
+            raw=Auth_Service.services_auth_bearer_pick(request)
+
+            if raw.startswith(PAT_PREFIX):
+                u_id=await Auth_Service.services_auth_pat_check(db, raw)
+                via="pat"
+            else:
+                u_id=Auth_Service.services_auth_access_decode(raw)
+                via="access"
+
+            db_user=await Auth_Crud.crud_user_get_by_u_id(db, u_id)
+            if db_user is None or db_user.status != "active":
+                raise Auth_Service.services_auth_unauthorized()
+            if via == "pat" and db_user.email not in settings.auth_allowed_email_set:
+                raise Auth_Service.services_auth_unauthorized()
+
+            return Current_User(u_id=u_id, via=via)
+
+        except HTTPException:
+            raise
+
+        except Exception as e:
+            await db.rollback()
+            raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                                detail=f"로그인 확인 실패 :{mask_text(str(e))[:200]}")
+
+
+    # 현재 사용자 - 모든 보호 라우트가 Depends 로 쓰는 단 하나의 함수. AUTH_ENABLED=false 면 지금처럼 사용자 없이(필터 없음)
+    @staticmethod
+    async def services_auth_current_user(request:Request, db:AsyncSession=Depends(get_db)) -> Current_User:
+        if not settings.auth_enabled:
+            return Current_User(u_id=None, via="off")
+        return await Auth_Service.services_auth_bearer_user(request, db)
+
+
+    # 로그인 사용자가 꼭 필요한 곳(/api/me·개인 토큰) - 꺼진 모드에서도 Bearer 를 확인한다
+    @staticmethod
+    async def services_auth_login_user(request:Request, db:AsyncSession=Depends(get_db),
+                                       user:Current_User=Depends(services_auth_current_user.__func__)) -> Current_User:
+        if user.u_id is not None:
+            return user
+        return await Auth_Service.services_auth_bearer_user(request, db)
+
+
+    # 사용자 u_id 가 꼭 있어야 한다 - 없으면 401
+    @staticmethod
+    def services_auth_require_user(user:Current_User) -> int:
+        if user.u_id is None:
+            raise Auth_Service.services_auth_unauthorized()
+        return user.u_id
+
+
+    # 개인 토큰 관리는 로그인(액세스 토큰)으로만 - 개인 토큰으로는 403 (새어 나간 토큰이 스스로 늘어나지 않게)
+    @staticmethod
+    def services_auth_require_access(user:Current_User) -> int:
+        u_id=Auth_Service.services_auth_require_user(user)
+        if user.via == "pat":
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=MESSAGE_PAT_MANAGE)
+        return u_id
+
+
+    # 서버 시작 검사 - 로그인을 켰는데 키가 빠졌으면 시작하지 않는다
+    @staticmethod
+    def services_auth_startup_check() -> None:
+        if not settings.auth_enabled:
+            return None
+
+        missing=[name for name, value in (("AUTH_JWT_KEY", settings.auth_jwt_key), ("BLIND_INDEX_KEY", settings.blind_index_key),
+                                          ("SECRET_KEY", settings.secret_key)) if not value]
+        if missing:
+            raise RuntimeError(f"로그인을 켜려면 .env 에 {', '.join(missing)} 가 필요합니다 (AUTH_ENABLED=true)")
+        return None
+
+
+    # 이메일로 사용자 찾기 - 블라인드 인덱스로만 (스크립트용). active 인 사용자만
+    @staticmethod
+    async def services_auth_user_get_by_email(db:AsyncSession, email:str) -> User | None:
+        for db_user in await Auth_Crud.crud_user_get_all_by_email_bidx(db, blind_index("email", email)):
+            if db_user.status == "active":
+                return db_user
+        return None
+
+
+    # 개인 토큰 발급 - 원문은 이 응답에만, DB 에는 해시와 끝 4자리. 기간은 기본 AUTH_PAT_DEFAULT_DAYS, 상한 AUTH_PAT_MAX_DAYS
+    @staticmethod
+    async def services_auth_token_create(db:AsyncSession, u_id:int, data:Api_Token_Create) -> Api_Token_Issued:
+        try:
+            days=data.expires_in_days or settings.auth_pat_default_days
+            if days > settings.auth_pat_max_days:
+                raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST,
+                                    detail=f"개인 토큰 기간은 최대 {settings.auth_pat_max_days}일입니다")
+
+            raw=PAT_PREFIX + py_secrets.token_urlsafe(32)
+            now=Auth_Service.services_auth_now()
+            db_token=await Auth_Crud.crud_api_token_create(db, u_id, data.name, token_hash(raw), raw[-4:], now + timedelta(days=days))
+
+            await db.commit()
+            await db.refresh(db_token)
+            return Api_Token_Issued(**Api_Token_Read.model_validate(db_token).model_dump(), token=raw)
+
+        except HTTPException:
+            raise
+
+        except Exception as e:
+            await db.rollback()
+            raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                                detail=f"개인 토큰 발급 실패 :{mask_text(str(e))[:200]}")
+
+
+    # 개인 토큰 목록 - 폐기 전 것만, 원문 없이
+    @staticmethod
+    async def services_auth_token_list(db:AsyncSession, u_id:int) -> list[Api_Token_Read]:
+        return [Api_Token_Read.model_validate(db_token) for db_token in await Auth_Crud.crud_api_token_get_all_by_u_id(db, u_id)]
+
+
+    # 개인 토큰 폐기 - 남의 것·없는 것·이미 폐기한 것은 404 (존재를 숨긴다)
+    @staticmethod
+    async def services_auth_token_revoke(db:AsyncSession, u_id:int, a_t_id:int) -> dict:
+        db_token=await Auth_Crud.crud_api_token_get_by_a_t_id(db, a_t_id)
+        if db_token is None or db_token.u_id != u_id:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=MESSAGE_PAT_NOT_FOUND)
+
+        return await Auth_Service.services_auth_token_revoke_local(db, a_t_id)
+
+
+    # 개인 토큰 폐기 (소유자 확인 없이) - 소유자를 이미 확인한 곳과 로컬 스크립트(scripts/auth_token.py)만 쓴다
+    @staticmethod
+    async def services_auth_token_revoke_local(db:AsyncSession, a_t_id:int) -> dict:
+        try:
+            won=await Auth_Crud.crud_api_token_revoke(db, a_t_id, Auth_Service.services_auth_now())
+            if won != 1:
+                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=MESSAGE_PAT_NOT_FOUND)
+
+            await db.commit()
+            return {"message": "개인 토큰을 폐기했습니다"}
+
+        except HTTPException:
+            await db.rollback()
+            raise
+
+        except Exception as e:
+            await db.rollback()
+            raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                                detail=f"개인 토큰 폐기 실패 :{mask_text(str(e))[:200]}")

@@ -48,3 +48,22 @@ class Refresh_Token(Base):
     replaced_by: Mapped[Optional[int]] = mapped_column()
 
     created_at: Mapped[datetime] = mapped_column(TIMESTAMP, server_default=func.now())
+
+
+# 개인 토큰(PAT, MCP 용) - 원문은 발급 응답에 한 번만, DB 에는 SHA-256 hex 와 끝 4자리만
+class Api_Token(Base):
+    __tablename__ = "api_tokens"
+
+    a_t_id: Mapped[int] = mapped_column(primary_key=True)
+
+    u_id: Mapped[int] = mapped_column(ForeignKey("users.u_id", ondelete="CASCADE"), nullable=False, index=True)
+    name: Mapped[str] = mapped_column(String(50), nullable=False)
+    token_hash: Mapped[str] = mapped_column(String(64), nullable=False, unique=True)
+    last4: Mapped[str] = mapped_column(String(4), nullable=False)
+
+    expires_at: Mapped[Optional[datetime]] = mapped_column(TIMESTAMP)
+    # 1분에 한 번까지만 갱신한다
+    last_used_at: Mapped[Optional[datetime]] = mapped_column(TIMESTAMP)
+    revoked_at: Mapped[Optional[datetime]] = mapped_column(TIMESTAMP)
+
+    created_at: Mapped[datetime] = mapped_column(TIMESTAMP, server_default=func.now())

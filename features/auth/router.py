@@ -1,12 +1,12 @@
-from fastapi import APIRouter, Depends, Request, Response
-from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+from fastapi import APIRouter, Depends, Request, Response, status
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from shared.database import get_db
 from shared.settings import settings
 
-from features.auth.scheme import Auth_Google_Request, Auth_Refresh_Request, Auth_Token, User_Read
+from features.auth.scheme import (Auth_Google_Request, Auth_Refresh_Request, Auth_Token, User_Read, Current_User,
+                                  Api_Token_Create, Api_Token_Read, Api_Token_Issued)
 from features.auth.services import Auth_Service
 
 
@@ -15,8 +15,6 @@ router=APIRouter(prefix='/api', tags=['Auth'])
 # 웹 리프레시 쿠키 - 자바스크립트가 읽지 못하고(httponly) 같은 사이트의 /api/auth 요청에만 실린다
 REFRESH_COOKIE="dw_refresh"
 REFRESH_COOKIE_PATH="/api/auth"
-
-bearer=HTTPBearer(auto_error=False)
 
 
 # 리프레시 쿠키 굽기
@@ -73,8 +71,26 @@ async def router_auth_logout(request:Request, response:Response, payload:Auth_Re
     return {"message": "로그아웃했습니다"}
 
 
-# GET 내 정보 - AUTH_ENABLED 와 무관하게 액세스 토큰이 있어야 한다
+# GET 내 정보 - AUTH_ENABLED 와 무관하게 로그인 사용자(액세스 토큰·개인 토큰)가 있어야 한다
 @router.get('/me', response_model=User_Read)
-async def router_auth_me(credentials:HTTPAuthorizationCredentials | None=Depends(bearer), db:AsyncSession=Depends(get_db)):
-    u_id=Auth_Service.services_auth_access_decode(credentials.credentials if credentials else "")
-    return await Auth_Service.services_auth_me(db, u_id)
+async def router_auth_me(user:Current_User=Depends(Auth_Service.services_auth_login_user), db:AsyncSession=Depends(get_db)):
+    return await Auth_Service.services_auth_me(db, Auth_Service.services_auth_require_user(user))
+
+
+# POST 개인 토큰 발급 (MCP 용) - 원문은 이 응답에만. 로그인(액세스 토큰)으로만
+@router.post('/auth/tokens', response_model=Api_Token_Issued, status_code=status.HTTP_201_CREATED)
+async def router_auth_token_create(payload:Api_Token_Create, user:Current_User=Depends(Auth_Service.services_auth_login_user),
+                                   db:AsyncSession=Depends(get_db)):
+    return await Auth_Service.services_auth_token_create(db, Auth_Service.services_auth_require_access(user), payload)
+
+
+# GET 내 개인 토큰 목록 - 끝 4자리만
+@router.get('/auth/tokens', response_model=list[Api_Token_Read])
+async def router_auth_token_list(user:Current_User=Depends(Auth_Service.services_auth_login_user), db:AsyncSession=Depends(get_db)):
+    return await Auth_Service.services_auth_token_list(db, Auth_Service.services_auth_require_access(user))
+
+
+# DELETE 개인 토큰 폐기 - 남의 것은 404
+@router.delete('/auth/tokens/{a_t_id}', response_model=dict)
+async def router_auth_token_revoke(a_t_id:int, user:Current_User=Depends(Auth_Service.services_auth_login_user), db:AsyncSession=Depends(get_db)):
+    return await Auth_Service.services_auth_token_revoke(db, Auth_Service.services_auth_require_access(user), a_t_id)

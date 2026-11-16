@@ -39,6 +39,7 @@ from features.incidents.services import Incident_Service
 from features.incidents.recovery import Recovery_Service
 from features.watches.services import Watch_Service
 from features.health.services import Health_Service
+from features.auth.services import Auth_Service
 
 
 DIST_DIR=Path(__file__).parent / "dist"
@@ -48,6 +49,9 @@ logger=logging.getLogger(__name__)
 
 @asynccontextmanager
 async def lifespan(app:FastAPI):
+    # 로그인을 켰는데 키가 빠졌으면 여기서 멈춘다 (로그인 계획 Task 4)
+    Auth_Service.services_auth_startup_check()
+
     # 표를 만들고, 이미 있는 표에는 새 열이 안 생기므로 모자란 열만 더한다
     await bootstrap_schema()
 
