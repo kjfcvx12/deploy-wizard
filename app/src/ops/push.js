@@ -11,10 +11,6 @@ const DEVICE_KEY = 'dw-push-device'
 const CARD_KEY = 'dw-push-card-dismissed'
 // 안드로이드 알림 채널 (SDK 58 문서의 등록 예시와 같은 순서: 채널 → 권한 → 토큰)
 const CHANNEL_ID = 'default'
-// IosAuthorizationStatus 값 (expo-notifications 타입 정의): 0 아직 안 물음, 1 거부, 2 허용, 3 임시 허용, 4 임시(App Clip)
-const IOS_UNDETERMINED = 0
-const IOS_DENIED = 1
-const IOS_ALLOWED = [2, 3, 4]
 
 const TOKEN_FAIL = '이 기기의 알림 주소를 받지 못했습니다. 잠시 뒤 다시 시도하세요.'
 const REGISTER_FAIL = '서버에 이 기기를 등록하지 못했습니다'
@@ -25,12 +21,10 @@ const readProjectId = () => {
   return typeof id === 'string' && id.trim() ? id : null
 }
 
-// OS 권한 응답을 앱 상태로 바꾼다 - 허용 / 아직 물을 수 있음(처음이거나 안드로이드에서 한 번 거부) / 거부
+// OS 권한 응답을 앱 상태로 바꾼다 - 허용 / 아직 물을 수 있음(처음이거나 한 번 거부) / 거부
 const permissionState = (permission) => {
-  const ios = permission?.ios?.status
-  if (permission?.granted === true || IOS_ALLOWED.includes(ios)) return 'granted'
-  if (ios === IOS_DENIED) return 'denied'
-  if (ios === IOS_UNDETERMINED || permission?.status === 'undetermined') return 'undetermined'
+  if (permission?.granted === true) return 'granted'
+  if (permission?.status === 'undetermined') return 'undetermined'
   return permission?.canAskAgain === true ? 'undetermined' : 'denied'
 }
 

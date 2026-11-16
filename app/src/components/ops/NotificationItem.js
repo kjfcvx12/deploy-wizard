@@ -21,7 +21,7 @@ export default function NotificationItem({ item, onPress }) {
   const unread = !item.read_at
   const kind = NOTIFICATION_KIND_LABEL[item.kind] || item.kind
   const tone = toneColors(colors, KIND_TONE[item.kind])
-  // 글자 모양 선택자(U+FE0E)를 붙여 iOS 가 ⚠ ✔ ✖ ‼ 를 색깔 이모지로 그리지 않게 한다
+  // 글자 모양 선택자(U+FE0E)를 붙여 ⚠ ✔ ✖ ‼ 를 색깔 이모지로 그리지 않게 한다
   const icon = `${NOTIFICATION_KIND_ICON[item.kind] || '•'}\uFE0E`
   const time = formatTime(item.created_at)
   return (

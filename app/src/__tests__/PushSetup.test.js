@@ -42,6 +42,7 @@ const deploy = {
 let consoleSpies
 beforeEach(async () => {
   await AsyncStorage.clear()
+  jest.replaceProperty(Platform, 'OS', 'android')
   mockConstants.expoConfig = { extra: { eas: { projectId: 'proj-1' } } }
   Notifications.getPermissionsAsync.mockReset().mockResolvedValue(UNDETERMINED)
   Notifications.requestPermissionsAsync.mockReset().mockResolvedValue(GRANTED)
@@ -197,7 +198,7 @@ describe('PushSetupCard - 한 번짜리 안내 카드', () => {
     await waitFor(() => expect(screen.toJSON()).toBeNull())
     expect(Notifications.requestPermissionsAsync).toHaveBeenCalledTimes(1)
     expect(deviceApi.register).toHaveBeenCalledTimes(1)
-    expect(deviceApi.register).toHaveBeenCalledWith({ expo_token: TOKEN, platform: 'ios' })
+    expect(deviceApi.register).toHaveBeenCalledWith({ expo_token: TOKEN, platform: 'android' })
     expect(notificationApi.patchSettings).toHaveBeenCalledWith({ notify_push: true })
     expect(await AsyncStorage.getItem('dw-push-device')).toBe('4')
   })

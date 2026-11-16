@@ -45,7 +45,7 @@ describe('useOnForeground', () => {
     expect(cb).toHaveBeenCalledTimes(2)
   })
 
-  test('iOS 의 background -> inactive -> active 도 한 번만 센다', async () => {
+  test('background -> inactive -> active 도 한 번만 센다', async () => {
     const cb = jest.fn()
     await renderHook(() => useOnForeground(cb))
     await emit('background')

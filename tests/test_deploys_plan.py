@@ -177,7 +177,7 @@ def test_compose_plan_exceeded_text():
 async def test_plan_exceeded_creates_notification_row(db, monkeypatch):
     monkeypatch.setattr(settings, "mail_host", "smtp.test")
     monkeypatch.setattr(settings, "mail_to", "me@test")
-    db.add(Push_Device(expo_token=EXPO_TOKEN, platform='ios'))
+    db.add(Push_Device(expo_token=EXPO_TOKEN, platform='android'))
     d_id=await make_planned(db, planned_hours=4)
     deploy=await db.get(Deploy, d_id)
     deploy.service_name="my-api"

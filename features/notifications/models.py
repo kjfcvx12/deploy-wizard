@@ -57,7 +57,7 @@ class Push_Device(Base):
     # 한 기기에 한 토큰. 응답에는 끝 6자리만 보인다
     expo_token: Mapped[str] = mapped_column(String(255), nullable=False, unique=True)
     platform: Mapped[str] = mapped_column(String(10), nullable=False)
-    # ios|android
+    # android (허용 값은 scheme.py 의 SUPPORTED_PUSH_PLATFORMS)
 
     created_at: Mapped[datetime] = mapped_column(TIMESTAMP, server_default=func.now())
     last_seen_at: Mapped[datetime] = mapped_column(TIMESTAMP, server_default=func.now())

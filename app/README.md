@@ -15,7 +15,7 @@ cp .env.example .env     # 서버 주소를 환경에 맞게 고친다
 
 | 실행 환경 | 값 |
 |---|---|
-| iOS 시뮬레이터 / 웹 | `http://localhost:8081` |
+| 웹 | `http://localhost:8081` |
 | 안드로이드 에뮬레이터 | `http://10.0.2.2:8081` |
 | 실제 폰 | PC 의 LAN 주소 (같은 와이파이, 방화벽에서 8081 허용) |
 
@@ -26,7 +26,7 @@ cp .env.example .env     # 서버 주소를 환경에 맞게 고친다
 
 `.env` 는 커밋하지 않는다 (`app/.env` 는 `.gitignore` 에 있다). Windows PowerShell 에서는 `cp` 대신 `Copy-Item .env.example .env` 를 쓴다.
 
-웹으로 띄운 앱(`npx expo start --web --port 8082`)이 실제 서버를 부르면 서버의 CORS 가 막는다. 서버는 기본으로 `http://localhost:5173`, `http://127.0.0.1:5173` 에서 온 요청만 받기 때문이다 (`CORS_ORIGINS`). 웹에서 실제 서버로 붙여 보려면 서버 `.env` 의 `CORS_ORIGINS` 에 `http://localhost:8082` 를 더한다. iOS·안드로이드는 브라우저가 아니라서 CORS 가 걸리지 않는다. 모의 API 로 확인한 방법은 아래 "확인한 것과 못 한 것"에 있다.
+웹으로 띄운 앱(`npx expo start --web --port 8082`)이 실제 서버를 부르면 서버의 CORS 가 막는다. 서버는 기본으로 `http://localhost:5173`, `http://127.0.0.1:5173` 에서 온 요청만 받기 때문이다 (`CORS_ORIGINS`). 웹에서 실제 서버로 붙여 보려면 서버 `.env` 의 `CORS_ORIGINS` 에 `http://localhost:8082` 를 더한다. 안드로이드는 브라우저가 아니라서 CORS 가 걸리지 않는다. 모의 API 로 확인한 방법은 아래 "확인한 것과 못 한 것"에 있다.
 
 ## 실행
 
@@ -84,7 +84,7 @@ src/components/FooterSlot.js     설정 화면 맨 아래 안내 자리 (아래 
 - **`FooterSlot`** (`src/components/FooterSlot.js`): 설정 두 화면의 맨 아래 안내 자리. 평소엔 `변경은 누르는 즉시 저장됩니다 ...` 글이고 저장 성공·오류 안내가 있으면 그 자리를 안내가 대신한다. 안내가 위쪽에 쌓이지 않고, 한 줄 안내일 때는 자리 높이가 거의 변하지 않는다 (두 줄 이상의 오류는 키가 커진다). 오류 안내가 뜰 때만 `scrollToEnd` 로 내리고 (넘칠 때만 의미가 있다) 저장 성공 안내는 화면을 움직이지 않는다.
 - **설정 화면 배치**: 알림 설정은 메일·푸시 줄을 `SettingSwitch compact`(안쪽 여백·설명 글을 줄임, 44pt 이상)로, 알림 종류 6개를 `ops/NotificationKinds` 의 2열 `SettingTile`(제목 + 스위치만, 줄 전체가 스위치)로 놓는다. 배포 설정은 기존 `SettingSwitch` 줄 그대로이고 안내만 맨 아래로 옮겼다.
 - **접는 것은 알림 종류 설명뿐**: 종류별 설명(`KIND_HINT`)은 처음엔 접혀 있고 `설명 보기` 를 누르면 펼쳐진다 (`설명 닫기` 로 다시 접음). 같은 설명이 스크린리더용 `accessibilityHint` 로는 늘 읽힌다 (네이티브 기준 - react-native-web 은 `accessibilityHint` 를 내보내지 않는다). 다른 문구는 접지 않는다.
-- **인시던트 상세 배치** (계획 G 에서 탭으로 바뀜): 위 고정(`문제`·`원인` 탭 줄) / 가운데 상자(선택한 탭의 내용: 문제 탭은 사실 줄 + `마법사가 한 일` 타임라인, 원인 탭은 요약 + 원인·고칠 곳·해야 할 일 - 넘칠 때만 상자 안에서 스크롤, 탭을 바꾸면 상자를 새로 만들어 맨 위로) / 아래 고정(헬스 막대·오류·안내·버튼). 예전의 맨 위 요약 카드(요약·배지·메타)는 없다 - 요약은 원인 탭, 배지·날짜·시간은 문제 탭 줄이 대신한다. 안내가 생기면 가운데 상자가 줄어든다 (측정한 경우에는 화면이 넘치지 않았다). 높이는 이렇게 정한다: `FitScreen` 의 `onAvailableHeight` 가 안쪽 여백을 뺀 내용 영역 높이를 알려 주고, 화면이 위 고정 묶음·아래 고정 묶음을 `onLayout` 으로 재서 가운데 상자에 `maxHeight = max(160, 사용 가능 높이 - 위 - 아래 - 간격 둘)` 을 건다 (측정이 하나라도 없으면 제한하지 않는다). 위·아래가 너무 커서 160 도 못 줄 때는 바깥 `FitScreen` 이 스크롤을 받는다. 안쪽 상자는 `bounces={false}` 라 iOS 의 끌어당겨 새로고침을 가로채지 않는다. 가운데 상자에서는 원인 등을 카드로 나누지 않고 얇은 줄로 나눈다 (`IncidentExplain flat`).
+- **인시던트 상세 배치** (계획 G 에서 탭으로 바뀜): 위 고정(`문제`·`원인` 탭 줄) / 가운데 상자(선택한 탭의 내용: 문제 탭은 사실 줄 + `마법사가 한 일` 타임라인, 원인 탭은 요약 + 원인·고칠 곳·해야 할 일 - 넘칠 때만 상자 안에서 스크롤, 탭을 바꾸면 상자를 새로 만들어 맨 위로) / 아래 고정(헬스 막대·오류·안내·버튼). 예전의 맨 위 요약 카드(요약·배지·메타)는 없다 - 요약은 원인 탭, 배지·날짜·시간은 문제 탭 줄이 대신한다. 안내가 생기면 가운데 상자가 줄어든다 (측정한 경우에는 화면이 넘치지 않았다). 높이는 이렇게 정한다: `FitScreen` 의 `onAvailableHeight` 가 안쪽 여백을 뺀 내용 영역 높이를 알려 주고, 화면이 위 고정 묶음·아래 고정 묶음을 `onLayout` 으로 재서 가운데 상자에 `maxHeight = max(160, 사용 가능 높이 - 위 - 아래 - 간격 둘)` 을 건다 (측정이 하나라도 없으면 제한하지 않는다). 위·아래가 너무 커서 160 도 못 줄 때는 바깥 `FitScreen` 이 스크롤을 받는다.. 가운데 상자에서는 원인 등을 카드로 나누지 않고 얇은 줄로 나눈다 (`IncidentExplain flat`).
 - **측정으로 찾은 문제**: 처음 배치(`flex: 1`)는 jest 로는 통과했지만 웹 번들에서 어디서도 맞지 않았다. `flex: 1` 의 기준 높이(`flex-basis: 0%`)가 높이가 정해지지 않은 스크롤 틀 안에서 내용 높이로 풀려 가운데 상자가 내용만큼 커졌다 (복구 중 1207/780, 가장 긴 경우 2132/780). 웹 번들에서는 가운데 상자와 그 안의 `ScrollView` 를 `flexGrow: 1, flexShrink: 1, flexBasis: 0` 으로 바꿔 고쳤다. 네이티브(Yoga)는 부모 높이가 정해지지 않으면 `flexBasis` 를 무시하므로 같은 방법이 통하지 않는다 (전체 검토에서 yoga-layout@3 으로 재현: 뷰포트 780, 안쪽 내용 900 이면 내용 높이 1254 로 버튼이 화면 밖). 그래서 네이티브에서는 위의 `onLayout` 측정 → `maxHeight` 방식을 쓰고, 웹의 `flexBasis: 0` 은 그대로 둔다. 이 방식은 yoga-layout@3 스크래치 스크립트로만 검증했고 실제 기기에서는 재지 않았다. 레이아웃은 jest 로 증명할 수 없다.
 
 **측정 (웹 번들만)**: `npx expo export --platform web` 번들을 Playwright 로 열고 `/api` 를 모의해, `FitScreen` 의 `scrollHeight / clientHeight`(맞으면 `scrollHeight ≤ clientHeight`)를 쟀다. 390×844(안쪽 780)와 360×740(안쪽 676), 라이트·다크 숫자는 같았다. 긴 글(90자 ARN, 5-6줄 원인, 2줄 서버 오류)을 모의로 넣었다.
@@ -101,7 +101,7 @@ src/components/FooterSlot.js     설정 화면 맨 아래 안내 자리 (아래 
 
 (위 표의 인시던트 칸은 계획 F 의 맨 위 요약 카드 배치로 잰 값이다. 탭으로 바꾼 뒤의 값은 `docs/worklog/2026-11-15.md` "Plan G measurement".) 안 맞은 두 칸은 안전망 스크롤이 받아 전부 보인다 (계획이 허용한 범위). 아주 긴 인시던트에서도 맨 아래 버튼의 아래쪽 끝이 화면 안이었다 (390 에서 828/844·778/844, 360 에서 724/740·674/740). 가로 넘침 없음(`scrollWidth ≤ innerWidth`), 44pt 미만 터치 대상 없음(헤더 뒤로 가기 제외), 콘솔 경고·오류는 의도한 모의 400 뿐. (계획 F 때는 `npx jest` 33 파일 1027 테스트였다. 이후 계획 G 에서 구현자가 보고한 값은 앱 jest 35 파일 1057 테스트, 웹 44 이다.) 자세한 숫자는 `docs/worklog/2026-11-15.md` "Plan F measurement".
 
-**확인 못 한 것**: 실제 iOS·안드로이드 기기와 에뮬레이터의 네이티브 레이아웃(웹 번들만 쟀다. 인시던트 상세의 `onLayout` → `maxHeight` 방식은 yoga-layout@3 스크래치 스크립트로만 확인했다), 글꼴 배율 1 초과, 가로 방향, 태블릿. 웹에서는 푸시 미지원 안내 상자가 알림 설정에 늘 있어서 위 숫자는 상자가 있는 쪽(더 엄격한 쪽)이다. 상자가 없는 네이티브 상태는 재지 않았다. 맞았을 때 `scrollHeight == clientHeight` 라서 남는 높이가 얼마인지는 이 숫자로 알 수 없다 (남는 칸은 `flexGrow` 가 채운다).
+**확인 못 한 것**: 실제 안드로이드 기기와 에뮬레이터의 네이티브 레이아웃(웹 번들만 쟀다. 인시던트 상세의 `onLayout` → `maxHeight` 방식은 yoga-layout@3 스크래치 스크립트로만 확인했다), 글꼴 배율 1 초과, 가로 방향, 태블릿. 웹에서는 푸시 미지원 안내 상자가 알림 설정에 늘 있어서 위 숫자는 상자가 있는 쪽(더 엄격한 쪽)이다. 상자가 없는 네이티브 상태는 재지 않았다. 맞았을 때 `scrollHeight == clientHeight` 라서 남는 높이가 얼마인지는 이 숫자로 알 수 없다 (남는 칸은 `flexGrow` 가 채운다).
 
 ## 푸시 알림 (D2)
 
@@ -115,10 +115,10 @@ src/components/FooterSlot.js     설정 화면 맨 아래 안내 자리 (아래 
 - 웹에서는 `expo-notifications` 를 번들에 넣지 않는다 (`src/ops/notifications.web.js`) - 불러오기만 해도 콘솔 경고가 나서다. 웹의 푸시 상태는 `unsupported` 다.
 - `expo-device` 는 쓰지 않는다 (공식 설정 문서가 요구하지 않는다). 그래서 "실제 기기가 아님"을 따로 가려내지 않고, 시뮬레이터·에뮬레이터에서는 OS 와 `getExpoPushTokenAsync` 가 되는 만큼만 된다.
 
-**Expo Go 제한 (설치된 패키지의 경고문):** `app/node_modules/expo-notifications/src/DevicePushTokenAutoRegistration.fx.ts` 에는 "Push notifications (remote notifications) are unavailable in Expo Go on Android since SDK 53. Local notifications remain available. Use a development build for push notifications", `src/warnOfExpoGoPushUsage.ts` 에는 "... functionality provided by expo-notifications was removed from Expo Go with the release of SDK 53. Use a development build instead of Expo Go." 라고 적혀 있다 (원문 그대로, 패키지 버전이 바뀌면 달라질 수 있다). 로컬 알림은 Expo Go 에서도 된다. 그래서 푸시는 개발 빌드(`expo-dev-client`/EAS Build) 또는 실제 기기 빌드에서만 시험할 수 있고, Expo Go 에서는 안드로이드 푸시가 오지 않는다. iOS 의 Expo Go 제한은 이번에 확인한 문서에 없었다. 푸시는 Expo 푸시 서비스와 EAS 프로젝트 id 가 있어야 하며, 이 저장소에서는 한 번도 돌려 보지 못했다.
+**Expo Go 제한 (설치된 패키지의 경고문):** `app/node_modules/expo-notifications/src/DevicePushTokenAutoRegistration.fx.ts` 에는 "Push notifications (remote notifications) are unavailable in Expo Go on Android since SDK 53. Local notifications remain available. Use a development build for push notifications", `src/warnOfExpoGoPushUsage.ts` 에는 "... functionality provided by expo-notifications was removed from Expo Go with the release of SDK 53. Use a development build instead of Expo Go." 라고 적혀 있다 (원문 그대로, 패키지 버전이 바뀌면 달라질 수 있다). 로컬 알림은 Expo Go 에서도 된다. 그래서 푸시는 개발 빌드(`expo-dev-client`/EAS Build) 또는 실제 기기 빌드에서만 시험할 수 있고, Expo Go 에서는 안드로이드 푸시가 오지 않는다.. 푸시는 Expo 푸시 서비스와 EAS 프로젝트 id 가 있어야 하며, 이 저장소에서는 한 번도 돌려 보지 못했다.
 
 **확인한 것 (푸시, 목 테스트와 모의 웹):** `npx jest` 로 `expo-notifications` 를 목(mock)으로 바꾼 테스트 - 권한은 버튼에서만, 등록 한 번(연타 포함)·해제(404·오프라인 허용), 토큰이 화면·콘솔·저장소·오류에 없음, 알림 탭 경로 표(허용·허용 밖·다른 스킴·`data` 없음·문자열 아님·첫 실행), 설정 스위치 적용·되돌림, 안내 카드 조건. `expo export --platform web` 빌드, 웹 번들을 Playwright(390x844, 라이트·다크)로 열어 `/api/**` 를 모의하고 목록 `알림 설정` → 설정 화면(푸시 줄에 `unsupported` 안내) → 메일·종류 스위치 PATCH 본문 확인 → 실패 되돌림 → 뒤로.
-**확인 못 한 것 (전부, 푸시):** 실제 iOS·안드로이드 기기·에뮬레이터에서의 실행, 실제 OS 권한 창과 설정 열기, 실제 `getExpoPushTokenAsync` 와 Expo 푸시 서비스로 보낸 알림, 알림 채널(안드로이드), 앞에서·뒤에서·꺼진 상태에서 알림을 눌렀을 때의 실제 이동(특히 첫 실행에서 `router.push` 가 내비게이션 준비 전에 불리는지), 실제 백엔드·SMTP. 푸시는 검증되지 않았다.
+**확인 못 한 것 (전부, 푸시):** 실제 안드로이드 기기·에뮬레이터에서의 실행, 실제 OS 권한 창과 설정 열기, 실제 `getExpoPushTokenAsync` 와 Expo 푸시 서비스로 보낸 알림, 알림 채널(안드로이드), 앞에서·뒤에서·꺼진 상태에서 알림을 눌렀을 때의 실제 이동(특히 첫 실행에서 `router.push` 가 내비게이션 준비 전에 불리는지), 실제 백엔드·SMTP. 푸시는 검증되지 않았다.
 
 ## 웹과 겹치는 파일
 
@@ -141,9 +141,9 @@ src/components/FooterSlot.js     설정 화면 맨 아래 안내 자리 (아래 
 
 - 로그는 `FlatList` 가 아니라 `ScrollView` 다 (페이지 스크롤 안에 `FlatList` 를 넣으면 RN 이 중첩 경고를 내고 웹에서는 자체 스크롤이 사라졌다). 최대 500줄만 들고 있다.
 - 확인 창(멈춤·삭제)은 앱에서 `Alert.alert`, 웹에서 브라우저 `confirm`(없으면 취소로 본다). 안전한 쪽(`그대로 두기`)이 먼저다.
-- 키보드: 상세·새 배포 화면은 스크롤 되는 폼이고 `automaticallyAdjustKeyboardInsets`(iOS)를 쓴다. 안드로이드는 스크롤을 `KeyboardAvoidingView`(`behavior="height"`)로 감쌌다 (SDK 58 은 화면 끝까지 그려서 기본 화면 줄이기가 안 먹을 수 있다). **안드로이드 키보드 처리는 구현만 했고 기기에서는 확인하지 못했다.** 헤더 높이만큼의 `keyboardVerticalOffset` 은 주지 않았다 (0).
+- 키보드: 상세·새 배포 화면은 스크롤 되는 폼이고 스크롤을 `KeyboardAvoidingView`(`behavior="height"`)로 감쌌다 (SDK 58 은 화면 끝까지 그려서 기본 화면 줄이기가 안 먹을 수 있다). **안드로이드 키보드 처리는 구현만 했고 기기에서는 확인하지 못했다.** 헤더 높이만큼의 `keyboardVerticalOffset` 은 주지 않았다 (0).
 - 아래 여백: 목록·새 배포·상세 화면의 스크롤 끝에 `react-native-safe-area-context` 의 하단 안전 영역(`insets.bottom`)을 더한다.
-- 고정폭 글꼴: 모든 곳이 `theme.js` 의 `monoFont`(iOS `Menlo`, 나머지 `monospace`)를 쓴다 (환경변수 카드, 로그, 해설 원문, Dockerfile 상자, 분석 패널의 앱 폴더). 기기에서의 글꼴 모양은 확인하지 못했다.
+- 고정폭 글꼴: 모든 곳이 `theme.js` 의 `monoFont`(`monospace`)를 쓴다 (환경변수 카드, 로그, 해설 원문, Dockerfile 상자, 분석 패널의 앱 폴더). 기기에서의 글꼴 모양은 확인하지 못했다.
 - 웹 전용 줄바꿈 `wrapAnywhere` (긴 이름이 가로로 넘치지 않게). 앱에서는 아무 효과가 없다.
 - 폴링은 `usePolling` 이 하고, 앱이 백그라운드면 멈췄다가 돌아오면 한 번 바로 부른다. 더 부를 필요가 없으면 `STOP_POLLING` 을 돌려준다.
 - 주소 복사는 `expo-clipboard`, 주소 열기는 `Linking` 이다.
@@ -153,7 +153,7 @@ src/components/FooterSlot.js     설정 화면 맨 아래 안내 자리 (아래 
   - 바깥 링크(콘솔 열기, GitHub 설치)는 `https://` 로 시작할 때만 연다. 아니면 `주소를 열 수 없습니다`. 템플릿 내려받기만 서버가 준 상대 경로를 API 주소에 붙여 연다.
   - ExternalId 는 `계정 추가` 응답에서만 오고, 안내 창이 열려 있는 동안만 화면 상태에 있다. 주소·경로 인자·저장소·로그·오류 문장·접근성 라벨에 넣지 않고, 창이 닫히면 지운다 (복사 버튼 라벨은 `<계정 이름> ExternalId 복사`).
   - 고른 블록은 `AsyncStorage` 에 번호(`c_id`)만 저장한다. 읽기에 실패하면 없는 것으로 본다.
-  - 안내 창은 RN `Modal` 이다. 맨 위 오른쪽에 `닫기` 가 있고 `나중에` 와 같다. 안드로이드(edge-to-edge)와 iOS 에서는 제목 줄이 상태 표시줄 밑으로 들어가지 않게 위쪽 안전 영역만큼 띄운다. 오류·알림은 화면 맨 위에 보이도록 스크롤을 올린다 (창 안의 오류는 창 안에 둔다).
+  - 안내 창은 RN `Modal` 이다. 맨 위 오른쪽에 `닫기` 가 있고 `나중에` 와 같다. 안드로이드(edge-to-edge)에서는 제목 줄이 상태 표시줄 밑으로 들어가지 않게 위쪽 안전 영역만큼 띄운다. 오류·알림은 화면 맨 위에 보이도록 스크롤을 올린다 (창 안의 오류는 창 안에 둔다).
 - 환경변수 값은 쓰기 전용이다: 저장에 성공하면 입력을 비우고, 로그·주소·오류 문장에 넣지 않는다. `database` `cache` `external_api` `secret` 종류에는 값 입력 칸이 없다 (서버가 501).
 
 ## 줄바꿈 (계획 G, 2026-11-15)
@@ -161,7 +161,7 @@ src/components/FooterSlot.js     설정 화면 맨 아래 안내 자리 (아래 
 한글이 줄을 넘길 때 글자 중간이 아니라 어절(띄어쓰기) 단위로 끊기게 했다. 한 어절이 한 줄보다 길 때(ARN·URL 등)만 어쩔 수 없이 끊긴다.
 
 - **웹**(`shared/ui/styles.css`): `body` 에 `word-break: keep-all` 과 `overflow-wrap: break-word`. 코드·로그 상자의 `break-all` 은 그대로다 (`tests/web/koreanWrap.test.js` 가 둘 다 지킨다).
-- **앱**: `src/components/Text.js` 의 `Text` 래퍼. 웹 번들(`Platform.OS === 'web'`)에서는 기본 스타일 `wordBreak: 'keep-all'`, `overflowWrap: 'break-word'` 를 깔고(호출자 `style` 이 이긴다), 모든 플랫폼에서 `lineBreakStrategyIOS="hangul-word"` 를 기본 prop 으로 준다 (호출자가 덮어쓸 수 있다). react-native-web 의 `Text` 는 `lineBreakStrategyIOS` 를 조용히 버린다 (웹 번들에서 경고도 없었다).
+- **앱**: `src/components/Text.js` 의 `Text` 래퍼. 웹 번들(`Platform.OS === 'web'`)에서는 기본 스타일 `wordBreak: 'keep-all'`, `overflowWrap: 'break-word'` 를 깔고(호출자 `style` 이 이긴다).
 - **규칙**: 모든 화면·컴포넌트는 `react-native` 가 아니라 이 래퍼에서 `Text` 를 가져온다. `src/__tests__/Text.test.js` 의 가드 테스트가 `app/` 과 `src/` 의 `.js` 파일에서 `import { ..., Text, ... } from 'react-native'` 를 찾아 하나라도 있으면 실패시킨다.
 - **안드로이드는 처리하지 않았고 확인하지 못했다.** 한글 어절 줄바꿈을 켜는 RN 공식 prop 이 없어 이 계획은 안드로이드에 아무것도 하지 않았다 (보이지 않는 연결 문자를 글자 사이에 넣는 방법은 문자열을 바꾸고 긴 글에서 넘칠 위험이 있어 기기에서 확인하기 전에는 쓰지 않기로 했다). 안드로이드에서는 글자 중간에서 줄이 바뀔 수 있다고 보아야 한다.
 - **확인한 것**: 웹 번들(Chromium, react-native-web)에서만 쟀다 (인시던트 상세는 계획 G 에서, 나머지 화면은 아래 "가로 넘침 훑기"). 모의 API, 390×844 라이트·다크와 360×740 라이트. 공백으로 나눈 낱말 66-139개씩을 `Range.getClientRects` 로 보니 한 낱말이 두 줄에 걸친 경우가 0 이었고, 90자 ARN 은 상자 안에서 세 줄로 끊겨 넘치지 않았다. 숫자는 `docs/worklog/2026-11-15.md` "Plan G measurement".
@@ -169,8 +169,8 @@ src/components/FooterSlot.js     설정 화면 맨 아래 안내 자리 (아래 
 - **가로 넘침 훑기** (2026-11-15, `fix/overflow-sweep`): 줄바꿈 규칙을 전역으로 건 뒤 `min-width: 0` 이 없는 칸이 넘치는지 쟀다. 웹 번들 + 모의 `/api` + Chromium 에서 긴 한글 낱말 48자·ARN 90자·긴 레포·브랜치·환경변수 이름·긴 서버 문장을 넣어 `scrollWidth <= innerWidth` 와 오른쪽 끝이 화면을 넘는 요소를 봤다.
   - **웹**(Vite 개발 서버, 라이트): `shared/ui/App.jsx` 의 모든 경로 - 목록, 새 배포 폼(연결 고르기·브랜치·분석 결과·분석 오류), 배포 상세 여섯 상태(환경변수 카드·인시던트 카드·Dockerfile·문제 이력 포함)와 멈춤·삭제 창, 배포 설정, 인시던트 두 건, 알림, 알림 설정, 계정 연결(블록 넷, 안내 창·스택 업데이트 창·삭제 창·알림), `/guide/github`·`/guide/aws` - 을 320·390·768·1280px 로 쟀다. 넘친 곳은 분석 결과 첫 줄의 `앱 폴더` 경로 한 곳뿐이었다 (320/390 에서 `scrollWidth` 627 > 305). `.advice > .row > *` 에 `min-width: 0` + `overflow-wrap: anywhere` 로 고쳤다 (한글 `keep-all` 때문이 아니라 띄어쓰기 없는 긴 경로 때문이었다). 나머지는 모두 `scrollWidth` 가 `clientWidth` 와 같았다. 가로 스크롤 상자로 의도된 것은 Dockerfile `pre` 하나.
   - **앱**(웹 번들, 360·390 라이트 + 390 다크): `/`, `/new`(연결·레포 칩·브랜치·분석 결과·분석 오류), `/deploys/[d_id]` 여섯 상태, `/deploy-settings/[d_id]`(오류 포함), `/incidents/[i_id]`, `/notifications`, `/notification-settings`(설명 펼침), `/accounts`(블록 넷, AWS 안내·역할 ARN 입력·스택 업데이트 안내, GitHub 확인 알림, 확인 실패 알림). 같은 `앱 폴더` 줄이 넘쳤다 (오른쪽 끝 579 > 345~375). `Text` 에 `wrapAnywhere` 를 더해 고쳤다. 고친 뒤 모든 칸에서 화면을 넘는 요소 0, 잘린 요소 0 (알림 본문 한 줄 말줄임 `numberOfLines={1}` 은 의도된 것으로 제외), 콘솔 경고·오류는 모의로 일부러 낸 400·500 뿐, 모의하지 않은 요청 0.
-  - **재지 않은 것**: 실제 기기·서버·안드로이드·iOS, 웹의 다크 모드, 앱의 360 다크, OS 글꼴 배율, 가로 방향, 데이터가 훨씬 많은 목록(스크롤 길이), 실제 AWS·GitHub 가 돌려주는 값. 헤드리스 Chromium 의 세로 스크롤바 15px 때문에 `scrollWidth` 는 보통 `innerWidth - 15` 로 나온다 (넘침이 아니다). 숫자는 `docs/worklog/2026-11-15.md` "Overflow sweep".
-- **확인 못 한 것**: 실제 iOS·안드로이드 기기와 에뮬레이터 (iOS `hangul-word` 는 설정만 했고 기기에서 동작을 보지 않았다), 안드로이드 줄바꿈, OS 글꼴 배율 2배 (CSS zoom 은 대신할 수 없어 재지 않았다), 가로 방향. jest 는 레이아웃을 볼 수 없어 래퍼의 prop·style 과 가드만 확인한다.
+  - **재지 않은 것**: 실제 기기·서버·안드로이드, 웹의 다크 모드, 앱의 360 다크, OS 글꼴 배율, 가로 방향, 데이터가 훨씬 많은 목록(스크롤 길이), 실제 AWS·GitHub 가 돌려주는 값. 헤드리스 Chromium 의 세로 스크롤바 15px 때문에 `scrollWidth` 는 보통 `innerWidth - 15` 로 나온다 (넘침이 아니다). 숫자는 `docs/worklog/2026-11-15.md` "Overflow sweep".
+- **확인 못 한 것**: 실제 안드로이드 기기와 에뮬레이터, 안드로이드 줄바꿈, OS 글꼴 배율 2배 (CSS zoom 은 대신할 수 없어 재지 않았다), 가로 방향. jest 는 레이아웃을 볼 수 없어 래퍼의 prop·style 과 가드만 확인한다.
 
 ## 확인한 것과 못 한 것
 
@@ -187,9 +187,9 @@ src/components/FooterSlot.js     설정 화면 맨 아래 안내 자리 (아래 
   - `npx expo export --platform web` 빌드 성공.
   - 웹 번들을 Playwright(390×844, 다크 한 번, 라이트 한 번)로 열어 `/api/**` 를 모의하고 한 번에 돌렸다: 목록(문제 배너 `자동 복구 중`, 종 배지 3, `계정 연결`·`알림 설정` 칩) → 인시던트 상세 `복구 중`(타임라인, 헬스 막대 `최근 24시간 정상 90%`, 다음 호출에서 모의 값이 `resolved` 가 되어 `해결됨` 으로 바뀌고 그 뒤 11초 동안 추가 호출 0) → `확인이 필요합니다` 배너 → `needs_action` 상세(버튼 3개, `멈춤` 확인 창에서 취소하면 `POST /stop` 0번) → 배포 상세 `설정` → 스위치(PATCH 본문이 바꾼 항목 하나뿐: `{"auto_redeploy":true}`) → 알림 목록(안 읽은 것 굵게 700, 읽은 것 400, 누르면 `POST /notifications/303/read` 1번과 `/incidents/5` 이동, `모두 읽음` 1번, 목록으로 돌아오면 배지 사라짐) → `알림 설정`(푸시 줄에 "알림을 지원하지 않는 기기" 안내, `알림 켜기` 버튼 없음, 종류 스위치 PATCH 본문 = 남은 5개 종류 전체 배열) → 목록. 모든 화면에서 `scrollWidth` 390 = `innerWidth` 390, 44 미만 터치 대상은 헤더 뒤로 가기(30×30)뿐, 콘솔 경고·오류·페이지 오류 0, 모의하지 않은 요청 0. 이 확인은 실제 앱 동작의 대용품일 뿐이다.
 - 확인 못 함:
-  - **인시던트·알림·설정 화면과 푸시는 실제 iOS / 안드로이드 기기·에뮬레이터, 실제 백엔드(실제 헬스 감시·인시던트·알림 데이터), 실제 AWS, 실제 푸시 발송과 알림 탭, 실제 OS 권한 창으로 한 번도 돌려 보지 못했다.** 모의 값이 `resolved` 로 바뀌는 순서는 흉내일 뿐 서버가 실제로 인시던트를 닫는 흐름이 아니다. EAS 프로젝트 id 가 없어서 지금 빌드는 어디서든 푸시 상태가 `no_project`(웹은 `unsupported`)다.
-  - **계정 연결 화면은 실제 iOS / 안드로이드 기기·에뮬레이터, 실제 백엔드, 실제 AWS(CloudFormation 스택 만들기, AssumeRole), 실제 GitHub App 설치로 한 번도 돌려 보지 못했다.** 외부 브라우저 열기와 돌아왔을 때의 `AppState` 순서(iOS `inactive`/`background`), 실제 `Linking`·`expo-clipboard`, `Modal` 안의 키보드 가림과 안전 영역은 기기에서 안 봤다. 아래로 당겨 새로고침은 react-native-web 에서 동작하지 않아 jest 로만 확인했다.
-  - **실제 iOS / 안드로이드 기기와 에뮬레이터에서의 실행은 한 번도 하지 못했다.** 키보드 가림, 확인 창, 클립보드, 링크 열기, 접근성 초점 이동, 글꼴은 기기에서 안 봤다.
+  - **인시던트·알림·설정 화면과 푸시는 실제 안드로이드 기기·에뮬레이터, 실제 백엔드(실제 헬스 감시·인시던트·알림 데이터), 실제 AWS, 실제 푸시 발송과 알림 탭, 실제 OS 권한 창으로 한 번도 돌려 보지 못했다.** 모의 값이 `resolved` 로 바뀌는 순서는 흉내일 뿐 서버가 실제로 인시던트를 닫는 흐름이 아니다. EAS 프로젝트 id 가 없어서 지금 빌드는 어디서든 푸시 상태가 `no_project`(웹은 `unsupported`)다.
+  - **계정 연결 화면은 실제 안드로이드 기기·에뮬레이터, 실제 백엔드, 실제 AWS(CloudFormation 스택 만들기, AssumeRole), 실제 GitHub App 설치로 한 번도 돌려 보지 못했다.** 외부 브라우저 열기와 돌아왔을 때의 `AppState` 순서(`background`), 실제 `Linking`·`expo-clipboard`, `Modal` 안의 키보드 가림과 안전 영역은 기기에서 안 봤다. 아래로 당겨 새로고침은 react-native-web 에서 동작하지 않아 jest 로만 확인했다.
+  - **실제 안드로이드 기기와 에뮬레이터에서의 실행은 한 번도 하지 못했다.** 키보드 가림, 확인 창, 클립보드, 링크 열기, 접근성 초점 이동, 글꼴은 기기에서 안 봤다.
   - 실제 백엔드·실제 AWS 와 붙인 실행. 모든 서버 응답은 모의였다.
   - 웹 측정에서 상단 바의 뒤로 가기 버튼이 30×30 으로 나왔다 (내비게이션 라이브러리 기본 헤더). 기기에서의 터치 영역은 확인하지 못했다.
 
@@ -207,7 +207,7 @@ src/components/FooterSlot.js     설정 화면 맨 아래 안내 자리 (아래 
 - 알림 종 `🔔` 은 테마 색을 따르지 않는다.
 
 계획 G (탭·줄바꿈) - 안 고친 것:
-- **안드로이드 한글 어절 줄바꿈은 처리하지 않았고 확인하지 못했다.** iOS `hangul-word` 도 기기에서 확인하지 못했다 (위 "줄바꿈 (계획 G)").
+- **안드로이드 한글 어절 줄바꿈은 처리하지 않았고 확인하지 못했다.** (위 "줄바꿈 (계획 G)").
 - `INCIDENT_KIND_LABEL[kind]` 의 상속 속성 조회(`constructor` 같은 이름)는 `IncidentFacts` 에서만 고쳤다 (`Object.hasOwn`, 테스트 있음).
 - `Text` 가드 테스트의 정규식은 `import { Text } from 'react-native'` 한 모양만 잡는다. `import RN, { Text }`, `RN.Text`, `Animated.Text`, `require` 는 못 잡는다 (지금 그런 코드는 없다).
 - `IncidentFacts` 의 이름 칸 너비가 44 로 고정이다. 글꼴 배율을 키운 기기에서는 `배포` 같은 라벨이 줄을 넘길 수 있다 (웹 번들 기본 배율에서만 한 줄로 쟀다).
