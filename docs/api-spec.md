@@ -48,11 +48,22 @@ Google `id_token`으로 로그인해 액세스 토큰(JWT, 900초)과 리프레�
 | POST | `/api/auth/refresh` | 본문 `{refresh_token}`(앱) 또는 쿠키 `dw_refresh`(웹, 본문 생략·`null`). 쓴 토큰은 폐기하고 같은 계열의 새 토큰 발급. **이미 폐기된 토큰이 다시 오면 그 계열 전체를 폐기하고 401.** 같은 토큰으로 동시에 두 번 오면 하나만 200 | 200 `Auth_Token` |
 | POST | `/api/auth/logout` | 그 토큰의 계열 폐기 + 쿠키 삭제. 토큰이 없거나 몰라도 200 | 200 `{"message": "로그아웃했습니다"}` |
 | GET | `/api/me` | 헤더 `Authorization: Bearer <액세스 토큰 또는 개인 토큰>` 필수 (`AUTH_ENABLED`와 무관) | 200 `User_Read` |
+| DELETE | `/api/me` | 계정 삭제 (A-04) - 본문 `{"confirm": true}` 필수. 로그인(액세스 토큰)으로만, 개인 토큰은 403. 아래 "DELETE /api/me" | 200 `Auth_Delete_Read` |
 
 - `platform`: `web` | `android`. 그 밖(`ios` 포함)은 422. 플랫폼마다 `aud`가 다르다 — `web`은 `GOOGLE_CLIENT_ID_WEB`, `android`는 `GOOGLE_CLIENT_ID_ANDROID`만 받는다. iOS 는 `features/auth/scheme.py`의 `LOGIN_PLATFORMS`에 한 줄 + `GOOGLE_CLIENT_ID_IOS` 설정으로 더한다.
 - **웹 (`platform="web"` 또는 쿠키로 온 refresh)**: 리프레시는 본문에 싣지 않고(`refresh_token: null`) `Set-Cookie: dw_refresh=…; HttpOnly; SameSite=strict; Path=/api/auth; Max-Age=2592000`(`AUTH_COOKIE_SECURE=true`이면 `Secure`). **앱**: 본문 `refresh_token`에 싣고, 앱이 안전한 저장소에 둔다.
 - **쿠키로 온 refresh·logout 은 `Origin` 헤더가 `CORS_ORIGINS`에 있어야 한다.** 없거나 밖이면 403 (토큰은 쓰지 않는다). 본문에 `refresh_token`이 있으면 쿠키보다 본문을 쓴다.
 - 서버는 리프레시 토큰을 SHA-256 해시로만 저장한다. 원문은 발급 응답에 한 번만 나간다. 사용자 이메일·이름·사진·`google_sub`는 DB 에 암호화해 둔다.
+
+### DELETE `/api/me` (계정 삭제)
+
+본문 `{"confirm": true}` 만 받는다 (`true` 가 아닌 값·본문 없음·깨진 JSON 은 모두 400). **DB 기록만 지운다. AWS·GitHub 는 한 번도 부르지 않는다** (Hard rule 3) — CloudFormation 스택·IAM 역할·GitHub 앱 설치는 사용자가 직접 지운다.
+
+- **막는 경우 (409)**: 살아 있는 배포가 하나라도 있으면 아무것도 지우지 않는다. 살아 있는 배포 = 상태가 `queued`·`cloning`·`analyzing`·`generating`·`building`·`pushing`·`deploying`·`needs_input`·`running`·`deleting`, 또는 `failed` 인데 `service_arn` 이 남은 것 (MCP 의 "살아 있는" 정의와 같다). `detail` 문자열 끝에 `#<d_id> <서비스 이름>`이 쉼표로 나열된다 (서비스 이름이 없으면 레포 주소). 먼저 멈추거나(`POST /api/deploys/{d_id}/stop`) 삭제(`DELETE /api/deploys/{d_id}`)한 뒤 다시 부른다.
+- **지우는 것 (한 트랜잭션, 하나라도 실패하면 전부 되돌림)**: 남은 배포 기록(`stopped`·`deleted`·서비스 없는 `failed`)과 딸린 로그·이슈·릴리스·환경변수·헬스체크·인시던트·복구 기록, 연결 블록·AWS 계정·GitHub 설치 기록, 알림·푸시 기기·알림 설정.
+- **사용자 행은 남기고 개인 정보를 지운다**: `status="deleted"`, `name`·`picture_url` 은 `null`, `google_sub`·`email` 은 상수 `"deleted"`(암호화 저장), 두 블라인드 인덱스는 `blind_index("deleted", u_id)` 로 바꾼다. 같은 Google 계정으로 다시 로그인하면 **새 사용자**(새 `u_id`, 이전 기록 없음)가 된다.
+- 리프레시 토큰·개인 토큰은 모두 폐기된다. 이미 받은 액세스 토큰은 만료 전이어도 다음 요청부터 401 이다 (`status != active`).
+- 응답: `{"message": "계정을 삭제했습니다. AWS CloudFormation 스택과 GitHub 앱 설치는 직접 지워 주세요", "deleted": {"deploys": n, "accounts": n, "notifications": n}}` (`accounts` 는 연결 블록 + AWS 계정 + GitHub 설치 기록 수, `notifications` 는 알림 + 기기 + 설정 줄 수).
 
 ### `Auth_Token`
 ```json
@@ -77,7 +88,10 @@ Google `id_token`으로 로그인해 액세스 토큰(JWT, 900초)과 리프레�
 | 401 | refresh: 토큰 없음·모름·만료·폐기됨(재사용 → 계열 폐기)·동시 요청에서 짐·탈퇴한 사용자 | `로그인이 만료되었습니다. 다시 로그인해 주세요` |
 | 403 | 쿠키로 온 refresh·logout 의 `Origin`이 없거나 허용 목록 밖 | `허용되지 않은 출처입니다` |
 | 401 | 보호 경로(`AUTH_ENABLED=true`)·`/api/me`·`/api/auth/tokens*`: 토큰 없음·틀림·만료·다른 용도(`typ`)·폐기된 개인 토큰·없는/탈퇴한 사용자 (응답 헤더 `WWW-Authenticate: Bearer`) | `로그인이 필요합니다` |
-| 403 | `/api/auth/tokens*`를 개인 토큰으로 부름 | `개인 토큰으로는 개인 토큰을 관리할 수 없습니다. 로그인해서 관리해 주세요` |
+| 403 | `/api/auth/tokens*`·`DELETE /api/me`를 개인 토큰으로 부름 | `개인 토큰으로는 개인 토큰을 관리할 수 없습니다. 로그인해서 관리해 주세요` |
+| 400 | `DELETE /api/me`: 본문이 `{"confirm": true}` 가 아님 | `계정을 삭제하려면 confirm 에 true 를 보내야 합니다` |
+| 409 | `DELETE /api/me`: 살아 있는 배포가 있음 | `먼저 멈추거나 삭제해야 하는 서비스가 있습니다: #3 my-app, #5 other` |
+| 500 | `DELETE /api/me`: 삭제 중 실패 (전부 되돌려 아무것도 지워지지 않음) | `계정 삭제 실패 :…` |
 | 400 | `POST /api/auth/tokens`: `expires_in_days`가 상한 초과 | `개인 토큰 기간은 최대 90일입니다` |
 | 404 | `DELETE /api/auth/tokens/{a_t_id}`: 남의 것·없음·이미 폐기 | `개인 토큰을 찾을 수 없습니다` |
 

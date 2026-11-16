@@ -84,3 +84,14 @@ class Health_Crud:
         result=await db.execute(delete(Health_Check).where(Health_Check.checked_at < cutoff))
         await db.flush()
         return result.rowcount
+
+
+    # 배포들의 헬스체크 기록을 지운다 - 계정 삭제용. 반환: 지운 수
+    @staticmethod
+    async def crud_health_delete_by_d_ids(db:AsyncSession, d_ids:list[int]) -> int:
+        if not d_ids:
+            return 0
+
+        result=await db.execute(delete(Health_Check).where(Health_Check.d_id.in_(d_ids)).execution_options(synchronize_session=False))
+        await db.flush()
+        return result.rowcount

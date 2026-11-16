@@ -184,3 +184,15 @@ class Notification_Crud:
         result=await db.execute(delete(Push_Device).where(Push_Device.expo_token_bidx.in_(bidxs)).execution_options(synchronize_session=False))
         await db.flush()
         return result.rowcount
+
+
+    # 사용자의 알림·기기·설정 전부 삭제 - 계정 삭제용. 반환: 지운 수 (u_id 가 없는 줄은 건드리지 않는다)
+    @staticmethod
+    async def crud_notification_delete_by_u_id(db:AsyncSession, u_id:int) -> int:
+        total=0
+        for model in (Notification, Push_Device, Notification_Setting):
+            result=await db.execute(delete(model).where(model.u_id == u_id).execution_options(synchronize_session=False))
+            total+=result.rowcount
+
+        await db.flush()
+        return total

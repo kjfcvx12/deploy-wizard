@@ -287,3 +287,9 @@ class Notification_Service:
         for task in tasks:
             task.cancel()
         await asyncio.gather(*tasks, return_exceptions=True)
+
+
+    # 사용자의 알림·기기·설정 삭제 - 계정 삭제가 부른다 (flush 까지, 커밋은 부른 쪽). 반환: 지운 수
+    @staticmethod
+    async def services_notification_forget_user(db:AsyncSession, u_id:int) -> int:
+        return await Notification_Crud.crud_notification_delete_by_u_id(db, u_id)

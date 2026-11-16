@@ -1,6 +1,6 @@
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
-from sqlalchemy import func
+from sqlalchemy import func, delete
 
 from features.envvars.models import Deploy_Env_Var
 from features.envvars.scheme import Env_Found
@@ -93,3 +93,14 @@ class Env_Crud:
             counts[d_id]=count
 
         return counts
+
+
+    # 배포들의 환경변수 기록을 지운다 - 계정 삭제용. 반환: 지운 수
+    @staticmethod
+    async def crud_env_delete_by_d_ids(db:AsyncSession, d_ids:list[int]) -> int:
+        if not d_ids:
+            return 0
+
+        result=await db.execute(delete(Deploy_Env_Var).where(Deploy_Env_Var.d_id.in_(d_ids)).execution_options(synchronize_session=False))
+        await db.flush()
+        return result.rowcount

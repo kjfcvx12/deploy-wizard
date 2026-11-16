@@ -1,6 +1,6 @@
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
-from sqlalchemy import update
+from sqlalchemy import update, delete
 
 from shared.ownership import owner_where
 
@@ -56,6 +56,14 @@ class Aws_Account_Crud:
             await db.flush()
             return db_account
         return None
+
+
+    # 사용자의 AWS 계정 기록 전부 삭제 - 계정 삭제용 (AWS 쪽 스택은 건드리지 않는다). 반환: 지운 수
+    @staticmethod
+    async def crud_aws_account_delete_by_u_id(db:AsyncSession, u_id:int) -> int:
+        result=await db.execute(delete(Aws_Account).where(Aws_Account.u_id == u_id).execution_options(synchronize_session=False))
+        await db.flush()
+        return result.rowcount
 
 
 class Github_Installation_Crud:
@@ -125,6 +133,14 @@ class Github_Installation_Crud:
         return None
 
 
+    # 사용자의 GitHub 설치 기록 전부 삭제 - 계정 삭제용 (GitHub 앱 설치 자체는 건드리지 않는다). 반환: 지운 수
+    @staticmethod
+    async def crud_github_installation_delete_by_u_id(db:AsyncSession, u_id:int) -> int:
+        result=await db.execute(delete(Github_Installation).where(Github_Installation.u_id == u_id).execution_options(synchronize_session=False))
+        await db.flush()
+        return result.rowcount
+
+
 class Connection_Crud:
 
     # 전 연결 블록 조회 (만든 순) - u_id 를 주면 그 사용자 것만
@@ -174,6 +190,14 @@ class Connection_Crud:
             await db.flush()
             return db_connection
         return None
+
+
+    # 사용자의 연결 블록 전부 삭제 - 계정 삭제용. 반환: 지운 수
+    @staticmethod
+    async def crud_connection_delete_by_u_id(db:AsyncSession, u_id:int) -> int:
+        result=await db.execute(delete(Connection).where(Connection.u_id == u_id).execution_options(synchronize_session=False))
+        await db.flush()
+        return result.rowcount
 
 
     # AWS 계정이 지워질 때 - 그 계정을 가리키던 블록에서 뗀다

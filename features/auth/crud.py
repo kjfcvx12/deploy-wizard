@@ -146,3 +146,23 @@ class Auth_Crud:
                                 .values(last_used_at=now)
                                 .execution_options(synchronize_session=False))
         return result.rowcount
+
+
+    # 사용자의 리프레시 토큰 전부 폐기 - 아직 살아 있는 것만. 반환: 바뀐 행 수
+    @staticmethod
+    async def crud_refresh_token_revoke_all_by_u_id(db:AsyncSession, u_id:int, now:datetime) -> int:
+        result=await db.execute(update(Refresh_Token)
+                                .where(Refresh_Token.u_id == u_id, Refresh_Token.revoked_at.is_(None))
+                                .values(revoked_at=now)
+                                .execution_options(synchronize_session=False))
+        return result.rowcount
+
+
+    # 사용자의 개인 토큰 전부 폐기 - 아직 폐기 전인 것만. 반환: 바뀐 행 수
+    @staticmethod
+    async def crud_api_token_revoke_all_by_u_id(db:AsyncSession, u_id:int, now:datetime) -> int:
+        result=await db.execute(update(Api_Token)
+                                .where(Api_Token.u_id == u_id, Api_Token.revoked_at.is_(None))
+                                .values(revoked_at=now)
+                                .execution_options(synchronize_session=False))
+        return result.rowcount

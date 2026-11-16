@@ -502,3 +502,9 @@ class Incident_Service:
         detail=Incident_Detail.model_validate(incident)
         detail.actions=[Recovery_Action_Read.model_validate(action) for action in actions]
         return detail
+
+
+    # 배포들의 인시던트·복구 기록 삭제 - 계정 삭제가 부른다 (flush 까지, 커밋은 부른 쪽)
+    @staticmethod
+    async def services_incident_forget_deploys(db:AsyncSession, d_ids:list[int]) -> int:
+        return await Incident_Crud.crud_incident_delete_by_d_ids(db, d_ids)

@@ -41,6 +41,11 @@ MESSAGE_ORIGIN="허용되지 않은 출처입니다"
 MESSAGE_PAT_MANAGE="개인 토큰으로는 개인 토큰을 관리할 수 없습니다. 로그인해서 관리해 주세요"
 MESSAGE_PAT_NOT_FOUND="개인 토큰을 찾을 수 없습니다"
 MESSAGE_JWT_KEY_MISSING="로그인 설정이 완료되지 않았습니다 (AUTH_JWT_KEY 확인)"
+MESSAGE_DELETE_CONFIRM="계정을 삭제하려면 confirm 에 true 를 보내야 합니다"
+MESSAGE_DELETE_LIVE="먼저 멈추거나 삭제해야 하는 서비스가 있습니다"
+MESSAGE_DELETE_DONE="계정을 삭제했습니다. AWS CloudFormation 스택과 GitHub 앱 설치는 직접 지워 주세요"
+# 탈퇴한 사용자 행에 남기는 값 - 개인 정보 대신 (암호화 열은 NOT NULL 이라 비울 수 없다). 블라인드 인덱스는 사용자마다 달라 같은 Google 계정이 새 사용자로 다시 가입할 수 있다
+DELETED_VALUE="deleted"
 
 
 class Auth_Service:
@@ -444,3 +449,65 @@ class Auth_Service:
             await db.rollback()
             raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                                 detail=f"개인 토큰 폐기 실패 :{mask_text(str(e))[:200]}")
+
+
+    # 계정 삭제 확인 - 본문이 {"confirm": true} 일 때만 통과, 그 밖은 모두 400 (깨진 JSON·없는 본문 포함)
+    @staticmethod
+    def services_auth_delete_confirm(body) -> None:
+        if not isinstance(body, dict) or body.get("confirm") is not True:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=MESSAGE_DELETE_CONFIRM)
+
+
+    # 살아 있는 배포가 있으면 409 - 목록(d_id·서비스 이름)을 detail 문자열에 담는다 (dict detail 관례가 없다)
+    @staticmethod
+    def services_auth_delete_live_check(live:list) -> None:
+        if live:
+            names=", ".join(f"#{deploy.d_id} {deploy.service_name or deploy.repo_url}" for deploy in live)
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=f"{MESSAGE_DELETE_LIVE}: {names}")
+
+
+    # 계정 삭제 - 기록만 지우고 AWS·GitHub 는 한 번도 부르지 않는다 (Hard rule 3, 03장). 한 트랜잭션으로 한 번만 커밋하고, 하나라도 실패하면 전부 되돌린다
+    # 사용자 행은 남기되 개인 정보를 지우고 status="deleted" (같은 Google 계정은 새 사용자로 다시 가입), 리프레시·개인 토큰은 모두 폐기한다
+    @staticmethod
+    async def services_auth_account_delete(db:AsyncSession, u_id:int) -> dict:
+        # 다른 기능의 services 는 이 파일을 import 하거나(notifications) 되불러오므로(deploys) 순환을 피하려고 여기서만 불러온다
+        from features.deploys.services import Deploy_Service
+        from features.accounts.services import Aws_Account_Service
+        from features.notifications.services import Notification_Service
+
+        try:
+            db_user=await Auth_Crud.crud_user_get_by_u_id(db, u_id)
+            if db_user is None or db_user.status != "active":
+                raise Auth_Service.services_auth_unauthorized()
+
+            # 1. 살아 있는 배포가 있으면 막는다 (요금이 계속 나가므로 먼저 멈추거나 삭제)
+            Auth_Service.services_auth_delete_live_check(await Deploy_Service.services_deploy_live_for_user(db, u_id))
+
+            # 2. 기록 삭제 - 기능마다 flush 만, 커밋은 아래에서 한 번
+            deploys=await Deploy_Service.services_deploy_forget_user(db, u_id)
+            accounts=await Aws_Account_Service.services_account_forget_user(db, u_id)
+            notifications=await Notification_Service.services_notification_forget_user(db, u_id)
+
+            # 3. 그 사이에 살아난 배포가 없는지 한 번 더 - 있으면 전부 되돌린다
+            Auth_Service.services_auth_delete_live_check(await Deploy_Service.services_deploy_live_for_user(db, u_id))
+
+            # 4. 토큰 폐기 + 사용자 행 익명화
+            now=Auth_Service.services_auth_now()
+            await Auth_Crud.crud_refresh_token_revoke_all_by_u_id(db, u_id, now)
+            await Auth_Crud.crud_api_token_revoke_all_by_u_id(db, u_id, now)
+            deleted_bidx=blind_index(DELETED_VALUE, str(u_id))
+            await Auth_Crud.crud_user_update(db, db_user, {"status": "deleted", "name": None, "picture_url": None,
+                                                          "google_sub": DELETED_VALUE, "email": DELETED_VALUE,
+                                                          "google_sub_bidx": deleted_bidx, "email_bidx": deleted_bidx})
+
+            await db.commit()
+            return {"message": MESSAGE_DELETE_DONE, "deleted": {"deploys": deploys, "accounts": accounts, "notifications": notifications}}
+
+        except HTTPException:
+            await db.rollback()
+            raise
+
+        except Exception as e:
+            await db.rollback()
+            raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                                detail=f"계정 삭제 실패 :{mask_text(str(e))[:200]}")

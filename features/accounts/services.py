@@ -347,6 +347,15 @@ class Aws_Account_Service:
                                 detail=f"AWS 계정 삭제 실패 :{mask_text(str(e))}")
 
 
+    # 사용자의 연결 블록·AWS 계정·GitHub 설치 기록 삭제 - 계정 삭제가 부른다. 기록만 지우고 AWS·GitHub 는 부르지 않는다 (CloudFormation 스택·앱 설치는 사용자가 직접). flush 까지
+    @staticmethod
+    async def services_account_forget_user(db:AsyncSession, u_id:int) -> int:
+        blocks=await Connection_Crud.crud_connection_delete_by_u_id(db, u_id)
+        accounts=await Aws_Account_Crud.crud_aws_account_delete_by_u_id(db, u_id)
+        installations=await Github_Installation_Crud.crud_github_installation_delete_by_u_id(db, u_id)
+        return blocks + accounts + installations
+
+
 class Github_Service:
 
     # 설치 state 서명 키 - AUTH_JWT_KEY. 없으면(인증 끔 모드) SECRET_KEY 에서 용도 이름으로 HMAC 파생한 키 (새 환경변수 없이 동작). 둘 다 없으면 None

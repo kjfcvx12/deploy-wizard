@@ -6,7 +6,7 @@ from shared.database import get_db
 from shared.settings import settings
 
 from features.auth.scheme import (Auth_Google_Request, Auth_Refresh_Request, Auth_Token, User_Read, Current_User,
-                                  Api_Token_Create, Api_Token_Read, Api_Token_Issued)
+                                  Api_Token_Create, Api_Token_Read, Api_Token_Issued, Auth_Delete_Read)
 from features.auth.services import Auth_Service
 
 
@@ -94,3 +94,19 @@ async def router_auth_token_list(user:Current_User=Depends(Auth_Service.services
 @router.delete('/auth/tokens/{a_t_id}', response_model=dict)
 async def router_auth_token_revoke(a_t_id:int, user:Current_User=Depends(Auth_Service.services_auth_login_user), db:AsyncSession=Depends(get_db)):
     return await Auth_Service.services_auth_token_revoke(db, Auth_Service.services_auth_require_access(user), a_t_id)
+
+
+# 본문을 그대로 읽는다 - 없거나 깨진 JSON 도 422 가 아니라 확인 실패(400)로 보내려고 직접 파싱한다
+async def router_auth_body_read(request:Request):
+    try:
+        return await request.json()
+    except ValueError:
+        return None
+
+
+# DELETE 계정 삭제 - 본문 {"confirm": true} 필수. 기록만 지우고 AWS·GitHub 는 건드리지 않는다. 로그인(액세스 토큰)으로만, 개인 토큰은 403
+@router.delete('/me', response_model=Auth_Delete_Read)
+async def router_auth_me_delete(request:Request, user:Current_User=Depends(Auth_Service.services_auth_login_user), db:AsyncSession=Depends(get_db)):
+    u_id=Auth_Service.services_auth_require_access(user)
+    Auth_Service.services_auth_delete_confirm(await router_auth_body_read(request))
+    return await Auth_Service.services_auth_account_delete(db, u_id)

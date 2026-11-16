@@ -82,3 +82,9 @@ class Api_Token_Read(BaseModel):
 # 발급 응답 - token(원문)은 이 응답에만 있다
 class Api_Token_Issued(Api_Token_Read):
     token: str
+
+
+# 계정 삭제 응답 - 지운 기록 수 (AWS·GitHub 쪽은 지우지 않으므로 message 로 직접 지우라고 안내한다)
+class Auth_Delete_Read(BaseModel):
+    message: str
+    deleted: dict[str, int]

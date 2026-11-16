@@ -1,6 +1,6 @@
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
-from sqlalchemy import update
+from sqlalchemy import update, delete, or_, and_
 from datetime import datetime
 
 from shared.ownership import owner_where
@@ -218,4 +218,36 @@ class Deploy_Crud:
     @staticmethod
     async def crud_deploy_release_set_state(db:AsyncSession, d_r_id:int, state:str) -> int:
         result=await db.execute(update(Deploy_Release).where(Deploy_Release.d_r_id == d_r_id).values(state=state))
+        return result.rowcount
+
+
+    # 사용자의 배포 전부 (삭제한 것 포함) - 계정 삭제가 기록을 지울 때 쓴다
+    @staticmethod
+    async def crud_deploy_get_all_by_u_id(db:AsyncSession, u_id:int) -> list[Deploy]:
+        result=await db.execute(select(Deploy).where(Deploy.u_id == u_id).order_by(Deploy.d_id))
+        return list(result.scalars().all())
+
+
+    # 사용자의 살아 있는 배포 - 상태가 live_statuses 안이거나, 실패했는데 서비스(service_arn)가 남은 것
+    @staticmethod
+    async def crud_deploy_get_live_by_u_id(db:AsyncSession, u_id:int, live_statuses:list[str]) -> list[Deploy]:
+        result=await db.execute(select(Deploy)
+                                .where(Deploy.u_id == u_id,
+                                       or_(Deploy.status.in_(live_statuses),
+                                           and_(Deploy.status == 'failed', Deploy.service_arn.is_not(None), Deploy.service_arn != '')))
+                                .order_by(Deploy.d_id))
+        return list(result.scalars().all())
+
+
+    # 배포들의 로그·이슈·릴리스와 배포 기록 자체를 지운다 (SQLite 는 ON DELETE CASCADE 를 지키지 않아 자식부터 하나씩). 반환: 지운 배포 수
+    @staticmethod
+    async def crud_deploy_delete_by_d_ids(db:AsyncSession, d_ids:list[int]) -> int:
+        if not d_ids:
+            return 0
+
+        for model in (Deploy_Log, Deploy_Issue, Deploy_Release):
+            await db.execute(delete(model).where(model.d_id.in_(d_ids)).execution_options(synchronize_session=False))
+
+        result=await db.execute(delete(Deploy).where(Deploy.d_id.in_(d_ids)).execution_options(synchronize_session=False))
+        await db.flush()
         return result.rowcount

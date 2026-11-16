@@ -1,6 +1,6 @@
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
-from sqlalchemy import update, func
+from sqlalchemy import update, delete, func
 from datetime import datetime
 
 from shared.database import Base
@@ -190,3 +190,17 @@ class Incident_Crud:
                                 .order_by(Recovery_Action.started_at.desc(), Recovery_Action.r_a_id.desc())
                                 .limit(1))
         return result.scalars().first()
+
+
+    # 배포들의 인시던트와 복구 기록을 지운다 (복구 기록이 자식이라 먼저) - 계정 삭제용. 반환: 지운 인시던트 수
+    @staticmethod
+    async def crud_incident_delete_by_d_ids(db:AsyncSession, d_ids:list[int]) -> int:
+        if not d_ids:
+            return 0
+
+        i_ids=select(Incident.i_id).where(Incident.d_id.in_(d_ids))
+        await db.execute(delete(Recovery_Action).where(Recovery_Action.i_id.in_(i_ids)).execution_options(synchronize_session=False))
+
+        result=await db.execute(delete(Incident).where(Incident.d_id.in_(d_ids)).execution_options(synchronize_session=False))
+        await db.flush()
+        return result.rowcount

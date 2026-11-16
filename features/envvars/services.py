@@ -377,3 +377,9 @@ class Env_Service:
     async def services_env_runtime_dict(db:AsyncSession, d_id:int) -> dict[str, str]:
         rows=await Env_Crud.crud_env_get_by_d_id(db, d_id)
         return {row.name: row.plain_value for row in rows if Env_Service.services_env_is_injected(row)}
+
+
+    # 배포들의 환경변수 기록 삭제 - 계정 삭제가 부른다 (flush 까지, 커밋은 부른 쪽)
+    @staticmethod
+    async def services_env_forget_deploys(db:AsyncSession, d_ids:list[int]) -> int:
+        return await Env_Crud.crud_env_delete_by_d_ids(db, d_ids)
