@@ -9,10 +9,11 @@ from features.pricing.services import Pricing_Service
 router=APIRouter(prefix='/api/pricing',tags=['Pricing'])
 
 
-# GET 사양 프리셋과 사용 기간 선택지
+# GET 사양 프리셋·사용 기간 선택지와 최대 작업 수 상한·증설 기준 지표
 @router.get('/options', response_model=Pricing_Options)
 async def router_pricing_options():
-    return Pricing_Options(specs=Pricing_Service.services_pricing_spec_options(), plans=Pricing_Service.services_pricing_plans())
+    return Pricing_Options(specs=Pricing_Service.services_pricing_spec_options(), plans=Pricing_Service.services_pricing_plans(),
+                           max_tasks_cap=settings.max_tasks_cap, scale_metrics=Pricing_Service.services_pricing_scale_metrics())
 
 
 # POST 비용 추정 - 값 검사는 여기서 하고(400), 가격 표를 못 얻으면 503

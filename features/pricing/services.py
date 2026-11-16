@@ -11,7 +11,7 @@ import httpx
 from shared.settings import settings
 from shared.specs import SPEC_PAIRS, specs_pair_valid, specs_env_pair
 
-from features.pricing.scheme import Cost_Component, Cost_Estimate, Cost_Period, Price_Table, Pricing_Plan, Spec_Option
+from features.pricing.scheme import Cost_Component, Cost_Estimate, Cost_Period, Price_Table, Pricing_Plan, Scale_Metric, Spec_Option
 
 # 가격 파일 읽기와 캐시 (기획 설계 5.1) - 파일은 인증 없는 AWS 공개 가격 파일
 # 파싱 실패·누락은 예외가 아니라 None, 네트워크 실패도 낡은 캐시 또는 None 으로 돌려준다 (금액 없음)
@@ -58,8 +58,13 @@ PERIODS=[("1시간", 1), ("1일", 24), ("1주", 168), ("한 달", 730)]
 PLANS=[("4시간", 4), ("하루", 24), ("일주일", 168), ("계속", None)]
 # 사용 시간 상한 - 1년
 MAX_PLANNED_HOURS=8760
-# 자동 증설 기준 지표 (docs/aws-notes.md 의 scalingTarget.autoScalingMetric)
-SCALING_METRICS=("AVERAGE_CPU", "AVERAGE_MEMORY", "REQUEST_COUNT_PER_TARGET")
+# 자동 증설 기준 지표 (docs/aws-notes.md 의 scalingTarget.autoScalingMetric) - 화면에 보일 이름도 여기 한 곳에서 정한다
+SCALING_METRIC_LABELS={
+    "AVERAGE_CPU": "CPU 사용률",
+    "AVERAGE_MEMORY": "메모리 사용률",
+    "REQUEST_COUNT_PER_TARGET": "요청 수",
+}
+SCALING_METRICS=tuple(SCALING_METRIC_LABELS)
 
 
 class Pricing_Service:
@@ -347,6 +352,12 @@ class Pricing_Service:
                 "ECR 이미지 저장 요금",
             ],
         )
+
+
+    # 자동 증설 기준 지표 선택지 - 값과 한국어 이름
+    @staticmethod
+    def services_pricing_scale_metrics() -> list[Scale_Metric]:
+        return [Scale_Metric(value=value, label=label) for value, label in SCALING_METRIC_LABELS.items()]
 
 
     # 사용 기간 선택지 - 마지막 "계속"은 기간을 정하지 않은 경우 (hours 없음)
