@@ -110,11 +110,10 @@ const isDisabled = (name) => !!screen.getByRole('button', { name }).props.access
 const alertButton = (name) => Alert.alert.mock.calls[0][2].find((b) => b.text === name)
 
 describe('배포 상세 화면 - 키보드', () => {
-  test('환경변수 입력칸이 있는 바깥 스크롤은 키보드 인셋 보정과 끌어서 닫기를 켠다', async () => {
+  test('환경변수 입력칸이 있는 바깥 스크롤은 끌어서 닫기를 켠다', async () => {
     await open({ ...base, status: 'needs_input', endpoint: null })
     // 가장 바깥 스크롤 (안쪽 로그·Dockerfile 스크롤은 그 아래에 있다)
     const outer = screen.getByTestId('detail-scroll')
-    expect(outer.props.automaticallyAdjustKeyboardInsets).toBe(true)
     expect(outer.props.keyboardDismissMode).toBe('on-drag')
     expect(outer.props.keyboardShouldPersistTaps).toBe('handled')
   })
@@ -125,12 +124,6 @@ describe('배포 상세 화면 - 키보드', () => {
     const wrapper = screen.getByTestId('keyboard-avoiding')
     expect(mockKavProps[mockKavProps.length - 1].behavior).toBe('height')
     expect(StyleSheet.flatten(wrapper.props.style).flex).toBe(1)
-  })
-
-  test('iOS 에서는 behavior 를 주지 않는다 (기존 인셋 보정만 쓴다)', async () => {
-    await open({ ...base, status: 'needs_input', endpoint: null })
-    expect(screen.getByTestId('keyboard-avoiding')).toBeTruthy()
-    expect(mockKavProps[mockKavProps.length - 1].behavior).toBeUndefined()
   })
 })
 

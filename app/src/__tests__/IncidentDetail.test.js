@@ -196,9 +196,6 @@ describe('인시던트 상세 - 한 화면 배치 (위 고정 · 가운데 상�
       await pickTab(tab)
       const scroll = screen.getByTestId('incident-body')
       expect(scroll.props.nestedScrollEnabled).toBe(true)
-      // 안쪽 상자가 iOS 의 끌어당겨 새로고침을 가로채지 않게 튕김을 끈다
-      expect(scroll.props.bounces).toBe(false)
-      expect(scroll.props.alwaysBounceVertical).toBe(false)
       expect(body().queryByRole('tab')).toBeNull()
       expect(body().queryByLabelText(/최근 24시간/)).toBeNull()
       expect(body().queryByRole('button', { name: '배포 #3 보기' })).toBeNull()

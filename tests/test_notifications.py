@@ -54,7 +54,7 @@ def mail_on(monkeypatch):
     monkeypatch.setattr(settings, "mail_to", "me@test")
 
 
-async def add_device(db, token=EXPO_TOKEN, platform='ios'):
+async def add_device(db, token=EXPO_TOKEN, platform='android'):
     device=Push_Device(expo_token=token, platform=platform)
     db.add(device)
     await db.commit()

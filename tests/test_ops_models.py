@@ -76,7 +76,7 @@ async def test_ops_all_tables_round_trip(db):
 
     action=Recovery_Action(i_id=incident.i_id, action='rollback', d_r_id=release.d_r_id, result='running', started_at=datetime(2026, 11, 10, 1, 1, 0))
     note=Notification(u_id=None, d_id=d_id, i_id=incident.i_id, kind='incident_opened', channel='inapp', title="제목", body="본문", status='queued')
-    device=Push_Device(expo_token="ExponentPushToken[abcdef123456]", platform='ios')
+    device=Push_Device(expo_token="ExponentPushToken[abcdef123456]", platform='android')
     setting=Notification_Setting(id=1)
     db.add_all([action, note, device, setting])
     await db.commit()

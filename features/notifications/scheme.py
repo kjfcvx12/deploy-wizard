@@ -1,5 +1,4 @@
 import re
-from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, StrictBool, field_validator
 from datetime import datetime
@@ -8,6 +7,8 @@ from features.notifications.models import NOTIFICATION_KINDS
 
 NOTIFICATION_CHANNELS=('inapp', 'email', 'push')
 NOTIFICATION_STATUSES=('queued', 'sent', 'failed')
+# 푸시 기기로 받는 플랫폼 - iOS 추가 시 여기에 'ios' 한 줄 (2026-11-16 iOS 제거)
+SUPPORTED_PUSH_PLATFORMS=('android',)
 EXPO_TOKEN_FORMAT=re.compile(r"^(Exponent|Expo)PushToken\[.+\]$")
 
 
@@ -40,9 +41,17 @@ class Device_Read(BaseModel):
 # 기기 등록 요청 - Expo 푸시 토큰 형식만 받는다 (검증 오류 응답에서 입력값(토큰)은 router 의 오류 처리기가 뺀다)
 class Device_Create(BaseModel):
     expo_token: str = Field(max_length=255)
-    platform: Literal['ios', 'android']
+    platform: str = Field(max_length=10)
 
     model_config = ConfigDict(extra='forbid')
+
+    # 플랫폼 확인 - SUPPORTED_PUSH_PLATFORMS 안의 값만
+    @field_validator('platform')
+    @classmethod
+    def scheme_device_platform_check(cls, value:str) -> str:
+        if value not in SUPPORTED_PUSH_PLATFORMS:
+            raise ValueError(f"지원하는 플랫폼이 아닙니다 ({', '.join(SUPPORTED_PUSH_PLATFORMS)})")
+        return value
 
     # 토큰 형식 확인 - ExponentPushToken[...] 또는 ExpoPushToken[...]
     @field_validator('expo_token')

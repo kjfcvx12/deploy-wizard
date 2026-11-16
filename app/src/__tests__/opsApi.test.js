@@ -74,11 +74,11 @@ describe('notificationApi (features/notifications/router.py 와 1:1)', () => {
 
 describe('deviceApi', () => {
   test('register 는 expo_token 과 platform 만 보낸다', async () => {
-    await deviceApi.register({ expo_token: 'ExponentPushToken[abc]', platform: 'ios', extra: 'x' })
+    await deviceApi.register({ expo_token: 'ExponentPushToken[abc]', platform: 'android', extra: 'x' })
     expect(lastCall()).toEqual({
       url: `${BASE}/devices`,
       method: 'POST',
-      body: { expo_token: 'ExponentPushToken[abc]', platform: 'ios' },
+      body: { expo_token: 'ExponentPushToken[abc]', platform: 'android' },
     })
   })
 

@@ -162,7 +162,7 @@ erDiagram
 | `p_d_id` | int PK | N | |
 | `u_id` | int FK, nullable(3단계 전) | Y | |
 | `expo_token` | varchar(255) | N | unique. 한 기기에 한 토큰 |
-| `platform` | varchar(10) | N | `ios\|android` |
+| `platform` | varchar(10) | N | `android` (iOS 추가 시 `ios`. 허용 값은 `SUPPORTED_PUSH_PLATFORMS`) |
 | `last_seen_at` | timestamp | N | 오래 안 보이면 정리 |
 | `created_at` | timestamp | N | |
 

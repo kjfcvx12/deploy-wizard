@@ -5,7 +5,7 @@ import * as Notifications from '../ops/notifications'
 import { routeFromNotificationResponse } from '../ops/push'
 
 // 앱이 켜져 있는 동안 들어온 알림도 배너와 목록에 보인다 - 소리와 앱 아이콘 숫자는 쓰지 않는다 (SDK 58 NotificationBehavior)
-// 안드로이드는 shouldPlaySound 가 false 면 앞에서 받은 알림의 상단 배너가 뜨지 않는다 (타입 정의 설명) - 그래서 안드로이드만 true, iOS 는 조용히
+// 안드로이드는 shouldPlaySound 가 false 면 앞에서 받은 알림의 상단 배너가 뜨지 않는다 (타입 정의 설명) - 그래서 안드로이드만 true
 const foregroundBehavior = () => ({ shouldShowBanner: true, shouldShowList: true, shouldPlaySound: Platform.OS === 'android', shouldSetBadge: false })
 
 // 알림 처리 연결 (루트 레이아웃에서 한 번) - 앞에서 받은 알림의 표시 방식, 알림을 눌렀을 때의 이동(켜져 있을 때·꺼져 있다가 눌러 켠 첫 실행)

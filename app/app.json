@@ -4,12 +4,10 @@
     "slug": "deploy-wizard",
     "scheme": "deploywizard",
     "version": "1.0.0",
+    "platforms": ["android", "web"],
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "automatic",
-    "ios": {
-      "supportsTablet": true
-    },
     "android": {
       "adaptiveIcon": {
         "backgroundColor": "#E6F4FE",

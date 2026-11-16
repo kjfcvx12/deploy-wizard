@@ -85,7 +85,7 @@ async def setup_deploy(db, **kwargs) -> int:
 
     # 새 버전 직후(bad_release)가 아니라 평범한 장애로 보이게 현재 릴리스를 오래된 것으로
     await db.execute(update(Deploy_Release).where(Deploy_Release.d_id == d_id).values(created_at=OLD))
-    db.add(Push_Device(expo_token="ExponentPushToken[flowtesttoken000001]", platform='ios'))
+    db.add(Push_Device(expo_token="ExponentPushToken[flowtesttoken000001]", platform='android'))
     await db.commit()
     return d_id
 

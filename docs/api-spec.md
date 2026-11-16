@@ -557,7 +557,7 @@ Hard rule 3 의 자동 조치는 두 가지뿐이다. **재시작**(서비스를
 | DELETE | `/api/devices/{p_d_id}` | 기기 등록 해제 | 200 `{ "message": "…" }` |
 
 - `after` 는 `n_id` 커서(1 이상, 아니면 422) - 그보다 오래된 것부터 최신순 100건. `unread=true` 면 읽지 않은 것만. 없는 `n_id`(또는 앱 안 알림이 아닌 줄)는 404 `해당 id의 알림이 없습니다`.
-- `expo_token` 은 `^(Exponent|Expo)PushToken\[.+\]$` 형식, `platform` 은 `ios` `android` (아니면 422). 없는 `p_d_id` 는 404 `해당 id의 기기가 없습니다`.
+- `expo_token` 은 `^(Exponent|Expo)PushToken\[.+\]$` 형식, `platform` 은 `android` 만 (아니면 422. 허용 값은 `features/notifications/scheme.py` 의 `SUPPORTED_PUSH_PLATFORMS`, iOS 는 2026-11-16 에 뺐다). 없는 `p_d_id` 는 404 `해당 id의 기기가 없습니다`.
 - 설정은 한 줄뿐이고 처음 읽을 때 기본값(메일 켬, 푸시 켬, 일곱 종류 모두)으로 만든다. PATCH 본문에 모르는 항목이나 모르는 `kinds` 값이 있으면 422.
 
 ### `Notification_Read`
@@ -568,7 +568,7 @@ Hard rule 3 의 자동 조치는 두 가지뿐이다. **재시작**(서비스를
 
 ### `Device_Read` (토큰 전체는 응답에 없다 - 끝 6자리만)
 ```json
-{ "p_d_id": 1, "platform": "ios", "token_tail": "yz789]", "created_at": "…", "last_seen_at": "…" }
+{ "p_d_id": 1, "platform": "android", "token_tail": "yz789]", "created_at": "…", "last_seen_at": "…" }
 ```
 
 ### `Notification_Setting_Read` / PATCH 본문
