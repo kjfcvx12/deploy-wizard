@@ -277,8 +277,10 @@ class Auth_Service:
         if db_token is None or db_token.revoked_at is not None or (db_token.expires_at is not None and db_token.expires_at <= now):
             raise Auth_Service.services_auth_unauthorized()
 
-        touched=await Auth_Crud.crud_api_token_touch(db, db_token.a_t_id, now, now - timedelta(seconds=PAT_TOUCH_SECONDS))
-        if touched:
+        # 갱신할 때만 UPDATE 하고 바로 커밋한다 - 건너뛸 때 UPDATE 를 보내면 쓰기 트랜잭션이 요청 끝까지 열려 SQLite 쓰기 잠금을 붙든다
+        before=now - timedelta(seconds=PAT_TOUCH_SECONDS)
+        if db_token.last_used_at is None or db_token.last_used_at < before:
+            await Auth_Crud.crud_api_token_touch(db, db_token.a_t_id, now, before)
             await db.commit()
         return db_token.u_id
 
