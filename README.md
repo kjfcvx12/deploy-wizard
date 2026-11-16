@@ -88,7 +88,7 @@ python scripts/cleanup.py --yes                               # 완전히 정리
 python scripts/migrate_login.py backup                 # 2. 백업 (경로를 알려 준다)
 python scripts/migrate_login.py status                 # 3. 열마다 평문 수, 주인 없는 행 수 (읽기 전용)
 python scripts/migrate_login.py encrypt --yes          # 4. 열·인덱스 보정 → 기기 토큰 인덱스 채우기·중복 정리 → 평문 암호화 → 옛 값 지우기 (두 번 실행해도 안전)
-uvicorn main:app --port=8081                           # 5. 서버를 켜고, 주인이 될 Google 계정으로 한 번 로그인한다
+uvicorn main:app --port=8081                           # 5. 서버를 켜고, 주인이 될 Google 계정으로 한 번 로그인한다 (지금은 로그인 화면이 없다 - 아래 "Google 로그인, 지금은")
 python scripts/migrate_login.py assign-owner --email <그 이메일> --yes   # 6. 주인 없는 행만 그 사용자로 (이미 주인 있는 행은 그대로)
 #                                                        7. AUTH_ENABLED=true 로 켜기 전에 assign-owner 를 한 번 더 실행하세요 (멱등, 그 사이 만들어진 주인 없는 행을 채웁니다)
 #                                                           .env 에 AUTH_ENABLED=true 를 넣고 서버를 다시 켠다
@@ -97,6 +97,9 @@ python scripts/migrate_login.py assign-owner --email <그 이메일> --yes   # 6
 - **쓰기 전 확인**: `:8081` 검사는 IPv4 `127.0.0.1:8081` 에 접속해 보는 것뿐이다. 다른 포트의 서버, `deploy_cli.py`, `session_end.py` 처럼 DB 에 쓰는 다른 프로그램은 검사하지 못하니 직접 멈춘 뒤 실행한다(쓰는 중이면 "다른 프로그램이 DB 에 쓰는 중" 오류로 멈춘다).
 - **실패했을 때**: 값 변경(암호화·키 회전·주인 지정)은 한 번에 되돌려진다. 열·인덱스 더하기(표 만들기·`ADD COLUMN`·`CREATE INDEX`)는 바로 반영되지만 여러 번 해도 안전하니 같은 명령을 다시 실행하면 된다. `encrypt --yes`는 지금 키로 못 읽는 값이 있으면(키가 틀렸거나 옛 키를 잃은 것) 아무것도 쓰지 않고 거절한다 — `status`의 "지금 키로 못 읽는 값"이 0건이 되도록 `SECRET_KEY`·`SECRET_KEYS_OLD`부터 맞춘다. **못 읽는 값이 남아 거절될 때**(암호문 모양인데 지금 키로 풀리지 않음 = 키가 틀렸거나 잃음): ① 이 DB 를 암호화한 올바른 키를 `.env`에 되돌린다(예전 키는 `SECRET_KEYS_OLD`에 쉼표로 이어 둔다). ② 옛 키를 정말 잃었다면 먼저 `backup`을 한 뒤, `status`가 보여 주는 열 이름으로 해당 행의 값을 직접 `NULL`로 만들거나 행을 지우고(그 값은 되살릴 수 없다 - 연결 계정은 화면에서 다시 연결) `encrypt --yes`를 다시 실행한다. 암호화는 끝났는데 "옛 값 지우기(VACUUM)에 실패했습니다"가 나오면 변경은 저장된 상태이고 옛 값이 파일 빈 공간에 남아 있을 수 있다 — 원인을 해결하고 같은 `encrypt --yes`를 다시 실행하면 바꿀 것이 없어도 지우기만 다시 한다. `rotate-keys --yes`에서 같은 문구가 나오면 사정이 다르다 — 다시 실행하면 옛 키 암호문을 모두 새로 암호화하고 백업도 하나 더 만든다(값이 이미 새 키로 바뀌었어도 그렇다).
 - **되돌리기**: 서버를 끄고 `python scripts/migrate_login.py restore --from data/backups/wizard-….db --yes`. 지금 파일도 먼저 백업한 뒤 되돌린다.
+- ⚠️ **한 방향 문**: `encrypt --yes` 뒤에는 이 브랜치 이전 코드(`main`이나 아직 떠 있는 옛 서버 프로세스)가 연결 계정·푸시 기기를 읽지 못한다. 옛 코드로 돌아가는 길은 서버를 끄고 `restore --from <백업>` 뿐이다.
+- **Google 로그인, 지금은**: 위 5단계의 Google 로그인은 아직 화면에서 할 수 없다 (로그인 화면은 별도 계획). 그때까지는 진짜 Google `id_token`으로 `POST /api/auth/google`을 직접 불러야 한다 — 웹이면 허용된 `Origin` 헤더와 `platform=web`, 앱이면 `platform=android`, 그리고 `.env`에 `GOOGLE_CLIENT_ID_WEB`(과 필요하면 `GOOGLE_CLIENT_ID_ANDROID`)가 있어야 한다. 그래서 `assign-owner`와 `AUTH_ENABLED=true`는 로그인 화면 계획이 끝날 때까지 막혀 있다.
+- **작업 종료 전에**: 이 브랜치에서 다음 "작업 종료"를 하기 전에 위 이전(`encrypt --yes`)을 먼저 실행한다 — 안 하면 `session_end.py`가 연결 계정 쪽 서비스를 멈추지 못하고 경고와 함께 2로 끝난다.
 - **키 회전**: 새 키를 `SECRET_KEY`에, 예전 키를 `SECRET_KEYS_OLD`에 넣고 `rotate-keys --yes`. 되돌리는 명령은 없다 — 되돌리려면 `restore --from`과 예전 `.env` 키로. `status`로 못 읽는 값이 0건인지 본 뒤 `SECRET_KEYS_OLD`를 지운다.
 - ⚠️ **키 백업**: `SECRET_KEY`(와 `SECRET_KEYS_OLD`)·`BLIND_INDEX_KEY`를 잃으면 암호화된 값은 되살릴 수 없다. `.env`를 DB 백업과 따로, 안전한 곳에 함께 보관한다. 백업 파일에는 암호화 전 값이 그대로 있으니 이전을 확인한 뒤 안전한 곳에 두거나 지운다.
 

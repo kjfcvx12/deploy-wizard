@@ -38,7 +38,7 @@
 { "id_token": "<Google이 발급한 ID 토큰>", "platform": "web" }
 ```
 - 서버는 서명, `aud`(우리 클라이언트 ID), `exp`, `iss`를 검증한다. 하나라도 어긋나면 401.
-- `platform`: `web|android` (ios 추가 가능). 클라이언트 ID가 플랫폼마다 다르다 (`GOOGLE_CLIENT_ID_WEB`·`GOOGLE_CLIENT_ID_ANDROID`). 허용 플랫폼은 `features/auth/scheme.py` 의 `LOGIN_PLATFORMS` 매핑 하나가 정한다 — iOS 를 더할 때는 그 매핑에 한 줄, `GOOGLE_CLIENT_ID_IOS` 설정, 푸시 기기용 `SUPPORTED_PUSH_PLATFORMS`(`features/notifications/scheme.py`)에 `ios` 를 넣는다 ([iOS 제거](./README.md#ios-제거-2026-11-16-사용자-결정)).
+- `platform`: `web|android` (ios 추가 가능). 클라이언트 ID가 플랫폼마다 다르다 (`GOOGLE_CLIENT_ID_WEB`·`GOOGLE_CLIENT_ID_ANDROID`). `web`은 웹 ID 만, `android`는 안드로이드 ID 와 서버(웹) ID 를 `aud`로 받는다 — Google 문서: 안드로이드 네이티브 로그인은 서버 클라이언트 ID 를 `aud`로 발급하고 안드로이드 ID 는 `azp`에 싣는다 (이 값은 구글 문서로 한 번 더 확인 필요). `azp`는 보지 않는다. 허용 플랫폼은 `features/auth/scheme.py` 의 `LOGIN_PLATFORMS` 매핑 하나가 정한다 — iOS 를 더할 때는 그 매핑에 한 줄, `GOOGLE_CLIENT_ID_IOS` 설정, 푸시 기기용 `SUPPORTED_PUSH_PLATFORMS`(`features/notifications/scheme.py`)에 `ios` 를 넣는다 ([iOS 제거](./README.md#ios-제거-2026-11-16-사용자-결정)).
 - 로그인은 `AUTH_ALLOWED_EMAILS` 허용 목록의 이메일만 된다 (D-L1, 비면 아무도 못 한다).
 
 ### `Auth_Token`

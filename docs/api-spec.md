@@ -20,7 +20,7 @@ Base URL: `http://localhost:8081` · 전부 JSON · 인증은 `AUTH_ENABLED`에 
 
 - 최상위 표(`deploys`·`aws_accounts`·`github_installations`·`connections`·`notifications`·`push_devices`·`notification_settings`)에 주인 `u_id`가 있다 (알림 쪽은 Task 7, 아래 Notifications). 자식 표(로그·이슈·릴리스·환경변수·헬스·인시던트·복구 시도)는 부모 배포를 따라간다.
 - `AUTH_ENABLED=true`: 목록은 내 것만, `d_id`·`i_id`를 받는 경로는 남의 것이면 없는 것과 같이 **404**. 배포 만들기·분석·브랜치 조회 본문의 `aws_account_id`·`github_installation_id`도 내 것이어야 한다 (남의 것·없는 것 404, 그 자격증명은 쓰이지 않는다). 새 배포의 주인은 만든 사용자.
-- `AUTH_ENABLED=false`: 주인을 보지 않는다 (주인 없는 옛 기록도 전부 보인다). 단 본문의 `aws_account_id`·`github_installation_id`는 있는 것이어야 한다 (없으면 404).
+- `AUTH_ENABLED=false`: 주인을 보지 않는다 (주인 없는 옛 기록도 전부 보인다). 단 본문의 `aws_account_id`·`github_installation_id`는 있는 것이어야 한다 — 없는 id 는 배포 만들기(`POST /api/deploys`)·분석(advice)·브랜치 조회(remote) 모두 404.
 - 서버 안 백그라운드(파이프라인·헬스 점검·감시·자동 복구)는 주인과 상관없이 모든 배포를 다룬다.
 - 계정 라우터(`/api/accounts/*`, 로그인 계획 Task 6): `AUTH_ENABLED=true`면 AWS 계정·GitHub 설치·연결 블록 목록은 내 것만, `a_id`·`g_id`·`c_id`를 받는 경로는 남의 것이면 **404** — AWS(AssumeRole·S3·IAM)·GitHub 호출 전에 막는다. 블록에 잇는 계정·설치(`PATCH /connections/{c_id}` 본문)도 내 것이어야 한다. 새로 만든 계정·블록·설치의 주인은 만든 사용자. 공개로 남는 것은 `/aws/template`(정적 파일)과 `/github/callback`(서명된 `state`).
 - 연결 정보 암호화: `aws_accounts.role_arn`·`aws_accounts.aws_account_id`·`github_installations.account_login`은 DB 에 Fernet 암호문으로 저장된다(`Encrypted_Text`). API 응답은 지금처럼 주인에게만 평문으로 보인다(필드 변화 없음). `installation_id`는 평문(웹훅·콜백이 이 값으로 찾는다). 이전 전 평문이 남은 DB 를 읽으면 `암호화 전 값이 DB 에 남아 있습니다. 서버를 끄고 python scripts/migrate_login.py backup → encrypt --yes 를 실행하세요` 오류가 난다(값을 섞어 읽지 않는다).
@@ -50,7 +50,7 @@ Google `id_token`으로 로그인해 액세스 토큰(JWT, 900초)과 리프레�
 | GET | `/api/me` | 헤더 `Authorization: Bearer <액세스 토큰 또는 개인 토큰>` 필수 (`AUTH_ENABLED`와 무관) | 200 `User_Read` |
 | DELETE | `/api/me` | 계정 삭제 (A-04) - 본문 `{"confirm": true}` 필수. 로그인(액세스 토큰)으로만, 개인 토큰은 403. 아래 "DELETE /api/me" | 200 `Auth_Delete_Read` |
 
-- `platform`: `web` | `android`. 그 밖(`ios` 포함)은 422. 플랫폼마다 `aud`가 다르다 — `web`은 `GOOGLE_CLIENT_ID_WEB`, `android`는 `GOOGLE_CLIENT_ID_ANDROID`만 받는다. iOS 는 `features/auth/scheme.py`의 `LOGIN_PLATFORMS`에 한 줄 + `GOOGLE_CLIENT_ID_IOS` 설정 + 푸시 기기용 `SUPPORTED_PUSH_PLATFORMS`(`features/notifications/scheme.py`)로 더한다.
+- `platform`: `web` | `android`. 그 밖(`ios` 포함)은 422. 플랫폼마다 받는 `aud`가 다르다 — `web`은 `GOOGLE_CLIENT_ID_WEB`만, `android`는 `GOOGLE_CLIENT_ID_ANDROID`와 `GOOGLE_CLIENT_ID_WEB`(설정된 것만) 둘 다 받는다. Google 문서에 따르면 안드로이드 네이티브 로그인은 `id_token`의 `aud`를 서버(웹) 클라이언트 ID 로 발급하고 안드로이드 클라이언트 ID 는 `azp`에 싣는다 (이 값은 실제 로그인 때 구글 문서로 한 번 더 확인 필요). `azp`는 보지 않는다 — `aud`·서명·발급자·만료·`email_verified`로 충분하다. 받을 ID 가 하나도 설정되지 않았으면 503. 웹 로그인은 안드로이드 ID 를 `aud`로 받지 않는다(401). iOS 는 `features/auth/scheme.py`의 `LOGIN_PLATFORMS`에 한 줄 + `GOOGLE_CLIENT_ID_IOS` 설정 + 푸시 기기용 `SUPPORTED_PUSH_PLATFORMS`(`features/notifications/scheme.py`)로 더한다.
 - **웹 (`platform="web"` 또는 쿠키로 온 refresh)**: 리프레시는 본문에 싣지 않고(`refresh_token: null`) `Set-Cookie: dw_refresh=…; HttpOnly; SameSite=strict; Path=/api/auth; Max-Age=2592000`(`AUTH_COOKIE_SECURE=true`이면 `Secure`). **앱**: 본문 `refresh_token`에 싣고, 앱이 안전한 저장소에 둔다.
 - **쿠키로 온 refresh·logout 과 `platform="web"` 로그인은 `Origin` 헤더가 `CORS_ORIGINS`에 있어야 한다.** 없거나 밖이면 403 (Google 검증도 토큰 사용도 하지 않는다). `android` 로그인은 `Origin`을 보지 않는다. 본문에 `refresh_token`이 있으면 쿠키보다 본문을 쓰고(이때는 `Origin` 확인이 없고 쿠키 토큰도 회전하지 않는다), 응답도 본문으로 준다.
 - 같은 Google 계정의 첫 로그인이 동시에 오면 한쪽은 유일 키에 막히지만, 되돌린 뒤 다시 읽어 있는 사용자로 이어 가므로 둘 다 200 이다. `AUTH_JWT_KEY`가 없으면 로그인·refresh 는 커밋 전에 503 으로 끝나 사용자·토큰 회전이 남지 않는다 (옛 리프레시 토큰이 그대로 살아 있다).
