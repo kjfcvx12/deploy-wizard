@@ -38,6 +38,8 @@ service.activeConfigurations[].ingressPaths[]  { accessType: PUBLIC|PRIVATE, end
 
 주소 형식: `https://<service-name>.ecs.<region>.on.aws/`
 
+정리 목록의 서비스 상태 (botocore 1.43.126 서비스 모델로 확인, 2026-11-16): 태그 API(`get_resources`)는 삭제가 끝난 `INACTIVE` 서비스의 태그도 계속 돌려준다. 그래서 `services_express_list_managed` 는 `ecs.describe_services(cluster=, services=[ARN...])`(한 번에 **10개까지**, 클러스터는 ARN `service/<클러스터>/<이름>` 에서 읽는다)로 다시 물어 `status == "INACTIVE"` 이거나 `failures[].reason == "MISSING"` 인 것은 뺀다. `DRAINING` 은 아직 끝나지 않았으니 남긴다. 호출이 실패하거나 클러스터가 없는 옛 형식 ARN 이면 확인하지 않고 남긴다.
+
 배포 진행은 일반 ECS API로 본다: `list_service_deployments(service=arn)` → `describe_service_deployments(...)`.
 `status`: `PENDING` `IN_PROGRESS` `SUCCESSFUL` `STOPPED` `STOP_REQUESTED` `ROLLBACK_REQUESTED` `ROLLBACK_IN_PROGRESS` `ROLLBACK_SUCCESSFUL` `ROLLBACK_FAILED`
 
