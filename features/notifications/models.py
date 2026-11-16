@@ -1,6 +1,8 @@
 import json
 
 from shared.database import Base
+from shared.crypto_types import Encrypted_Text
+from shared.secrets import blind_index
 
 from sqlalchemy.orm import Mapped, mapped_column
 from sqlalchemy import String, Text, TIMESTAMP, ForeignKey, Index, func
@@ -16,14 +18,20 @@ NOTIFICATION_KINDS=('incident_opened', 'incident_recovered', 'incident_needs_act
 NOTIFICATION_KINDS_VERSION=2
 
 
+# 기기 토큰 블라인드 인덱스 기본값 - 줄을 만들 때 bidx 를 빠뜨려도 넣는 토큰(평문)으로 채운다
+def push_device_token_bidx(context) -> str | None:
+    token=context.get_current_parameters().get("expo_token")
+    return blind_index("expo_token", token) if token else None
+
+
 class Notification(Base):
     __tablename__ = "notifications"
     __table_args__ = (Index("ix_notifications_u_id_read_at", "u_id", "read_at"),)
 
     n_id: Mapped[int] = mapped_column(primary_key=True)
 
-    # 사용자 테이블은 3단계에서 생긴다 - 그 전까지 null
-    u_id: Mapped[Optional[int]] = mapped_column()
+    # 받는 사용자 = 대상 배포의 주인. null 은 주인 없는 옛 배포·인증 끔 (인덱스는 ix_notifications_u_id_read_at 이 맡는다)
+    u_id: Mapped[Optional[int]] = mapped_column(ForeignKey("users.u_id"))
     # 바로가기용
     d_id: Mapped[Optional[int]] = mapped_column()
     i_id: Mapped[Optional[int]] = mapped_column(ForeignKey("incidents.i_id"))
@@ -52,10 +60,12 @@ class Push_Device(Base):
 
     p_d_id: Mapped[int] = mapped_column(primary_key=True)
 
-    # 사용자 테이블은 3단계에서 생긴다 - 그 전까지 null
-    u_id: Mapped[Optional[int]] = mapped_column()
-    # 한 기기에 한 토큰. 응답에는 끝 6자리만 보인다
-    expo_token: Mapped[str] = mapped_column(String(255), nullable=False, unique=True)
+    # 기기 주인 - 같은 토큰을 다른 사용자가 등록하면 그 사용자로 옮긴다. null 은 인증 끔에서 등록한 기기
+    u_id: Mapped[Optional[int]] = mapped_column(ForeignKey("users.u_id"), index=True)
+    # 한 기기에 한 토큰. 암호문으로 저장하고 응답에는 끝 6자리만 보인다 - 찾기는 expo_token_bidx 로만
+    expo_token: Mapped[str] = mapped_column(Encrypted_Text, nullable=False)
+    # blind_index("expo_token", token) - null 은 이전(migrate_login) 전의 옛 줄
+    expo_token_bidx: Mapped[Optional[str]] = mapped_column(String(64), unique=True, index=True, default=push_device_token_bidx)
     platform: Mapped[str] = mapped_column(String(10), nullable=False)
     # android (허용 값은 scheme.py 의 SUPPORTED_PUSH_PLATFORMS)
 
@@ -66,8 +76,9 @@ class Push_Device(Base):
 class Notification_Setting(Base):
     __tablename__ = "notification_settings"
 
-    # 한 줄뿐인 표 - id 는 항상 1 (사용자 계정이 생기면 users 로 옮긴다)
-    id: Mapped[int] = mapped_column(primary_key=True, default=1)
+    # 사용자마다 한 줄. 인증 끔·주인 없는 배포는 id=1, u_id=null 줄을 쓴다 (crud 가 만든다)
+    id: Mapped[int] = mapped_column(primary_key=True)
+    u_id: Mapped[Optional[int]] = mapped_column(ForeignKey("users.u_id"), unique=True, index=True)
 
     notify_email: Mapped[bool] = mapped_column(nullable=False, default=True)
     notify_push: Mapped[bool] = mapped_column(nullable=False, default=True)

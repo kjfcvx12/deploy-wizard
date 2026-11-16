@@ -372,6 +372,15 @@ class Auth_Service:
         return None
 
 
+    # 사용자 이메일 (복호화한 값) - 알림 메일 받는 사람. 없거나 탈퇴한 사용자면 None. 주소는 로그·오류에 싣지 않는다
+    @staticmethod
+    async def services_auth_user_email(db:AsyncSession, u_id:int) -> str | None:
+        db_user=await Auth_Crud.crud_user_get_by_u_id(db, u_id)
+        if db_user is None or db_user.status != "active":
+            return None
+        return db_user.email
+
+
     # 개인 토큰 발급 - 원문은 이 응답에만, DB 에는 해시와 끝 4자리. 기간은 기본 AUTH_PAT_DEFAULT_DAYS, 상한 AUTH_PAT_MAX_DAYS
     @staticmethod
     async def services_auth_token_create(db:AsyncSession, u_id:int, data:Api_Token_Create) -> Api_Token_Issued:

@@ -36,6 +36,13 @@ class Push_Result:
     error: str | None = None
 
 
+# 푸시 대상 기기 하나 - 복호화한 토큰 (DB 줄 대신 발송기에 넘긴다)
+@dataclass
+class Push_Target:
+    p_d_id: int
+    expo_token: str
+
+
 # 글에서 비밀 값 지우기 - 일반 마스킹 + Expo 토큰 + 메일 비밀번호
 def dispatch_scrub(text:str|None) -> str:
     cleaned=EXPO_TOKEN_PATTERN.sub(MASK, mask_text(text))
@@ -51,9 +58,9 @@ def dispatch_oneline(text:str|None) -> str:
     return re.sub(r"[\r\n]+", " ", text or "").strip()
 
 
-# 메일을 보낼 수 있게 설정돼 있는지 - 서버 주소와 받는 사람이 모두 있어야 한다
-def dispatch_mail_configured() -> bool:
-    return bool(settings.mail_host and settings.mail_to)
+# 메일을 보낼 수 있게 설정돼 있는지 - 서버 주소와 받는 사람(to, 없으면 MAIL_TO)이 모두 있어야 한다
+def dispatch_mail_configured(to:str|None=None) -> bool:
+    return bool(settings.mail_host and (to or settings.mail_to))
 
 
 # 메일 보내기 (블로킹) - STARTTLS 후 로그인하고 보낸다. 제한 시간은 MAIL_TIMEOUT_SECONDS
@@ -68,12 +75,12 @@ def dispatch_mail_send_blocking(message:EmailMessage) -> None:
         client.send_message(message)
 
 
-# 메일 보내기 - 설정이 없으면 조용히 건너뛴다. 실패하면 예외를 그대로 올린다 (기록은 호출한 쪽)
-async def dispatch_mail_send(subject:str, body:str) -> None:
-    if not dispatch_mail_configured():
+# 메일 보내기 - to 가 있으면 그 한 사람(배포 주인), 없으면 MAIL_TO. 설정이 없으면 조용히 건너뛴다. 실패하면 예외를 그대로 올린다 (기록은 호출한 쪽)
+async def dispatch_mail_send(subject:str, body:str, to:str|None=None) -> None:
+    if not dispatch_mail_configured(to):
         return
 
-    recipients=[address.strip() for address in settings.mail_to.split(",") if address.strip()]
+    recipients=[dispatch_oneline(to)] if to else [address.strip() for address in settings.mail_to.split(",") if address.strip()]
 
     message=EmailMessage()
     message["Subject"]=dispatch_oneline(subject)

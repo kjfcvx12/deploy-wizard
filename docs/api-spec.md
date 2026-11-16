@@ -18,7 +18,7 @@ Base URL: `http://localhost:8081` · 전부 JSON · 인증은 `AUTH_ENABLED`에 
 
 ### 소유권 (로그인 계획 Task 5)
 
-- 최상위 표(`deploys`·`aws_accounts`·`github_installations`·`connections`)에 주인 `u_id`가 있다. 자식 표(로그·이슈·릴리스·환경변수·헬스·인시던트·복구 시도)는 부모 배포를 따라간다.
+- 최상위 표(`deploys`·`aws_accounts`·`github_installations`·`connections`·`notifications`·`push_devices`·`notification_settings`)에 주인 `u_id`가 있다 (알림 쪽은 Task 7, 아래 Notifications). 자식 표(로그·이슈·릴리스·환경변수·헬스·인시던트·복구 시도)는 부모 배포를 따라간다.
 - `AUTH_ENABLED=true`: 목록은 내 것만, `d_id`·`i_id`를 받는 경로는 남의 것이면 없는 것과 같이 **404**. 배포 만들기·분석·브랜치 조회 본문의 `aws_account_id`·`github_installation_id`도 내 것이어야 한다 (남의 것·없는 것 404, 그 자격증명은 쓰이지 않는다). 새 배포의 주인은 만든 사용자.
 - `AUTH_ENABLED=false`: 주인을 보지 않는다 (주인 없는 옛 기록도 전부 보인다). 단 본문의 `aws_account_id`·`github_installation_id`는 있는 것이어야 한다 (없으면 404).
 - 서버 안 백그라운드(파이프라인·헬스 점검·감시·자동 복구)는 주인과 상관없이 모든 배포를 다룬다.
@@ -620,7 +620,13 @@ Hard rule 3 의 자동 조치는 두 가지뿐이다. **재시작**(서비스를
 
 ## Notifications · Devices (D1 - 알림, 앱 안·메일·Expo 푸시)
 
-설계는 `docs/app-web/04-api-spec.md` §4·5·7. 로그인 전(1~2단계)에는 모든 줄의 `u_id` 가 null 이고 사용자 필터가 없다.
+설계는 `docs/app-web/04-api-spec.md` §4·5·7.
+
+소유권 (로그인 계획 Task 7):
+- `AUTH_ENABLED=true`: 알림 목록·읽지 않은 수·읽음·모두 읽음은 내 것만 (`notifications.u_id` = 대상 배포의 주인). 남의 `n_id`·`p_d_id`는 404. 설정은 사용자마다 한 줄 (처음 읽을 때 기본값으로 만든다).
+- `POST /api/devices`는 기기의 주인을 현재 사용자로 저장한다. 같은 토큰을 다른 사용자가 등록하면 그 사용자 기기로 옮긴다 (행은 하나). 토큰은 DB 에 Fernet 암호문(`Encrypted_Text`)으로, 찾기는 `expo_token_bidx`(블라인드 인덱스)로만 한다. 응답은 그대로 (끝 6자리만).
+- 발송: 배포·인시던트 알림은 그 배포 주인의 설정·기기·이메일(로그인한 Google 이메일)로만 간다. 주인 없는 배포(옛 기록·인증 끔)는 지금처럼 `id=1` 설정, 전체 기기, `MAIL_TO`. 이메일 주소는 알림 줄·오류 문장·로그에 남지 않는다.
+- `AUTH_ENABLED=false`: 사용자 필터 없이 지금과 같다 (설정은 `id=1` 줄).
 
 | Method | Endpoint | 설명 | 성공 |
 |--------|----------|------|------|
@@ -634,8 +640,8 @@ Hard rule 3 의 자동 조치는 두 가지뿐이다. **재시작**(서비스를
 | DELETE | `/api/devices/{p_d_id}` | 기기 등록 해제 | 200 `{ "message": "…" }` |
 
 - `after` 는 `n_id` 커서(1 이상, 아니면 422) - 그보다 오래된 것부터 최신순 100건. `unread=true` 면 읽지 않은 것만. 없는 `n_id`(또는 앱 안 알림이 아닌 줄)는 404 `해당 id의 알림이 없습니다`.
-- `expo_token` 은 `^(Exponent|Expo)PushToken\[.+\]$` 형식, `platform` 은 `android` 만 (아니면 422. 허용 값은 `features/notifications/scheme.py` 의 `SUPPORTED_PUSH_PLATFORMS`, iOS 는 2026-11-16 에 뺐다). 없는 `p_d_id` 는 404 `해당 id의 기기가 없습니다`.
-- 설정은 한 줄뿐이고 처음 읽을 때 기본값(메일 켬, 푸시 켬, 일곱 종류 모두)으로 만든다. PATCH 본문에 모르는 항목이나 모르는 `kinds` 값이 있으면 422.
+- `expo_token` 은 `^(Exponent|Expo)PushToken\[.+\]$` 형식, `platform` 은 `android` 만 (아니면 422. 허용 값은 `features/notifications/scheme.py` 의 `SUPPORTED_PUSH_PLATFORMS`, iOS 는 2026-11-16 에 뺐다). 없는(또는 남의) `p_d_id` 는 404 `해당 id의 기기가 없습니다`.
+- 설정은 사용자마다(인증 끔이면 `id=1`) 한 줄이고 처음 읽을 때 기본값(메일 켬, 푸시 켬, 일곱 종류 모두)으로 만든다. PATCH 본문에 모르는 항목이나 모르는 `kinds` 값이 있으면 422.
 
 ### `Notification_Read`
 ```json

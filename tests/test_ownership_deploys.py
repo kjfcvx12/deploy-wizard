@@ -18,9 +18,6 @@ from auth_helpers import make_user, auth_header
 
 ROOT=Path(__file__).resolve().parent.parent
 
-# Task 7 에서 소유권을 붙인 뒤 지운다
-PENDING_OWNERSHIP={"notifications", "push_devices", "notification_settings"}
-
 
 @pytest_asyncio.fixture
 async def client(monkeypatch):
@@ -311,6 +308,5 @@ def test_ownership_table_coverage():
         return any(owned(fk.column.table.name, seen | {name}) for fk in table.foreign_keys)
 
     assert len(tables) > 10
-    missing=[name for name in tables if name != "users" and name not in PENDING_OWNERSHIP and not owned(name)]
+    missing=[name for name in tables if name != "users" and not owned(name)]
     assert missing == [], "소유권이 빠진 표: " + ", ".join(sorted(missing))
-    assert PENDING_OWNERSHIP <= set(tables)
