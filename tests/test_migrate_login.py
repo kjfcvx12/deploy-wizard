@@ -527,3 +527,212 @@ def test_cleanup_warns_on_unmigrated_accounts(tmp_path, monkeypatch, capsys):
     assert OLD_ROLE_ARN not in out
     # 읽기만 한다
     assert db_path.read_bytes() == original
+
+
+# 다른 키로 만든 암호문이 든 계정 줄 - 지금 키로는 못 읽는다 (키를 바꿨거나 옛 키를 잃은 DB 를 흉내 낸다)
+def add_unreadable_account(db_path:Path) -> str:
+    foreign=Fernet(Fernet.generate_key()).encrypt(b"other-key-arn").decode()
+    conn=sqlite3.connect(db_path)
+    try:
+        conn.execute("INSERT INTO aws_accounts (label, role_arn, external_id_encrypted, status) VALUES ('lost', ?, ?, 'verified')",
+                     (foreign, encrypt_secret("lost-external-id")))
+        conn.commit()
+    finally:
+        conn.close()
+    return foreign
+
+
+# 평문 네 값이 그대로인지 - 옛 DB 를 sqlite3 로 직접 읽는다
+def old_values_intact(db_path:Path) -> bool:
+    conn=sqlite3.connect(db_path)
+    try:
+        return (conn.execute("SELECT role_arn, aws_account_id FROM aws_accounts WHERE a_id=1").fetchone() == (OLD_ROLE_ARN, OLD_ACCOUNT_ID)
+                and conn.execute("SELECT account_login FROM github_installations").fetchone()[0] == OLD_LOGIN
+                and conn.execute("SELECT expo_token FROM push_devices").fetchone()[0] == OLD_TOKEN)
+    finally:
+        conn.close()
+
+
+def test_migrate_encrypt_scrub_failure_does_not_claim_rollback(tmp_path, monkeypatch, capsys):
+    script=load_script("migrate_login")
+    monkeypatch.setattr(script, "port_in_use", lambda port=8081: False)
+    db_path=make_old_db(tmp_path / "wizard.db")
+    backups=tmp_path / "backups"
+    args=["--db", str(db_path), "--backup-dir", str(backups)]
+
+    def failing_scrub(path):
+        raise sqlite3.OperationalError("disk I/O error")
+
+    monkeypatch.setattr(script, "migrate_scrub", failing_scrub)
+    code=script.main(["encrypt", "--yes"] + args)
+
+    out=capsys.readouterr().out
+    assert code == 1
+    assert "암호화는 끝났지만 옛 값 지우기(VACUUM)에 실패했습니다" in out
+    assert "되돌려" not in out
+    assert "encrypt --yes" in out
+    for plain in (OLD_ROLE_ARN, OLD_LOGIN, OLD_TOKEN):
+        assert plain not in out
+
+    # 암호화 결과는 이미 저장되어 있다 (옛 값만 파일 빈 공간에 남아 있을 수 있다)
+    check=sqlite3.connect(db_path)
+    try:
+        assert check.execute("SELECT role_arn FROM aws_accounts").fetchone()[0] != OLD_ROLE_ARN
+    finally:
+        check.close()
+
+    # 같은 명령을 다시 실행하면 할 일이 없어도 지우기를 다시 한다 (백업은 더 만들지 않는다)
+    calls=[]
+    monkeypatch.setattr(script, "migrate_scrub", lambda path: calls.append(path))
+    assert script.main(["encrypt", "--yes"] + args) == 0
+    assert calls == [db_path]
+    assert len(list(backups.glob("wizard-*.db"))) == 1
+    assert "옛 값 지우기" in capsys.readouterr().out
+
+
+def test_migrate_encrypt_refuses_unreadable_values(tmp_path, monkeypatch, capsys):
+    script=load_script("migrate_login")
+    monkeypatch.setattr(script, "port_in_use", lambda port=8081: False)
+    db_path=make_old_db(tmp_path / "wizard.db")
+    foreign=add_unreadable_account(db_path)
+    backups=tmp_path / "backups"
+    args=["--db", str(db_path), "--backup-dir", str(backups)]
+    original=db_path.read_bytes()
+
+    code=script.main(["encrypt", "--yes"] + args)
+
+    out=capsys.readouterr().out
+    assert code == 1
+    assert "SECRET_KEY" in out and "못 읽는" in out and "aws_accounts.role_arn" in out
+    assert foreign not in out and OLD_ROLE_ARN not in out
+    # 아무것도 쓰지 않았다 (백업도 만들지 않았다)
+    assert db_path.read_bytes() == original and not backups.exists()
+
+    # 보기만 하는 실행은 거절하지 않고 경고를 함께 보인다
+    assert script.main(["encrypt"] + args) == 0
+    assert "못 읽는" in capsys.readouterr().out
+    assert db_path.read_bytes() == original
+
+
+def test_migrate_status_prints_unreadable_count(tmp_path, monkeypatch, capsys):
+    script=load_script("migrate_login")
+    db_path=make_old_db(tmp_path / "wizard.db")
+    foreign=add_unreadable_account(db_path)
+
+    assert script.main(["status", "--db", str(db_path)]) == 0
+
+    out=capsys.readouterr().out
+    line=[row for row in out.splitlines() if row.strip().startswith("aws_accounts.role_arn") and "1건" in row]
+    assert len(line) == 2
+    assert "못 읽는" in out and foreign not in out
+
+
+def test_startup_check_warns_on_unreadable_values(tmp_path, caplog):
+    db_path=make_old_db(tmp_path / "wizard.db")
+    foreign=add_unreadable_account(db_path)
+    engine=sync_engine(db_path)
+
+    with engine.begin() as conn:
+        migrate_bootstrap(conn)
+        migrate_encrypt_plaintext(conn, dry_run=False)
+        with caplog.at_level("WARNING", logger="shared.migrate"):
+            assert migrate_check_startup(conn) is None
+    engine.dispose()
+
+    assert any("못 읽는" in record.getMessage() and "aws_accounts.role_arn" in record.getMessage() for record in caplog.records)
+    assert foreign not in caplog.text and OLD_ROLE_ARN not in caplog.text
+
+
+def test_migrate_encrypt_failure_midway_rolls_back_values(tmp_path, monkeypatch, capsys):
+    import shared.migrate as migrate_module
+
+    script=load_script("migrate_login")
+    monkeypatch.setattr(script, "port_in_use", lambda port=8081: False)
+    db_path=make_old_db(tmp_path / "wizard.db")
+    backups=tmp_path / "backups"
+    args=["--db", str(db_path), "--backup-dir", str(backups)]
+    real_encrypt=migrate_module.encrypt_secret
+    calls=[]
+
+    def flaky_encrypt(value):
+        calls.append(1)
+        if len(calls) == 2:
+            raise RuntimeError("encrypt exploded")
+        return real_encrypt(value)
+
+    monkeypatch.setattr(migrate_module, "encrypt_secret", flaky_encrypt)
+    code=script.main(["encrypt", "--yes"] + args)
+
+    captured=capsys.readouterr()
+    output=captured.out + captured.err
+    assert code == 1 and len(calls) >= 2
+    # 첫 값도 도로 평문이다 (값 변경은 모두 되돌려졌다)
+    assert old_values_intact(db_path)
+    assert "되돌려졌" in output
+    for plain in (OLD_ROLE_ARN, OLD_ACCOUNT_ID, OLD_LOGIN, OLD_TOKEN):
+        assert plain not in output
+
+    # 열·인덱스를 더하는 일은 이미 반영돼 있고, 같은 명령을 다시 실행하면 이어서 끝난다 (여러 번 해도 안전)
+    check=sqlite3.connect(db_path)
+    try:
+        assert "u_id" in [row[1] for row in check.execute("PRAGMA table_info(deploys)")]
+    finally:
+        check.close()
+    monkeypatch.setattr(migrate_module, "encrypt_secret", real_encrypt)
+    assert script.main(["encrypt", "--yes"] + args) == 0
+    assert OLD_ROLE_ARN.encode() not in db_path.read_bytes()
+
+
+# 깨끗한 프로세스에서 진입점(스크립트·main)이 가져오는 모델만으로 잡힌 암호화 열 / 모든 features/*/models.py 를 가져온 뒤의 암호화 열
+COLLECT_COLUMNS_CODE="""
+import sys, json, importlib, importlib.util
+from pathlib import Path
+
+root=Path(sys.argv[1])
+sys.path.insert(0, str(root))
+mode=sys.argv[2]
+
+if mode == "script":
+    spec=importlib.util.spec_from_file_location("script_migrate_login", root / "scripts" / "migrate_login.py")
+    module=importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+elif mode == "main":
+    import main
+
+from shared.migrate import migrate_encrypted_columns
+
+before=sorted(migrate_encrypted_columns())
+for models in sorted((root / "features").glob("*/models.py")):
+    importlib.import_module(f"features.{models.parent.name}.models")
+after=sorted(migrate_encrypted_columns())
+print(json.dumps({"before": before, "after": after}))
+"""
+
+
+# 하위 프로세스로 열 목록을 모은다 (이 프로세스는 이미 모델을 다 불러 놓았으니 깨끗한 상태가 필요하다)
+def collect_encrypted_columns(mode:str) -> dict:
+    import json
+    import os
+    import subprocess
+    import sys
+
+    result=subprocess.run([sys.executable, "-I", "-c", COLLECT_COLUMNS_CODE, str(ROOT), mode], capture_output=True, text=True,
+                          encoding="utf-8", env=dict(os.environ), timeout=120)
+    assert result.returncode == 0, result.stderr[-800:]
+    return json.loads(result.stdout.strip().splitlines()[-1])
+
+
+@pytest.mark.parametrize("mode", ["script", "main"])
+def test_migrate_entrypoints_import_every_models_module(mode):
+    columns=collect_encrypted_columns(mode)
+
+    # 모든 features/*/models.py 의 Encrypted_Text 열이 진입점이 가져온 모델만으로 이미 잡혀 있다 - 새 모델 모듈을 빠뜨리면 여기서 실패한다
+    assert columns["before"] == columns["after"]
+    assert ["users", "email"] in columns["after"] and ["aws_accounts", "role_arn"] in columns["after"] and ["push_devices", "expo_token"] in columns["after"]
+
+
+def test_migrate_columns_check_detects_missing_import():
+    # 대조군 - 아무 모델도 가져오지 않는 진입점이면 열이 모자라다 (위 검사가 실제로 빠진 모듈을 잡아낸다)
+    columns=collect_encrypted_columns("bare")
+
+    assert columns["before"] != columns["after"] and len(columns["after"]) > len(columns["before"])

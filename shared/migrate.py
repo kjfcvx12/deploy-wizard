@@ -1,12 +1,16 @@
+import logging
 import sqlite3
 from datetime import datetime
 from pathlib import Path
 
 from sqlalchemy import create_engine, inspect, text
 
+from shared.masking import mask_text
 from shared.database import Base, ensure_columns, ensure_indexes, ENSURE_COLUMNS
 from shared.crypto_types import Encrypted_Text, FERNET_PREFIX
 from shared.secrets import encrypt_secret, decrypt_secret, secret_is_encrypted, secret_rotate, blind_index
+
+logger=logging.getLogger(__name__)
 
 # 로그인 이전 (로그인 계획 Task 8) - 옛 data/wizard.db 를 잃지 않고 옮긴다: 백업 → 암호화 → 주인 지정
 # 모든 함수는 동기 연결(conn)이나 파일 경로를 받는다 (비동기 엔진에서는 run_sync 로 부른다)
@@ -21,6 +25,8 @@ ROTATE_EXTRA_COLUMNS=[("aws_accounts", "external_id_encrypted")]
 BACKUP_PREFIX="wizard-"
 # 서버 시작 검사 - 평문이 남은 DB 로는 서버를 띄우지 않는다
 MESSAGE_STARTUP="암호화 전 값이 {count}건 있습니다. 서버를 끄고 python scripts/migrate_login.py backup → encrypt --yes 를 실행하세요"
+# 서버 시작 경고 - 암호문 모양인데 안 풀리는 값이 있다 (SECRET_KEY 가 바뀌었거나 옛 키를 잃었다는 뜻). 서버는 켜지지만 그 값은 읽히지 않는다 (값은 싣지 않는다)
+MESSAGE_UNREADABLE_WARNING="지금 키로 못 읽는 암호화 값이 {count}건 있습니다 ({columns}). SECRET_KEY 가 바뀌었거나 옛 키를 잃은 것일 수 있습니다 - python scripts/migrate_login.py status 로 확인하세요"
 # 작업 종료·정리 스크립트 - 연결 계정을 읽지 못했을 때 (값은 싣지 않는다)
 MESSAGE_ACCOUNTS_UNMIGRATED=("연결한 AWS 계정 정보가 이전(암호화) 전 상태라 읽지 못했습니다. 연결 계정 쪽 서비스는 확인하거나 멈추지 못했고 계속 요금이 나갈 수 있습니다.\n"
                              "다음: 서버를 끄고 python scripts/migrate_login.py backup → python scripts/migrate_login.py encrypt --yes 를 실행한 뒤 이 스크립트를 다시 실행하세요")
@@ -382,11 +388,21 @@ def migrate_connection_owner_mismatch(conn) -> dict[str, int]:
     return result
 
 
-# 서버 시작 검사 - 암호화 전 값이 하나라도 있으면 멈춘다 (새 DB·빈 표는 통과). 값은 싣지 않는다
+# 못 읽는 값 수 - 암호화 열마다 암호문 모양인데 지금 키로 안 풀리는 행 수 (0 인 열은 뺀다)
+def migrate_unreadable_count(conn) -> dict[str, int]:
+    return {key: counts["unreadable"] for key, counts in migrate_value_counts(conn).items() if counts["unreadable"]}
+
+
+# 서버 시작 검사 - 암호화 전 값이 하나라도 있으면 멈춘다 (새 DB·빈 표는 통과). 못 읽는 값은 멈추지 않고 경고만 남긴다. 값은 싣지 않는다
 def migrate_check_startup(conn) -> None:
-    count=sum(migrate_plaintext_count(conn).values())
-    if count:
-        raise RuntimeError(MESSAGE_STARTUP.format(count=count))
+    counts=migrate_value_counts(conn)
+    plaintext=sum(value["plaintext"] for value in counts.values())
+    if plaintext:
+        raise RuntimeError(MESSAGE_STARTUP.format(count=plaintext))
+
+    unreadable={key: value["unreadable"] for key, value in counts.items() if value["unreadable"]}
+    if unreadable:
+        logger.warning(mask_text(MESSAGE_UNREADABLE_WARNING.format(count=sum(unreadable.values()), columns=", ".join(unreadable))))
     return None
 
 

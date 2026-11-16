@@ -83,15 +83,18 @@ python scripts/cleanup.py --yes                               # 완전히 정리
 모든 명령은 **기본이 보기만**이고 `--yes`일 때만 쓴다. 쓰기 전에는 언제나 검사한(`integrity_check`) 백업 `data/backups/wizard-YYYYmmdd-HHMMSS.db`를 먼저 만든다. 출력에는 값 원문·토큰·이메일을 싣지 않는다(개수만).
 
 ```bash
-# 1. 서버를 끈다 (:8081 에 서버가 떠 있으면 encrypt·rotate-keys --yes·restore 는 거절한다)
+# 1. 서버를 끈다 (:8081 에 서버가 떠 있으면 encrypt·rotate-keys --yes·restore 는 거절한다 - 아래 "쓰기 전 확인" 참고)
 python scripts/migrate_login.py backup                 # 2. 백업 (경로를 알려 준다)
 python scripts/migrate_login.py status                 # 3. 열마다 평문 수, 주인 없는 행 수 (읽기 전용)
-python scripts/migrate_login.py encrypt --yes          # 4. 열·인덱스 보정 → 기기 토큰 인덱스 채우기·중복 정리 → 평문 암호화 (두 번 실행해도 안전)
+python scripts/migrate_login.py encrypt --yes          # 4. 열·인덱스 보정 → 기기 토큰 인덱스 채우기·중복 정리 → 평문 암호화 → 옛 값 지우기 (두 번 실행해도 안전)
 uvicorn main:app --port=8081                           # 5. 서버를 켜고, 주인이 될 Google 계정으로 한 번 로그인한다
 python scripts/migrate_login.py assign-owner --email <그 이메일> --yes   # 6. 주인 없는 행만 그 사용자로 (이미 주인 있는 행은 그대로)
-#                                                        7. .env 에 AUTH_ENABLED=true 를 넣고 서버를 다시 켠다
+#                                                        7. AUTH_ENABLED=true 로 켜기 전에 assign-owner 를 한 번 더 실행하세요 (멱등, 그 사이 만들어진 주인 없는 행을 채웁니다)
+#                                                           .env 에 AUTH_ENABLED=true 를 넣고 서버를 다시 켠다
 ```
 
+- **쓰기 전 확인**: `:8081` 검사는 IPv4 `127.0.0.1:8081` 에 접속해 보는 것뿐이다. 다른 포트의 서버, `deploy_cli.py`, `session_end.py` 처럼 DB 에 쓰는 다른 프로그램은 검사하지 못하니 직접 멈춘 뒤 실행한다(쓰는 중이면 "다른 프로그램이 DB 에 쓰는 중" 오류로 멈춘다).
+- **실패했을 때**: 값 변경(암호화·주인 지정)은 한 번에 되돌려진다. 열·인덱스 더하기(표 만들기·`ADD COLUMN`·`CREATE INDEX`)는 바로 반영되지만 여러 번 해도 안전하니 같은 명령을 다시 실행하면 된다. `encrypt --yes`는 지금 키로 못 읽는 값이 있으면(키가 틀렸거나 옛 키를 잃은 것) 아무것도 쓰지 않고 거절한다 — `status`의 "지금 키로 못 읽는 값"이 0건이 되도록 `SECRET_KEY`·`SECRET_KEYS_OLD`부터 맞춘다. 암호화는 끝났는데 "옛 값 지우기(VACUUM)에 실패했습니다"가 나오면 변경은 저장된 상태이고 옛 값이 파일 빈 공간에 남아 있을 수 있다 — 원인을 해결하고 같은 `encrypt --yes`를 다시 실행하면 바꿀 것이 없어도 지우기만 다시 한다.
 - **되돌리기**: 서버를 끄고 `python scripts/migrate_login.py restore --from data/backups/wizard-….db --yes`. 지금 파일도 먼저 백업한 뒤 되돌린다.
 - **키 회전**: 새 키를 `SECRET_KEY`에, 예전 키를 `SECRET_KEYS_OLD`에 넣고 `rotate-keys --yes`. 되돌리는 명령은 없다 — 되돌리려면 `restore --from`과 예전 `.env` 키로. `status`로 못 읽는 값이 0건인지 본 뒤 `SECRET_KEYS_OLD`를 지운다.
 - ⚠️ **키 백업**: `SECRET_KEY`(와 `SECRET_KEYS_OLD`)·`BLIND_INDEX_KEY`를 잃으면 암호화된 값은 되살릴 수 없다. `.env`를 DB 백업과 따로, 안전한 곳에 함께 보관한다. 백업 파일에는 암호화 전 값이 그대로 있으니 이전을 확인한 뒤 안전한 곳에 두거나 지운다.

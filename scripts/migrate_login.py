@@ -15,7 +15,8 @@ from shared.settings import settings
 from shared.migrate import (migrate_db_path, migrate_readonly_engine, migrate_backup, migrate_restore_file, migrate_verify_db,
                             migrate_bootstrap, migrate_schema_pending, migrate_value_counts, migrate_plaintext_count,
                             migrate_encrypt_plaintext, migrate_rotate, migrate_owner_tables, migrate_ownerless_count,
-                            migrate_user_find_by_email, migrate_assign_owner, migrate_connection_owner_mismatch, migrate_scrub)
+                            migrate_user_find_by_email, migrate_assign_owner, migrate_connection_owner_mismatch, migrate_scrub,
+                            migrate_unreadable_count)
 
 # 모델을 import 해야 Base.metadata 가 암호화 열·u_id 열을 안다 (하나라도 빠지면 그 표를 건너뛴다)
 from features.deploys import models as deploy_models
@@ -41,6 +42,16 @@ PORT=8081
 MESSAGE_SERVER_RUNNING=f"서버가 켜져 있습니다 (:{PORT} 에 리스너가 있음). 서버를 끈 뒤 다시 실행하세요"
 # 다른 쓰기가 잠금을 쥐고 있을 때 기다리는 초
 WRITE_TIMEOUT=10
+# 못 읽는 값이 있으면 encrypt --yes 는 쓰지 않는다 - 키가 틀렸거나 옛 키를 잃은 DB 에 새 암호문을 섞지 않으려고
+MESSAGE_UNREADABLE_REFUSE=("지금 키로 못 읽는 암호화 값이 {count}건 있어 중단했습니다. 아무것도 바꾸지 않았고 백업도 만들지 않았습니다.\n"
+                           "다음: .env 의 SECRET_KEY 가 이 DB 를 암호화한 키인지, 예전 키를 SECRET_KEYS_OLD 에 남겨 뒀는지 확인하세요. "
+                           "python scripts/migrate_login.py status 에서 못 읽는 값이 0건이 되면 다시 실행하세요")
+# 변경은 저장됐는데 파일 정리(VACUUM)가 실패했다 - 옛 값이 파일 빈 공간에 남아 있을 수 있다
+MESSAGE_SCRUB_FAILED=("{done} 끝났지만 옛 값 지우기(VACUUM)에 실패했습니다. 변경은 이미 저장되어 있습니다. "
+                      "옛 값이 DB 파일의 빈 공간에 남아 있을 수 있습니다 :{error}\n"
+                      "다음: 디스크 여유와 다른 프로그램이 DB 를 쓰고 있지 않은지 확인한 뒤 python scripts/migrate_login.py {command} 를 다시 실행하세요 (바꿀 것이 없으면 지우기만 다시 합니다)")
+MESSAGE_VERIFY_FAILED=("{done} 끝났지만 DB 파일 검사(integrity_check)에 실패했습니다 :{error}\n"
+                       "다음: 파일을 더 쓰지 말고 백업({backup})으로 restore --from 할지 확인하세요")
 
 
 # :8081 에 서버가 떠 있는지 - 접속이 되면 리스너가 있다
@@ -66,6 +77,22 @@ def describe_error(e:Exception) -> str:
     if isinstance(e, (Secret_Error, FileNotFoundError, RuntimeError, ValueError)):
         return f"{type(e).__name__} :{mask_text(str(e))[:300]}"
     return type(e).__name__
+
+
+# 파일 정리 - 저장된 뒤 VACUUM 으로 옛 값을 지우고 파일을 검사한다. 실패하면 "끝났지만 정리 실패"를 알리고 1, 잘 끝나면 None
+def scrub_after_commit(db_path:Path, done:str, command:str, backup:Path | None) -> int | None:
+    try:
+        migrate_scrub(db_path)
+    except Exception as e:
+        print(MESSAGE_SCRUB_FAILED.format(done=done, error=describe_error(e), command=command))
+        return 1
+
+    try:
+        migrate_verify_db(db_path)
+    except Exception as e:
+        print(MESSAGE_VERIFY_FAILED.format(done=done, error=describe_error(e), backup=backup or "data/backups"))
+        return 1
+    return None
 
 
 # 개수 표를 한 줄씩 - 0 인 줄은 빼고, 없으면 "없음"
@@ -124,18 +151,30 @@ def command_encrypt(db_path:Path, backup_dir:Path, yes:bool) -> int:
         with engine.connect() as conn:
             planned=migrate_encrypt_plaintext(conn, dry_run=True)
             pending=migrate_schema_pending(conn)
+            unreadable=migrate_unreadable_count(conn)
     finally:
         engine.dispose()
 
     work={key: count for key, count in planned.items() if not key.endswith(".skipped")}
+    if unreadable and yes:
+        print_counts("지금 키로 못 읽는 값", unreadable)
+        print(MESSAGE_UNREADABLE_REFUSE.format(count=sum(unreadable.values())))
+        return 1
     if not yes:
         print_counts("바꿀 값 (보기만 - 실제로 바꾸려면 서버를 끄고 --yes)", work)
         if pending:
             print(f"더할 열: {', '.join(pending)}")
+        if unreadable:
+            print_counts("주의 - 지금 키로 못 읽는 값 (--yes 는 이 값이 0건이 될 때까지 거절한다)", unreadable)
         return 0
 
+    # 할 일이 없어도 --yes 면 파일 정리는 다시 한다 - 앞선 실행에서 정리만 실패했을 수 있다 (백업은 만들지 않는다)
     if not any(work.values()) and not pending:
         print("바꿀 값이 없습니다. 이미 이전되었습니다 (백업도 만들지 않았습니다).")
+        failed=scrub_after_commit(db_path, "암호화는", "encrypt --yes", None)
+        if failed:
+            return failed
+        print("옛 값 지우기(VACUUM)와 파일 검사를 다시 마쳤습니다.")
         return 0
 
     backup=migrate_backup(db_path, backup_dir)
@@ -148,14 +187,15 @@ def command_encrypt(db_path:Path, backup_dir:Path, yes:bool) -> int:
             added=migrate_bootstrap(conn)
             done=migrate_encrypt_plaintext(conn, dry_run=False)
             left=sum(migrate_plaintext_count(conn).values())
-            # 하나라도 남으면 이번 바꾸기를 모두 되돌린다
+            # 하나라도 남으면 이번 값 바꾸기를 모두 되돌린다 (되돌려지는 것은 DML 뿐 - 열·인덱스 더하기(DDL)는 이미 반영되어 있고 여러 번 해도 안전하다)
             if left:
-                raise RuntimeError(f"암호화 뒤에도 평문이 {left}건 남아 이번 변경을 되돌렸습니다")
+                raise RuntimeError(f"암호화 뒤에도 평문이 {left}건 남아 이번 값 변경을 되돌렸습니다")
     finally:
         engine.dispose()
 
-    migrate_scrub(db_path)
-    migrate_verify_db(db_path)
+    failed=scrub_after_commit(db_path, "암호화는", "encrypt --yes", backup)
+    if failed:
+        return failed
 
     if added:
         print(f"더한 열·인덱스: {', '.join(added)}")
@@ -262,8 +302,9 @@ def command_rotate(db_path:Path, backup_dir:Path, yes:bool) -> int:
     finally:
         engine.dispose()
 
-    migrate_scrub(db_path)
-    migrate_verify_db(db_path)
+    failed=scrub_after_commit(db_path, "키 회전은", "rotate-keys --yes", backup)
+    if failed:
+        return failed
 
     print_counts("새 키로 바꾼 값", {key: count for key, count in done.items() if not key.endswith(".skipped")})
     if any(key.endswith(".skipped") for key in done):
@@ -353,7 +394,7 @@ def main(argv:list[str] | None=None) -> int:
         return command_restore(db_path, backup_dir, Path(args.source).resolve(), args.yes)
 
     except Exception as e:
-        print(f"실패 - 다음 단계로 넘어가지 않았습니다. 쓰는 중이었다면 그 변경은 되돌려졌고, 만든 백업은 그대로 있습니다 :{describe_error(e)}")
+        print(f"실패 - 다음 단계로 넘어가지 않았습니다. 쓰는 중이었다면 값 변경(암호화·주인 지정)은 되돌려졌습니다. 열·인덱스 더하기는 이미 반영되었을 수 있고 다시 실행해도 안전합니다. 만든 백업은 그대로 있습니다 :{describe_error(e)}")
         return 1
 
 
