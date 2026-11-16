@@ -393,3 +393,26 @@ async def test_auth_user_pii_encrypted_at_rest(client):
         assert plain not in value
     assert email_bidx == blind_index("email", "me@example.com")
     assert google_sub_bidx == blind_index("google_sub", "google-sub-1")
+
+
+# 422 검증 오류 - /api/auth 는 입력값(id_token·리프레시 토큰)을 응답에 되돌려 보내지 않는다
+@pytest.mark.asyncio
+async def test_auth_validation_error_does_not_echo_input(client):
+    secret="eyJhbGciOiJSUzI1NiIsImtpZCI6Im5vdC1yZWFsIn0.eyJzdWIiOiIxMjM0In0.c2lnbmF0dXJlLXZhbHVl"
+
+    wrong_type=await client.post("/api/auth/google", json={"id_token": secret, "platform": 5})
+    assert wrong_type.status_code == 422
+    assert secret not in wrong_type.text
+    assert all("input" not in item for item in wrong_type.json()["detail"])
+    assert wrong_type.json()["detail"][0]["loc"]
+
+    # platform 이 빠지면 pydantic 이 본문 전체를 input 으로 싣는다 - 토큰이 그대로 새던 경로
+    missing=await client.post("/api/auth/google", json={"id_token": secret})
+    assert missing.status_code == 422
+    assert secret not in missing.text
+    assert all("input" not in item for item in missing.json()["detail"])
+
+    refresh=await client.post("/api/auth/refresh", json={"refresh_token": 12345})
+    assert refresh.status_code == 422
+    assert "12345" not in refresh.text
+    assert all("input" not in item for item in refresh.json()["detail"])
