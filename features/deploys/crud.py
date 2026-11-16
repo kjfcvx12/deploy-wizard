@@ -1,6 +1,6 @@
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
-from sqlalchemy import update, delete, or_, and_
+from sqlalchemy import update, delete, or_, and_, not_
 from datetime import datetime
 
 from shared.ownership import owner_where
@@ -221,33 +221,58 @@ class Deploy_Crud:
         return result.rowcount
 
 
-    # 사용자의 배포 전부 (삭제한 것 포함) - 계정 삭제가 기록을 지울 때 쓴다
+    # 살아 있는 배포의 조건 - 상태가 live_statuses 안이거나, 실패했는데 서비스(service_arn)가 남은 것
     @staticmethod
-    async def crud_deploy_get_all_by_u_id(db:AsyncSession, u_id:int) -> list[Deploy]:
-        result=await db.execute(select(Deploy).where(Deploy.u_id == u_id).order_by(Deploy.d_id))
-        return list(result.scalars().all())
+    def crud_deploy_live_clause(live_statuses:list[str]):
+        return or_(Deploy.status.in_(live_statuses),
+                   and_(Deploy.status == 'failed', Deploy.service_arn.is_not(None), Deploy.service_arn != ''))
 
 
-    # 사용자의 살아 있는 배포 - 상태가 live_statuses 안이거나, 실패했는데 서비스(service_arn)가 남은 것
+    # 사용자의 살아 있는 배포
     @staticmethod
     async def crud_deploy_get_live_by_u_id(db:AsyncSession, u_id:int, live_statuses:list[str]) -> list[Deploy]:
         result=await db.execute(select(Deploy)
-                                .where(Deploy.u_id == u_id,
-                                       or_(Deploy.status.in_(live_statuses),
-                                           and_(Deploy.status == 'failed', Deploy.service_arn.is_not(None), Deploy.service_arn != '')))
+                                .where(Deploy.u_id == u_id, Deploy_Crud.crud_deploy_live_clause(live_statuses))
                                 .order_by(Deploy.d_id))
         return list(result.scalars().all())
 
 
-    # 배포들의 로그·이슈·릴리스와 배포 기록 자체를 지운다 (SQLite 는 ON DELETE CASCADE 를 지키지 않아 자식부터 하나씩). 반환: 지운 배포 수
+    # 계정 삭제가 지울 배포의 d_id 를 고르는 하위 쿼리 - 사용자 것 중 살아 있지 않은 것. 파이썬에서 id 목록을 미리 만들지 않고 지우는 순간 이 조건으로 다시 판단한다
     @staticmethod
-    async def crud_deploy_delete_by_d_ids(db:AsyncSession, d_ids:list[int]) -> int:
-        if not d_ids:
-            return 0
+    def crud_deploy_forgettable_ids(u_id:int, live_statuses:list[str]):
+        return select(Deploy.d_id).where(Deploy.u_id == u_id, not_(Deploy_Crud.crud_deploy_live_clause(live_statuses)))
+
+
+    # 지울 배포가 남기는 ECR 저장소 후보 - (repository_name, image_uri). 삭제된(deleted) 배포는 저장소를 이미 지웠으니 뺀다
+    @staticmethod
+    async def crud_deploy_forgettable_images(db:AsyncSession, u_id:int, live_statuses:list[str]) -> list[tuple[str | None, str | None]]:
+        result=await db.execute(select(Deploy.repository_name, Deploy.image_uri)
+                                .where(Deploy.d_id.in_(Deploy_Crud.crud_deploy_forgettable_ids(u_id, live_statuses)), Deploy.status != 'deleted'))
+        return [(row[0], row[1]) for row in result.all()]
+
+
+    # 지울 배포의 로그·이슈·릴리스와 배포 기록 자체를 지운다 (SQLite 는 ON DELETE CASCADE 를 지키지 않아 자식부터 하나씩). 반환: 지운 배포 수
+    @staticmethod
+    async def crud_deploy_delete_forgettable(db:AsyncSession, u_id:int, live_statuses:list[str]) -> int:
+        forgettable=Deploy_Crud.crud_deploy_forgettable_ids(u_id, live_statuses)
 
         for model in (Deploy_Log, Deploy_Issue, Deploy_Release):
-            await db.execute(delete(model).where(model.d_id.in_(d_ids)).execution_options(synchronize_session=False))
+            await db.execute(delete(model).where(model.d_id.in_(forgettable)).execution_options(synchronize_session=False))
 
-        result=await db.execute(delete(Deploy).where(Deploy.d_id.in_(d_ids)).execution_options(synchronize_session=False))
+        result=await db.execute(delete(Deploy).where(Deploy.d_id.in_(forgettable)).execution_options(synchronize_session=False))
         await db.flush()
+        return result.rowcount
+
+
+    # AWS 계정들(하위 쿼리 가능)을 쓰던 배포는 주인이 누구든 연결만 뗀다 - 계정 삭제용
+    @staticmethod
+    async def crud_deploy_unlink_aws_accounts(db:AsyncSession, a_ids) -> int:
+        result=await db.execute(update(Deploy).where(Deploy.aws_account_id.in_(a_ids)).values(aws_account_id=None).execution_options(synchronize_session=False))
+        return result.rowcount
+
+
+    # GitHub 설치들(하위 쿼리 가능)을 쓰던 배포는 주인이 누구든 연결만 뗀다 - 계정 삭제용
+    @staticmethod
+    async def crud_deploy_unlink_github_installations(db:AsyncSession, g_ids) -> int:
+        result=await db.execute(update(Deploy).where(Deploy.github_installation_id.in_(g_ids)).values(github_installation_id=None).execution_options(synchronize_session=False))
         return result.rowcount

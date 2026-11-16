@@ -99,21 +99,50 @@ class Deploy_Service:
         return await Deploy_Crud.crud_deploy_get_live_by_u_id(db, u_id, sorted(LIVE_STATUSES))
 
 
+    # 계정을 지우면 남을 ECR 저장소 이름 - 지울 배포(살아 있지 않은 것)의 repository_name, 없으면 image_uri 의 저장소 부분. 중복 없이 정렬. AWS 는 부르지 않는다
+    # 삭제된(deleted) 배포는 저장소를 이미 지워서 뺀다. 지우기 전에, 같은 트랜잭션 안에서 부른다
+    @staticmethod
+    async def services_deploy_leftover_repositories(db:AsyncSession, u_id:int) -> list[str]:
+        names=set()
+        for repository_name, image_uri in await Deploy_Crud.crud_deploy_forgettable_images(db, u_id, sorted(LIVE_STATUSES)):
+            name=(repository_name or "").strip()
+            if not name and image_uri:
+                # <계정>.dkr.ecr.<리전>.amazonaws.com/<저장소>:<태그> 에서 저장소만
+                path=image_uri.partition("/")[2].split("@")[0]
+                name=path.rpartition(":")[0] or path
+            if name:
+                names.add(name)
+
+        return sorted(names)
+
+
     # 사용자의 배포 기록 삭제 - 살아 있지 않은 것(멈춤·삭제됨·서비스 없는 실패)과 딸린 로그·이슈·릴리스·환경변수·헬스체크·인시던트·복구 기록만. AWS 는 부르지 않는다
+    # 지울 배포는 id 목록이 아니라 지우는 순간의 조건(u_id 이고 살아 있지 않음)으로 고른다 - 그 사이에 살아난 배포는 지우지 않는다
     # flush 까지, 커밋은 계정 삭제(Auth_Service)가 한 번에. 반환: 지운 배포 수
     @staticmethod
     async def services_deploy_forget_user(db:AsyncSession, u_id:int) -> int:
         # health 는 이 파일을 import 하므로 순환을 피하려고 여기서만 불러온다
         from features.health.services import Health_Service
 
-        live_ids={deploy.d_id for deploy in await Deploy_Service.services_deploy_live_for_user(db, u_id)}
-        d_ids=[deploy.d_id for deploy in await Deploy_Crud.crud_deploy_get_all_by_u_id(db, u_id) if deploy.d_id not in live_ids]
+        forgettable=Deploy_Crud.crud_deploy_forgettable_ids(u_id, sorted(LIVE_STATUSES))
 
-        await Env_Service.services_env_forget_deploys(db, d_ids)
-        await Incident_Service.services_incident_forget_deploys(db, d_ids)
-        await Health_Service.services_health_forget_deploys(db, d_ids)
+        await Env_Service.services_env_forget_deploys(db, forgettable)
+        await Incident_Service.services_incident_forget_deploys(db, forgettable)
+        await Health_Service.services_health_forget_deploys(db, forgettable)
 
-        return await Deploy_Crud.crud_deploy_delete_by_d_ids(db, d_ids)
+        return await Deploy_Crud.crud_deploy_delete_forgettable(db, u_id, sorted(LIVE_STATUSES))
+
+
+    # AWS 계정들을 쓰던 배포의 연결 떼기 (주인 무관) - 계정 삭제를 맡은 accounts 기능이 지우기 전에 부른다. a_ids 는 하위 쿼리 가능
+    @staticmethod
+    async def services_deploy_unlink_aws_accounts(db: AsyncSession, a_ids) -> int:
+        return await Deploy_Crud.crud_deploy_unlink_aws_accounts(db, a_ids)
+
+
+    # GitHub 설치들을 쓰던 배포의 연결 떼기 (주인 무관) - 같은 때 부른다
+    @staticmethod
+    async def services_deploy_unlink_github_installations(db: AsyncSession, g_ids) -> int:
+        return await Deploy_Crud.crud_deploy_unlink_github_installations(db, g_ids)
 
 
     # 폴링 대상 조회 - watches 기능이 감시할 배포 목록을 가져갈 때 부른다

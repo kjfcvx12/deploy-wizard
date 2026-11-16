@@ -44,6 +44,7 @@ MESSAGE_JWT_KEY_MISSING="로그인 설정이 완료되지 않았습니다 (AUTH_
 MESSAGE_DELETE_CONFIRM="계정을 삭제하려면 confirm 에 true 를 보내야 합니다"
 MESSAGE_DELETE_LIVE="먼저 멈추거나 삭제해야 하는 서비스가 있습니다"
 MESSAGE_DELETE_DONE="계정을 삭제했습니다. AWS CloudFormation 스택과 GitHub 앱 설치는 직접 지워 주세요"
+MESSAGE_DELETE_ECR="남아 있는 ECR 이미지 저장소({names})도 AWS 콘솔에서 직접 지워 주세요"
 # 탈퇴한 사용자 행에 남기는 값 - 개인 정보 대신 (암호화 열은 NOT NULL 이라 비울 수 없다). 블라인드 인덱스는 사용자마다 달라 같은 Google 계정이 새 사용자로 다시 가입할 수 있다
 DELETED_VALUE="deleted"
 
@@ -476,23 +477,28 @@ class Auth_Service:
         from features.notifications.services import Notification_Service
 
         try:
-            db_user=await Auth_Crud.crud_user_get_by_u_id(db, u_id)
-            if db_user is None or db_user.status != "active":
+            # 0. 쓰기 잠금부터 잡는다 - SQLite 는 첫 쓰기에서야 트랜잭션이 열려, 그 전의 읽기만으로는 확인과 삭제 사이에 배포가 바뀔 수 있다 (다시 켜기 등)
+            #    이 문장이 끝난 뒤에는 커밋·롤백까지 다른 쓰기가 들어오지 못한다. 없거나 active 가 아니면 401
+            now=Auth_Service.services_auth_now()
+            if await Auth_Crud.crud_user_touch_active(db, u_id, now) != 1:
                 raise Auth_Service.services_auth_unauthorized()
+            db_user=await Auth_Crud.crud_user_get_by_u_id(db, u_id)
 
-            # 1. 살아 있는 배포가 있으면 막는다 (요금이 계속 나가므로 먼저 멈추거나 삭제)
+            # 1. 살아 있는 배포가 있으면 막는다 (요금이 계속 나가므로 먼저 멈추거나 삭제) - 막으면 아래 롤백으로 잠금 쓰기도 되돌아간다
             Auth_Service.services_auth_delete_live_check(await Deploy_Service.services_deploy_live_for_user(db, u_id))
 
-            # 2. 기록 삭제 - 기능마다 flush 만, 커밋은 아래에서 한 번
+            # 2. 남을 ECR 저장소 이름을 지우기 전에 모은다 (기록이 사라지면 사용자가 알 길이 없다). AWS 는 부르지 않는다
+            leftovers=await Deploy_Service.services_deploy_leftover_repositories(db, u_id)
+
+            # 3. 기록 삭제 - 기능마다 flush 만, 커밋은 아래에서 한 번. 배포는 지우는 순간 조건(살아 있지 않음)으로 고른다
             deploys=await Deploy_Service.services_deploy_forget_user(db, u_id)
             accounts=await Aws_Account_Service.services_account_forget_user(db, u_id)
             notifications=await Notification_Service.services_notification_forget_user(db, u_id)
 
-            # 3. 그 사이에 살아난 배포가 없는지 한 번 더 - 있으면 전부 되돌린다
+            # 4. 방어 확인 - 그래도 살아 있는 배포가 남아 있으면 전부 되돌린다
             Auth_Service.services_auth_delete_live_check(await Deploy_Service.services_deploy_live_for_user(db, u_id))
 
-            # 4. 토큰 폐기 + 사용자 행 익명화
-            now=Auth_Service.services_auth_now()
+            # 5. 토큰 폐기 + 사용자 행 익명화
             await Auth_Crud.crud_refresh_token_revoke_all_by_u_id(db, u_id, now)
             await Auth_Crud.crud_api_token_revoke_all_by_u_id(db, u_id, now)
             deleted_bidx=blind_index(DELETED_VALUE, str(u_id))
@@ -501,7 +507,9 @@ class Auth_Service:
                                                           "google_sub_bidx": deleted_bidx, "email_bidx": deleted_bidx})
 
             await db.commit()
-            return {"message": MESSAGE_DELETE_DONE, "deleted": {"deploys": deploys, "accounts": accounts, "notifications": notifications}}
+            message=MESSAGE_DELETE_DONE + (". " + MESSAGE_DELETE_ECR.format(names=", ".join(leftovers)) if leftovers else "")
+            return {"message": message, "deleted": {"deploys": deploys, "accounts": accounts, "notifications": notifications},
+                    "leftover_ecr_repositories": leftovers}
 
         except HTTPException:
             await db.rollback()

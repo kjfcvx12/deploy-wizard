@@ -192,12 +192,9 @@ class Incident_Crud:
         return result.scalars().first()
 
 
-    # 배포들의 인시던트와 복구 기록을 지운다 (복구 기록이 자식이라 먼저) - 계정 삭제용. 반환: 지운 인시던트 수
+    # 배포들(d_ids 는 목록이나 하위 쿼리)의 인시던트와 복구 기록을 지운다 (복구 기록이 자식이라 먼저) - 계정 삭제용. 반환: 지운 인시던트 수
     @staticmethod
-    async def crud_incident_delete_by_d_ids(db:AsyncSession, d_ids:list[int]) -> int:
-        if not d_ids:
-            return 0
-
+    async def crud_incident_delete_by_d_ids(db:AsyncSession, d_ids) -> int:
         i_ids=select(Incident.i_id).where(Incident.d_id.in_(d_ids))
         await db.execute(delete(Recovery_Action).where(Recovery_Action.i_id.in_(i_ids)).execution_options(synchronize_session=False))
 

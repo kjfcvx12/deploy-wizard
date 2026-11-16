@@ -60,10 +60,12 @@ Google `id_token`으로 로그인해 액세스 토큰(JWT, 900초)과 리프레�
 본문 `{"confirm": true}` 만 받는다 (`true` 가 아닌 값·본문 없음·깨진 JSON 은 모두 400). **DB 기록만 지운다. AWS·GitHub 는 한 번도 부르지 않는다** (Hard rule 3) — CloudFormation 스택·IAM 역할·GitHub 앱 설치는 사용자가 직접 지운다.
 
 - **막는 경우 (409)**: 살아 있는 배포가 하나라도 있으면 아무것도 지우지 않는다. 살아 있는 배포 = 상태가 `queued`·`cloning`·`analyzing`·`generating`·`building`·`pushing`·`deploying`·`needs_input`·`running`·`deleting`, 또는 `failed` 인데 `service_arn` 이 남은 것 (MCP 의 "살아 있는" 정의와 같다). `detail` 문자열 끝에 `#<d_id> <서비스 이름>`이 쉼표로 나열된다 (서비스 이름이 없으면 레포 주소). 먼저 멈추거나(`POST /api/deploys/{d_id}/stop`) 삭제(`DELETE /api/deploys/{d_id}`)한 뒤 다시 부른다.
-- **지우는 것 (한 트랜잭션, 하나라도 실패하면 전부 되돌림)**: 남은 배포 기록(`stopped`·`deleted`·서비스 없는 `failed`)과 딸린 로그·이슈·릴리스·환경변수·헬스체크·인시던트·복구 기록, 연결 블록·AWS 계정·GitHub 설치 기록, 알림·푸시 기기·알림 설정.
+- **지우는 것 (한 트랜잭션, 하나라도 실패하면 전부 되돌림)**: 남은 배포 기록(`stopped`·`deleted`·서비스 없는 `failed`)과 딸린 로그·이슈·릴리스·환경변수·헬스체크·인시던트·복구 기록, 연결 블록·AWS 계정·GitHub 설치 기록, 알림·푸시 기기·알림 설정. 지울 배포는 id 목록이 아니라 지우는 순간의 조건(내 것이고 살아 있지 않음)으로 고르고, 맨 처음에 쓰기 잠금을 잡은 뒤 살아 있는 배포를 확인하므로(그 사이 "다시 켜기" 같은 쓰기가 끼어들 수 없다) 확인 뒤에 살아난 배포는 지워지지 않는다. 삭제 뒤에도 살아 있는 배포가 보이면 409 로 전부 되돌린다.
+- **참조 정리**: 지우는 AWS 계정·GitHub 설치를 가리키던 다른 기록은 주인이 누구든(주인 없는 옛 배포, 다른 사용자의 배포·블록 포함) 그 참조만 `null` 로 떼고 남긴다. id 가 다시 쓰여도 남의 자격증명에 닿지 않게 하려는 것이다.
+- **남는 ECR 저장소**: `stopped`·서비스 없는 `failed` 배포가 남긴 ECR 저장소(`repository_name`, 없으면 `image_uri` 의 저장소 부분)는 지우지 않는다(자동 삭제 금지). 기록이 사라지면 목록을 잃으므로 지우기 전에 모아 응답 `leftover_ecr_repositories`(중복 없이 정렬)로 돌려준다. 이미 `deleted` 인 배포의 저장소는 뺀다. 이 목록이 비어 있지 않으면 `message` 에 안내가 붙는다. (저장소가 남은 멈춘 배포가 있을 때 막는 쪽으로 바꿀지는 소유자 결정 사항 - 지금은 막지 않는다.)
 - **사용자 행은 남기고 개인 정보를 지운다**: `status="deleted"`, `name`·`picture_url` 은 `null`, `google_sub`·`email` 은 상수 `"deleted"`(암호화 저장), 두 블라인드 인덱스는 `blind_index("deleted", u_id)` 로 바꾼다. 같은 Google 계정으로 다시 로그인하면 **새 사용자**(새 `u_id`, 이전 기록 없음)가 된다.
 - 리프레시 토큰·개인 토큰은 모두 폐기된다. 이미 받은 액세스 토큰은 만료 전이어도 다음 요청부터 401 이다 (`status != active`).
-- 응답: `{"message": "계정을 삭제했습니다. AWS CloudFormation 스택과 GitHub 앱 설치는 직접 지워 주세요", "deleted": {"deploys": n, "accounts": n, "notifications": n}}` (`accounts` 는 연결 블록 + AWS 계정 + GitHub 설치 기록 수, `notifications` 는 알림 + 기기 + 설정 줄 수).
+- 응답: `{"message": "계정을 삭제했습니다. AWS CloudFormation 스택과 GitHub 앱 설치는 직접 지워 주세요. 남아 있는 ECR 이미지 저장소(a, b)도 AWS 콘솔에서 직접 지워 주세요", "deleted": {"deploys": n, "accounts": n, "notifications": n}, "leftover_ecr_repositories": ["a", "b"]}` (`accounts` 는 연결 블록 + AWS 계정 + GitHub 설치 기록 수, `notifications` 는 알림 + 기기 + 설정 줄 수. 남는 저장소가 없으면 목록은 `[]` 이고 `message` 는 앞 문장만).
 
 ### `Auth_Token`
 ```json

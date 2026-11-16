@@ -166,3 +166,13 @@ class Auth_Crud:
                                 .values(revoked_at=now)
                                 .execution_options(synchronize_session=False))
         return result.rowcount
+
+
+    # 활성 사용자의 갱신 시각을 바꾼다 - 값은 중요하지 않고 SQLite 쓰기 잠금을 먼저 잡는 쓰기다 (계정 삭제의 첫 문장). 반환: 바뀐 행 수 (0 이면 없거나 active 가 아님)
+    @staticmethod
+    async def crud_user_touch_active(db:AsyncSession, u_id:int, now:datetime) -> int:
+        result=await db.execute(update(User)
+                                .where(User.u_id == u_id, User.status == "active")
+                                .values(updated_at=now)
+                                .execution_options(synchronize_session=False))
+        return result.rowcount

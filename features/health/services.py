@@ -268,5 +268,5 @@ class Health_Service:
 
     # 배포들의 헬스체크 기록 삭제 - 계정 삭제가 부른다 (flush 까지, 커밋은 부른 쪽)
     @staticmethod
-    async def services_health_forget_deploys(db:AsyncSession, d_ids:list[int]) -> int:
+    async def services_health_forget_deploys(db:AsyncSession, d_ids) -> int:
         return await Health_Crud.crud_health_delete_by_d_ids(db, d_ids)

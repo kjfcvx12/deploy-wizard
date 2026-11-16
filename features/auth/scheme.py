@@ -88,3 +88,5 @@ class Api_Token_Issued(Api_Token_Read):
 class Auth_Delete_Read(BaseModel):
     message: str
     deleted: dict[str, int]
+    # 지운 배포 기록이 남긴 ECR 저장소 이름 - 요금이 나갈 수 있으니 사용자가 직접 지운다 (자동으로 지우지 않는다)
+    leftover_ecr_repositories: list[str] = []

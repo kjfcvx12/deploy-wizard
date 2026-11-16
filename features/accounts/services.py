@@ -350,6 +350,18 @@ class Aws_Account_Service:
     # 사용자의 연결 블록·AWS 계정·GitHub 설치 기록 삭제 - 계정 삭제가 부른다. 기록만 지우고 AWS·GitHub 는 부르지 않는다 (CloudFormation 스택·앱 설치는 사용자가 직접). flush 까지
     @staticmethod
     async def services_account_forget_user(db:AsyncSession, u_id:int) -> int:
+        # deploys 는 순환 임포트를 피하려고 여기서만 불러온다
+        from features.deploys.services import Deploy_Service
+
+        # 1. 이 계정·설치를 가리키던 다른 기록(주인 없는 옛 배포, 다른 사용자의 블록)은 먼저 뗀다 - 안 그러면 지운 id 가 재사용될 때 남의 자격증명을 쓰게 된다
+        a_ids=Aws_Account_Crud.crud_aws_account_ids_by_u_id(u_id)
+        g_ids=Github_Installation_Crud.crud_github_installation_ids_by_u_id(u_id)
+        await Deploy_Service.services_deploy_unlink_aws_accounts(db, a_ids)
+        await Deploy_Service.services_deploy_unlink_github_installations(db, g_ids)
+        await Connection_Crud.crud_connection_unlink_aws_accounts(db, a_ids)
+        await Connection_Crud.crud_connection_unlink_github_installations(db, g_ids)
+
+        # 2. 기록 삭제
         blocks=await Connection_Crud.crud_connection_delete_by_u_id(db, u_id)
         accounts=await Aws_Account_Crud.crud_aws_account_delete_by_u_id(db, u_id)
         installations=await Github_Installation_Crud.crud_github_installation_delete_by_u_id(db, u_id)

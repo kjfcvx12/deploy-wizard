@@ -58,6 +58,12 @@ class Aws_Account_Crud:
         return None
 
 
+    # 사용자의 AWS 계정 a_id 를 고르는 하위 쿼리 - 계정 삭제가 참조를 뗄 때 쓴다
+    @staticmethod
+    def crud_aws_account_ids_by_u_id(u_id:int):
+        return select(Aws_Account.a_id).where(Aws_Account.u_id == u_id)
+
+
     # 사용자의 AWS 계정 기록 전부 삭제 - 계정 삭제용 (AWS 쪽 스택은 건드리지 않는다). 반환: 지운 수
     @staticmethod
     async def crud_aws_account_delete_by_u_id(db:AsyncSession, u_id:int) -> int:
@@ -133,6 +139,12 @@ class Github_Installation_Crud:
         return None
 
 
+    # 사용자의 GitHub 설치 g_id 를 고르는 하위 쿼리 - 계정 삭제가 참조를 뗄 때 쓴다
+    @staticmethod
+    def crud_github_installation_ids_by_u_id(u_id:int):
+        return select(Github_Installation.g_id).where(Github_Installation.u_id == u_id)
+
+
     # 사용자의 GitHub 설치 기록 전부 삭제 - 계정 삭제용 (GitHub 앱 설치 자체는 건드리지 않는다). 반환: 지운 수
     @staticmethod
     async def crud_github_installation_delete_by_u_id(db:AsyncSession, u_id:int) -> int:
@@ -190,6 +202,20 @@ class Connection_Crud:
             await db.flush()
             return db_connection
         return None
+
+
+    # AWS 계정들(하위 쿼리 가능)을 가리키던 블록은 주인이 누구든 거기서 뗀다 - 계정 삭제용
+    @staticmethod
+    async def crud_connection_unlink_aws_accounts(db:AsyncSession, a_ids) -> int:
+        result=await db.execute(update(Connection).where(Connection.aws_account_id.in_(a_ids)).values(aws_account_id=None).execution_options(synchronize_session=False))
+        return result.rowcount
+
+
+    # GitHub 설치들(하위 쿼리 가능)을 가리키던 블록은 주인이 누구든 거기서 뗀다 - 계정 삭제용
+    @staticmethod
+    async def crud_connection_unlink_github_installations(db:AsyncSession, g_ids) -> int:
+        result=await db.execute(update(Connection).where(Connection.github_installation_id.in_(g_ids)).values(github_installation_id=None).execution_options(synchronize_session=False))
+        return result.rowcount
 
 
     # 사용자의 연결 블록 전부 삭제 - 계정 삭제용. 반환: 지운 수

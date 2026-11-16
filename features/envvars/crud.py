@@ -95,12 +95,9 @@ class Env_Crud:
         return counts
 
 
-    # 배포들의 환경변수 기록을 지운다 - 계정 삭제용. 반환: 지운 수
+    # 배포들(d_ids 는 목록이나 하위 쿼리)의 환경변수 기록을 지운다 - 계정 삭제용. 반환: 지운 수
     @staticmethod
-    async def crud_env_delete_by_d_ids(db:AsyncSession, d_ids:list[int]) -> int:
-        if not d_ids:
-            return 0
-
+    async def crud_env_delete_by_d_ids(db:AsyncSession, d_ids) -> int:
         result=await db.execute(delete(Deploy_Env_Var).where(Deploy_Env_Var.d_id.in_(d_ids)).execution_options(synchronize_session=False))
         await db.flush()
         return result.rowcount
