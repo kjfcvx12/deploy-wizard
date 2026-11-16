@@ -7,8 +7,11 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from fastapi import HTTPException
 from pydantic import ValidationError
+from sqlalchemy.engine import make_url
+from sqlalchemy.exc import ArgumentError
 
 from shared.database import AsyncSessionLocal, bootstrap_schema
+from shared.masking import mask_text
 from shared.settings import settings
 
 # 모델을 import 해야 create_all 이 표를 안다
@@ -30,6 +33,20 @@ from features.auth.services import Auth_Service
 # python scripts/auth_token.py create --email <주소> --name mcp [--days 30]
 # python scripts/auth_token.py list --email <주소>
 # python scripts/auth_token.py revoke --id <a_t_id>
+
+
+# 안내문에 보여 줄 DB 위치 - sqlite 는 파일 경로, 그 밖은 종류와 호스트만. 사용자 이름·비밀번호·옵션은 싣지 않는다
+def script_db_label(db_url:str) -> str:
+    try:
+        url=make_url(db_url)
+    except ArgumentError:
+        return "DB 주소를 읽을 수 없습니다"
+
+    if url.get_backend_name() == "sqlite":
+        return mask_text(f"sqlite {url.database or ':memory:'}")
+
+    host=f"{url.host}:{url.port}" if url.host and url.port else (url.host or "")
+    return mask_text(f"{url.drivername} {host}/{url.database or ''}")
 
 
 # 이메일로 active 사용자를 찾는다 - 없으면 한국어 오류
@@ -81,7 +98,7 @@ async def script_main(args) -> None:
 
     if args.command == "create":
         print(await script_token_create(args.email, args.name, args.days))
-        print(f"위 토큰은 지금 한 번만 보입니다. MCP 설정에 넣어 두세요 (DB: {settings.db_url.split('?', 1)[0]})", file=sys.stderr)
+        print(f"위 토큰은 지금 한 번만 보입니다. MCP 설정에 넣어 두세요 (DB: {script_db_label(settings.db_url)})", file=sys.stderr)
     elif args.command == "list":
         for item in await script_token_list(args.email):
             print(f"{item.a_t_id}\t{item.name}\t…{item.last4}\t만료 {item.expires_at}\t마지막 사용 {item.last_used_at or '-'}")

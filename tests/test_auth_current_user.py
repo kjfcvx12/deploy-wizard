@@ -195,6 +195,7 @@ async def test_current_user_leaves_no_write_lock(client, monkeypatch):
     def request_with(token:str) -> Request:
         return Request({"type": "http", "method": "GET", "path": "/api/deploys", "headers": [(b"authorization", f"Bearer {token}".encode())]})
 
+    used={}
     try:
         # 처음 쓰기(갱신) -> 1분 안 다시 쓰기(건너뜀) -> 액세스 토큰
         for label, token in (("update", raw), ("skip", raw), ("access", access)):
@@ -206,6 +207,12 @@ async def test_current_user_leaves_no_write_lock(client, monkeypatch):
                 async with other_engine.begin() as conn:
                     await conn.execute(text("UPDATE api_tokens SET name=:name"), {"name": "mcp-" + label})
 
+            used[label]=(await sql("SELECT last_used_at FROM api_tokens"))[0][0]
+
+        # 갱신 반복은 시각을 남기고, 건너뛰는 반복은 그 값을 건드리지 않는다
+        assert used["update"] is not None
+        assert used["skip"] == used["update"]
+        assert used["access"] == used["update"]
         assert (await sql("SELECT name, last_used_at IS NOT NULL FROM api_tokens"))[0] == ("mcp-access", 1)
     finally:
         await other_engine.dispose()
@@ -227,10 +234,10 @@ async def test_pat_requires_user_in_off_mode(client):
     assert len((await client.get("/api/auth/tokens", headers=access)).json()) == 1
 
 
-# 모든 /api 라우트는 현재 사용자 의존성을 거친다 - 아니면 PUBLIC_PATHS 에 있어야 한다
-def test_auth_every_route_requires_user():
-    from main import app
-    from features.auth.services import Auth_Service, PUBLIC_PATHS
+# /api 아래 라우트가 보호받는지 훑는다 - APIRoute 는 현재 사용자 의존성이 있어야 하고, 웹소켓 같은 다른 종류는 allowed_other 에 적힌 경로만 통과한다
+# 반환: (APIRoute 경로 모음, 문제가 있는 라우트 설명 목록)
+def routes_unprotected(routes, public_paths:set, allowed_other:set=frozenset()) -> tuple[set, list]:
+    from features.auth.services import Auth_Service
 
     # 의존성 트리를 재귀로 훑는다
     def has_current_user(dependant) -> bool:
@@ -241,12 +248,30 @@ def test_auth_every_route_requires_user():
 
     api_paths=set()
     missing=[]
-    for context in iter_route_contexts(app.routes):
-        if not isinstance(context.original_route, APIRoute) or not context.path.startswith("/api/"):
+    for context in iter_route_contexts(routes):
+        # 라우터에 담겨 붙은 웹소켓은 context.path 가 빈 문자열로 나온다 - 실제 경로는 starlette_route 에 있다
+        path=context.path or getattr(getattr(context, "starlette_route", None), "path", None) or getattr(context.original_route, "path", None) or ""
+        if not (path == "/api" or path.startswith("/api/")):
             continue
+
+        if not isinstance(context.original_route, APIRoute):
+            if path not in allowed_other:
+                missing.append(f"{type(context.original_route).__name__} {path}")
+            continue
+
         api_paths.add(context.path)
-        if context.path not in PUBLIC_PATHS and not has_current_user(context.dependant):
+        if context.path not in public_paths and not has_current_user(context.dependant):
             missing.append(f"{sorted(context.methods)} {context.path}")
+
+    return api_paths, missing
+
+
+# 모든 /api 라우트는 현재 사용자 의존성을 거친다 - 아니면 PUBLIC_PATHS 에 있어야 한다
+def test_auth_every_route_requires_user():
+    from main import app
+    from features.auth.services import PUBLIC_PATHS
+
+    api_paths, missing=routes_unprotected(app.routes, PUBLIC_PATHS)
 
     # 라우터를 못 읽었으면 시험이 의미 없다
     assert "/api/deploys" in api_paths and len(api_paths) > 30
@@ -320,3 +345,106 @@ async def test_auth_token_script_create(client, monkeypatch):
         await script_token_create("nobody@example.com", "mcp", 7)
     with pytest.raises(RuntimeError):
         await script_token_create("me@example.com", "mcp", 91)
+
+
+# 구조 시험이 웹소켓·일반 Starlette 라우트도 잡는다 - 보호 없이 /api 아래에 둔 것은 실패, 보호된 APIRoute 는 통과
+def test_auth_route_check_catches_websocket_and_plain_routes():
+    from fastapi import APIRouter, Depends, FastAPI, WebSocket
+    from starlette.responses import PlainTextResponse
+    from starlette.routing import Route
+    from features.auth.services import Auth_Service, PUBLIC_PATHS
+
+    app=FastAPI()
+    router=APIRouter()
+
+    @router.get("/api/guarded-demo")
+    async def guarded_demo(user=Depends(Auth_Service.services_auth_current_user)):
+        return {}
+
+    @router.get("/api/open-demo")
+    async def open_demo():
+        return {}
+
+    @router.websocket("/api/ws-demo")
+    async def ws_demo(websocket:WebSocket):
+        await websocket.close()
+
+    async def plain_demo(request):
+        return PlainTextResponse("x")
+
+    app.include_router(router)
+    app.router.routes.append(Route("/api/plain-demo", plain_demo))
+
+    api_paths, missing=routes_unprotected(app.routes, PUBLIC_PATHS)
+    assert {"/api/guarded-demo", "/api/open-demo"} <= api_paths
+    assert any("/api/open-demo" in item for item in missing)
+    assert any("WebSocketRoute" in item and "/api/ws-demo" in item for item in missing), missing
+    assert any("Route" in item and "/api/plain-demo" in item for item in missing), missing
+    assert not any("/api/guarded-demo" in item for item in missing)
+
+    # 허용 목록에 적은 경로만 통과한다
+    _, allowed=routes_unprotected(app.routes, PUBLIC_PATHS | {"/api/open-demo"}, {"/api/ws-demo", "/api/plain-demo"})
+    assert allowed == []
+
+
+# 개인 토큰 마지막 사용 시각 - 1분이 지나면 다시 갱신한다 (시계를 앞으로 돌려 확인)
+@pytest.mark.asyncio
+async def test_pat_last_used_refreshes_after_a_minute(client, monkeypatch):
+    from features.auth.services import Auth_Service, PAT_TOUCH_SECONDS
+
+    u_id=await user_make()
+    raw=(await client.post("/api/auth/tokens", json={"name": "mcp"}, headers=bearer(Auth_Service.services_auth_access_issue(u_id)))).json()["token"]
+    monkeypatch.setattr(settings, "auth_enabled", True)
+
+    start=datetime.now(timezone.utc).replace(tzinfo=None)
+    clock=[start]
+    monkeypatch.setattr(Auth_Service, "services_auth_now", staticmethod(lambda: clock[0]))
+
+    async def used() -> datetime:
+        return (await sql("SELECT last_used_at FROM api_tokens"))[0][0]
+
+    assert (await client.get("/api/deploys", headers=bearer(raw))).status_code == 200
+    first=await used()
+    assert first is not None
+
+    # 1분 안 - 그대로
+    clock[0]=start + timedelta(seconds=PAT_TOUCH_SECONDS - 1)
+    assert (await client.get("/api/deploys", headers=bearer(raw))).status_code == 200
+    assert await used() == first
+
+    # 1분 넘게 지난 뒤 - 새 시각으로 갱신
+    clock[0]=start + timedelta(seconds=PAT_TOUCH_SECONDS + 1)
+    assert (await client.get("/api/deploys", headers=bearer(raw))).status_code == 200
+    second=await used()
+    assert second != first
+    assert datetime.fromisoformat(str(second)) == clock[0]
+
+
+# 스크립트가 보여 주는 DB 위치 - 비밀번호·사용자 이름 없이 파일 경로나 호스트만
+def test_auth_token_script_db_label_hides_credentials():
+    from scripts.auth_token import script_db_label
+
+    assert script_db_label("sqlite+aiosqlite:///./data/wizard.db?timeout=10") == "sqlite ./data/wizard.db"
+    label=script_db_label("postgresql+asyncpg://admin:S3cretPass@db.example.com:5432/wizard?sslmode=require")
+    assert "S3cretPass" not in label and "admin" not in label and "sslmode" not in label
+    assert "db.example.com" in label and "5432" in label and "wizard" in label
+    assert "S3cretPass" not in script_db_label("postgresql://admin:S3cretPass@db.example.com/wizard")
+    # 읽을 수 없는 값은 아무것도 싣지 않는다
+    assert "S3cretPass" not in script_db_label("not a url S3cretPass@@")
+
+
+# create 가 안내문에 DB 주소를 쓸 때 자격 증명이 새지 않는다
+@pytest.mark.asyncio
+async def test_auth_token_script_main_create_does_not_print_credentials(client, monkeypatch, capsys):
+    from argparse import Namespace
+    from scripts.auth_token import script_main
+
+    await user_make()
+    monkeypatch.setattr(settings, "db_url", "postgresql+asyncpg://admin:S3cretPass@db.example.com:5432/wizard")
+    await script_main(Namespace(command="create", email="me@example.com", name="mcp", days=7))
+
+    captured=capsys.readouterr()
+    assert captured.out.strip().startswith("dwp_")
+    assert "S3cretPass" not in captured.err and "S3cretPass" not in captured.out
+    assert "admin:" not in captured.err
+    assert "db.example.com" in captured.err
