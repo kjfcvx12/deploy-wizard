@@ -18,7 +18,7 @@ NOTIFICATION_KINDS=('incident_opened', 'incident_recovered', 'incident_needs_act
 NOTIFICATION_KINDS_VERSION=2
 
 
-# 기기 토큰 블라인드 인덱스 기본값 - 줄을 만들 때 bidx 를 빠뜨려도 넣는 토큰(평문)으로 채운다
+# 기기 토큰 블라인드 인덱스 기본값 - insert 때만, 암호화 전 값(넣는 토큰 평문)으로 계산한다. 줄을 만들 때 bidx 를 빠뜨려도 채워 주고, 이미 저장된 줄(옛 키 암호문 포함)은 건드리지 않는다
 def push_device_token_bidx(context) -> str | None:
     token=context.get_current_parameters().get("expo_token")
     return blind_index("expo_token", token) if token else None

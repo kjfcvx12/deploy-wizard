@@ -1,6 +1,6 @@
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
-from sqlalchemy import update, delete, func, type_coerce, String
+from sqlalchemy import update, delete, func, or_, type_coerce, String
 from datetime import datetime
 
 from shared.ownership import owner_where
@@ -182,6 +182,14 @@ class Notification_Crud:
 
         bidxs=[blind_index("expo_token", token) for token in tokens]
         result=await db.execute(delete(Push_Device).where(Push_Device.expo_token_bidx.in_(bidxs)).execution_options(synchronize_session=False))
+        await db.flush()
+        return result.rowcount
+
+
+    # 배포들(d_ids)·인시던트들(i_ids)을 가리키는 알림 삭제 - 주인(u_id)은 보지 않는다. 둘 다 목록이나 하위 쿼리. 계정 삭제용. 반환: 지운 수
+    @staticmethod
+    async def crud_notification_delete_by_d_ids(db:AsyncSession, d_ids, i_ids) -> int:
+        result=await db.execute(delete(Notification).where(or_(Notification.d_id.in_(d_ids), Notification.i_id.in_(i_ids))).execution_options(synchronize_session=False))
         await db.flush()
         return result.rowcount
 

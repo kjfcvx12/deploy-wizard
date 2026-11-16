@@ -4,6 +4,7 @@ import logging
 import re
 from datetime import datetime, timezone
 
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from fastapi import HTTPException, status
 
@@ -39,10 +40,15 @@ class Notification_Service:
 
 
     # 알림 설정 가져오기 - u_id 의 줄(None 이면 id=1 줄), 처음이면 기본값으로 만들어 저장한다. 옛 설정(kinds_version 없음)은 한 번 보정한다
+    # 같은 사용자의 첫 읽기가 동시에 둘 오면 하나는 유일 제약(u_id·id=1)에 걸린다 - 되돌리고 한 번 다시 읽는다 (먼저 만든 쪽이 저장해 둔 줄을 얻는다)
     @staticmethod
     async def services_notification_setting_get(db:AsyncSession, u_id:int|None=None) -> Notification_Setting:
         try:
-            db_setting=await Notification_Crud.crud_notification_setting_get(db, u_id)
+            try:
+                db_setting=await Notification_Crud.crud_notification_setting_get(db, u_id)
+            except IntegrityError:
+                await db.rollback()
+                db_setting=await Notification_Crud.crud_notification_setting_get(db, u_id)
 
             if db_setting.kinds_version is None:
                 Notification_Service.services_notification_kinds_migrate(db_setting)
@@ -293,3 +299,10 @@ class Notification_Service:
     @staticmethod
     async def services_notification_forget_user(db:AsyncSession, u_id:int) -> int:
         return await Notification_Crud.crud_notification_delete_by_u_id(db, u_id)
+
+
+    # 지울 배포·인시던트를 가리키는 알림 삭제 - 주인이 누구든(주인 없음 포함) 계정 삭제 때 함께 지운다 (flush 까지, 커밋은 부른 쪽)
+    # d_ids·i_ids 는 지우는 순간의 조건을 담은 하위 쿼리다 - 인시던트를 지우기 전에 불러야 i_ids 가 비지 않는다. 반환: 지운 수
+    @staticmethod
+    async def services_notification_forget_deploys(db:AsyncSession, d_ids, i_ids) -> int:
+        return await Notification_Crud.crud_notification_delete_by_d_ids(db, d_ids, i_ids)

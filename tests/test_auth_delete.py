@@ -617,3 +617,34 @@ async def test_delete_me_other_database_error_stays_500(client, monkeypatch):
 
     assert response.status_code == 500
     assert response.json()["detail"].startswith("계정 삭제 실패 :")
+
+
+# 계정을 지우면 지울 배포·인시던트를 가리키는 알림은 주인이 누구든(주인 없음·다른 사용자 포함) 함께 지워진다 - 다른 배포의 알림은 그대로
+@pytest.mark.asyncio
+async def test_delete_me_removes_notifications_pointing_at_forgotten_records(client):
+    login=await login_app(client)
+    u_id=login["user"]["u_id"]
+    other=await make_user_other()
+    deploy_ids=await seed(u_id, "a")
+    first=deploy_ids[0]
+    incident_id=(await sql("SELECT i_id FROM incidents WHERE d_id=:d", d=first))[0][0]
+
+    async with AsyncSessionLocal() as db:
+        keep_deploy=Deploy(u_id=other, repo_url="https://github.com/o/keep", status="running", service_arn="arn:aws:ecs:keep")
+        db.add(keep_deploy)
+        await db.flush()
+        db.add_all([
+            # 주인 없는 알림(옛 배포·인증 끔 때 쌓인 것) - 지울 배포를 가리킨다
+            Notification(u_id=None, d_id=first, kind="deploy_failed", channel="inapp", title="n1", body="b"),
+            # 다른 사용자 주인이지만 지울 인시던트만 가리킨다 (d_id 없음)
+            Notification(u_id=other, d_id=None, i_id=incident_id, kind="incident_opened", channel="inapp", title="n2", body="b"),
+            # 다른 사용자의 다른 배포 알림 - 남는다
+            Notification(u_id=other, d_id=keep_deploy.d_id, kind="deploy_failed", channel="inapp", title="keep", body="b"),
+            Notification(u_id=None, d_id=None, i_id=None, kind="new_commit", channel="inapp", title="keep-none", body="b")])
+        await db.commit()
+
+    response=await delete_me(client, {"Authorization": f"Bearer {login['access_token']}"})
+    assert response.status_code == 200, response.text
+
+    assert sorted(row[0] for row in await sql("SELECT title FROM notifications")) == ["keep", "keep-none"]
+    assert client.calls == []

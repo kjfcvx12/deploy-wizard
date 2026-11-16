@@ -192,6 +192,12 @@ class Incident_Crud:
         return result.scalars().first()
 
 
+    # 배포들(d_ids 는 목록이나 하위 쿼리)의 인시던트 id 하위 쿼리 - 알림 정리처럼 인시던트를 지우기 전에 id 를 가리킬 때 쓴다
+    @staticmethod
+    def crud_incident_ids_by_d_ids(d_ids):
+        return select(Incident.i_id).where(Incident.d_id.in_(d_ids))
+
+
     # 배포들(d_ids 는 목록이나 하위 쿼리)의 인시던트와 복구 기록을 지운다 (복구 기록이 자식이라 먼저) - 계정 삭제용. 반환: 지운 인시던트 수
     @staticmethod
     async def crud_incident_delete_by_d_ids(db:AsyncSession, d_ids) -> int:

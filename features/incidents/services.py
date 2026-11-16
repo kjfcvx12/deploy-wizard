@@ -504,6 +504,12 @@ class Incident_Service:
         return detail
 
 
+    # 배포들의 인시던트 id 하위 쿼리 - 계정 삭제가 인시던트를 가리키는 기록(알림)을 먼저 지울 때 쓴다 (조회만, 인시던트를 지우기 전에 부른다)
+    @staticmethod
+    def services_incident_ids_by_d_ids(d_ids):
+        return Incident_Crud.crud_incident_ids_by_d_ids(d_ids)
+
+
     # 배포들의 인시던트·복구 기록 삭제 - 계정 삭제가 부른다 (flush 까지, 커밋은 부른 쪽)
     @staticmethod
     async def services_incident_forget_deploys(db:AsyncSession, d_ids) -> int:

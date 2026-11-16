@@ -316,3 +316,74 @@ def test_notification_ensure_columns_on_old_db(tmp_path):
     unique={row[1]: row[2] for row in conn.execute("PRAGMA index_list('notification_settings')")}
     assert unique["ix_notification_settings_u_id"] == 1
     conn.close()
+
+
+# 사용자의 첫 설정 읽기 둘이 동시에 - 둘 다 "없음"을 읽고 같이 만들려 해도 유일 제약에 걸린 쪽이 500 이 아니라 되돌리고 다시 읽어 같은 줄을 얻는다
+@pytest.mark.asyncio
+async def test_settings_first_read_race(client, monkeypatch):
+    import asyncio
+    from sqlalchemy.ext.asyncio import AsyncSession
+    from features.notifications.models import Notification_Setting
+    from features.notifications.services import Notification_Service
+
+    a, _=await users_on(monkeypatch)
+
+    # 두 세션이 설정 표 읽기를 세션마다 두 번(사용자 줄·id=1 줄, 모두 "없음")씩 마친 뒤에야 만들기에 들어가게 맞춘다. 지고 난 뒤 다시 읽을 때는 기다리지 않는다
+    barrier=asyncio.Barrier(2)
+    seen={}
+    real_execute=AsyncSession.execute
+
+    async def synced_execute(self, statement, *args, **kwargs):
+        result=await real_execute(self, statement, *args, **kwargs)
+        if "notification_settings" in str(statement):
+            seen[id(self)]=seen.get(id(self), 0) + 1
+            if seen[id(self)] <= 2:
+                await barrier.wait()
+        return result
+
+    monkeypatch.setattr(AsyncSession, "execute", synced_execute)
+
+    async def first_read():
+        async with AsyncSessionLocal() as db:
+            db_setting=await Notification_Service.services_notification_setting_get(db, a)
+            return db_setting.id, db_setting.u_id
+
+    first, second=await asyncio.gather(first_read(), first_read())
+
+    assert first == second and first[1] == a
+    monkeypatch.setattr(AsyncSession, "execute", real_execute)
+    async with AsyncSessionLocal() as db:
+        rows=(await db.execute(select(Notification_Setting).order_by(Notification_Setting.id))).scalars().all()
+    assert [(row.id, row.u_id) for row in rows] == [(1, None), (first[0], a)]
+
+
+# 키를 회전한 뒤에도(옛 키로 저장한 기기 토큰) 발송 대상으로 풀리고, 같은 토큰 재등록도 블라인드 인덱스로 같은 기기를 찾는다
+@pytest.mark.asyncio
+async def test_device_token_under_old_key_still_dispatches(client, monkeypatch):
+    from cryptography.fernet import Fernet
+
+    key_old=Fernet.generate_key().decode()
+    key_new=Fernet.generate_key().decode()
+    monkeypatch.setattr(settings, "secret_key", key_old)
+    monkeypatch.setattr(settings, "secret_keys_old", None)
+    monkeypatch.setattr(settings, "mail_host", None)
+    a, _=await users_on(monkeypatch)
+
+    first=await client.post("/api/devices", json={"expo_token": TOKEN_A, "platform": "android"}, headers=auth_header(a))
+    assert first.status_code == 201
+
+    # 키 회전 - 새 키가 SECRET_KEY, 옛 키는 SECRET_KEYS_OLD 에 남아 있다 (저장된 줄은 아직 옛 키 암호문)
+    monkeypatch.setattr(settings, "secret_key", key_new)
+    monkeypatch.setattr(settings, "secret_keys_old", key_old)
+    async with AsyncSessionLocal() as db:
+        raw=(await db.execute(text("SELECT expo_token FROM push_devices"))).scalar_one()
+    assert Fernet(key_old.encode()).decrypt(raw.encode()).decode() == TOKEN_A
+
+    again=await client.post("/api/devices", json={"expo_token": TOKEN_A, "platform": "android"}, headers=auth_header(a))
+    assert again.status_code == 201 and again.json()["p_d_id"] == first.json()["p_d_id"] and again.json()["token_tail"] == TOKEN_A[-6:]
+
+    d_a=await deploy_make(a)
+    pusher=Fake_Pusher()
+    await fire(d_a, 'deploy_failed', Fake_Mailer(), pusher)
+    assert pusher.calls == [[TOKEN_A]]
+    assert [row.status for row in await notification_rows() if row.channel == 'push'] == ['sent']

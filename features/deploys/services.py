@@ -123,9 +123,12 @@ class Deploy_Service:
     async def services_deploy_forget_user(db:AsyncSession, u_id:int) -> int:
         # health 는 이 파일을 import 하므로 순환을 피하려고 여기서만 불러온다
         from features.health.services import Health_Service
+        from features.notifications.services import Notification_Service
 
         forgettable=Deploy_Crud.crud_deploy_forgettable_ids(u_id, sorted(LIVE_STATUSES))
 
+        # 이 배포·인시던트를 가리키는 알림은 주인이 누구든 먼저 지운다 (인시던트가 사라지면 i_id 를 못 찾는다)
+        await Notification_Service.services_notification_forget_deploys(db, forgettable, Incident_Service.services_incident_ids_by_d_ids(forgettable))
         await Env_Service.services_env_forget_deploys(db, forgettable)
         await Incident_Service.services_incident_forget_deploys(db, forgettable)
         await Health_Service.services_health_forget_deploys(db, forgettable)
