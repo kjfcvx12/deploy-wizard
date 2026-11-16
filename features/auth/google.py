@@ -57,7 +57,16 @@ class Google_Verifier:
         self._keys:dict[str, object]={}
         self._fetched_at:float | None=None
         self._last_attempt_at:float | None=None
-        self._lock=asyncio.Lock()
+        self._lock:asyncio.Lock | None=None
+        self._lock_loop:asyncio.AbstractEventLoop | None=None
+
+    # 지금 돌고 있는 이벤트 루프의 락 - 처음 쓸 때 (루프 안에서) 만들고, 다른 루프에서 부르면 새로 만든다 (전역 검증기를 루프가 다른 시험·실행에서 써도 RuntimeError 가 나지 않게)
+    def _get_lock(self) -> asyncio.Lock:
+        loop=asyncio.get_running_loop()
+        if self._lock is None or self._lock_loop is not loop:
+            self._lock=asyncio.Lock()
+            self._lock_loop=loop
+        return self._lock
 
     # 캐시가 아직 유효한지
     def _cache_fresh(self) -> bool:
@@ -107,10 +116,13 @@ class Google_Verifier:
         return self._now() - self._last_attempt_at >= settings.google_jwks_refetch_cooldown_seconds
 
     # 만료된 캐시를 새로 받는다 - 실패해도 24시간 안이면 옛 키를 계속 쓴다
+    # 쿨다운 안이면 새로 받지 않는다: 쓸 수 있는 옛 키가 있으면 그대로 쓰고, 없으면(콜드 스타트에서 Google 이 막힌 때) 바로 503 - 줄 선 요청이 줄줄이 네트워크를 기다리지 않게
     async def _refresh_expired(self) -> None:
         stale_ok=bool(self._keys) and self._fetched_at is not None and self._now() - self._fetched_at < settings.google_jwks_cache_seconds + GOOGLE_JWKS_STALE_SECONDS
-        if stale_ok and not self._cooldown_over():
-            return
+        if not self._cooldown_over():
+            if stale_ok:
+                return
+            raise Google_Auth_Error(MESSAGE_UNREACHABLE, 503)
         self._last_attempt_at=self._now()
         try:
             await self._load_all()
@@ -121,7 +133,7 @@ class Google_Verifier:
     # kid 에 맞는 공개키 - 캐시에 없으면 쿨다운 안에서는 받지 않고, 락 안에서 한 번만 받는다
     async def _key_for(self, kid:str) -> object:
         if not (self._cache_fresh() and kid in self._keys):
-            async with self._lock:
+            async with self._get_lock():
                 if not self._cache_fresh():
                     await self._refresh_expired()
                 elif kid not in self._keys and self._cooldown_over():

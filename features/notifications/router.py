@@ -19,12 +19,12 @@ router=APIRouter(prefix='/api',tags=['Notification'])
 
 
 # 요청 검증 오류 처리 - /api/devices 는 입력값(푸시 토큰)을 응답에 되돌려 보내지 않는다 (type/loc/msg 만).
-# /api/auth 는 input 항목만 뺀다 (id_token·리프레시 토큰이 본문째로 실려 나가지 않게). 다른 경로는 FastAPI 기본 그대로
+# /api/auth 와 /api/auth/… 는 input 항목만 뺀다 (id_token·리프레시 토큰이 본문째로 실려 나가지 않게; 이름만 비슷한 /api/authors 는 해당 없음). 다른 경로는 FastAPI 기본 그대로
 async def router_notification_validation_error(request:Request, exc:RequestValidationError):
     path=request.url.path
     if path.startswith('/api/devices'):
         errors=[{key: error[key] for key in ('type', 'loc', 'msg') if key in error} for error in exc.errors()]
-    elif path.startswith('/api/auth'):
+    elif path == '/api/auth' or path.startswith('/api/auth/'):
         errors=[{key: value for key, value in error.items() if key != 'input'} for error in exc.errors()]
     else:
         return await request_validation_exception_handler(request, exc)

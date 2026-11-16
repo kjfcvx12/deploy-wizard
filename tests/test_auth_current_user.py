@@ -448,3 +448,57 @@ async def test_auth_token_script_main_create_does_not_print_credentials(client, 
     assert "S3cretPass" not in captured.err and "S3cretPass" not in captured.out
     assert "admin:" not in captured.err
     assert "db.example.com" in captured.err
+
+
+# 토큰 안내의 DB 주소 가리기 - 읽을 수 없는 주소(포트가 숫자가 아님 등)에서도 죽지 않고 비밀번호를 싣지 않는다
+def test_auth_token_script_db_label_survives_unparseable_urls():
+    from scripts.auth_token import script_db_label
+
+    for url in ("postgresql://admin:S3cretPass@db.example.com:notaport/wizard", "not a url S3cretPass@@", ""):
+        label=script_db_label(url)
+        assert "S3cretPass" not in label and label
+
+
+# DB 주소가 이상해도 토큰 원문과 안내문은 그대로 나온다 (발급은 이미 끝났다)
+@pytest.mark.asyncio
+async def test_auth_token_script_prints_notice_even_with_bad_db_url(client, monkeypatch, capsys):
+    from argparse import Namespace
+    from scripts.auth_token import script_main
+
+    await user_make()
+    monkeypatch.setattr(settings, "db_url", "postgresql://admin:S3cretPass@db.example.com:notaport/wizard")
+
+    await script_main(Namespace(command="create", email="me@example.com", name="mcp", days=None))
+
+    captured=capsys.readouterr()
+    assert captured.out.strip().startswith("dwp_")
+    assert "위 토큰은 지금 한 번만 보입니다" in captured.err
+    assert "S3cretPass" not in captured.out + captured.err
+
+
+# 구조 시험 - 실제 앱처럼 prefix="/api" 로 붙인 웹소켓도(경로가 라우터 접두어에서 온다) 보호가 없으면 잡는다
+def test_auth_route_check_catches_prefixed_websocket():
+    from fastapi import APIRouter, Depends, FastAPI, WebSocket
+    from features.auth.services import Auth_Service, PUBLIC_PATHS
+
+    app=FastAPI()
+    router=APIRouter()
+
+    @router.get("/guarded")
+    async def guarded(user=Depends(Auth_Service.services_auth_current_user)):
+        return {}
+
+    @router.websocket("/ws-prefixed")
+    async def ws_prefixed(websocket:WebSocket):
+        await websocket.close()
+
+    app.include_router(router, prefix="/api")
+
+    api_paths, missing=routes_unprotected(app.routes, PUBLIC_PATHS)
+    assert "/api/guarded" in api_paths
+    assert any("WebSocketRoute" in item and "/api/ws-prefixed" in item for item in missing), missing
+    assert not any("/api/guarded" in item for item in missing)
+
+    # 허용 목록에 적으면 통과
+    _, allowed=routes_unprotected(app.routes, PUBLIC_PATHS, {"/api/ws-prefixed"})
+    assert allowed == []

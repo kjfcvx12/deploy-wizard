@@ -566,3 +566,33 @@ async def test_auth_refresh_after_logout_401(client):
     assert response.json()["detail"] == MESSAGE_EXPIRED
     rows=await sql("SELECT revoked_at FROM refresh_tokens")
     assert rows and all(row[0] is not None for row in rows)
+
+
+# 422 에서 input 을 빼는 범위는 정확히 /api/auth 와 /api/auth/… 뿐이다 - 이름만 비슷한 /api/authors·/api/authx 는 FastAPI 기본 그대로
+def test_auth_validation_scrub_matches_exact_path_only():
+    from fastapi import FastAPI, Query
+    from fastapi.exceptions import RequestValidationError
+    from fastapi.testclient import TestClient
+
+    from features.notifications.router import router_notification_validation_error
+
+    app=FastAPI()
+    app.add_exception_handler(RequestValidationError, router_notification_validation_error)
+
+    def endpoint(count:int=Query(..., ge=1)):
+        return {}
+
+    for path in ("/api/auth", "/api/auth/google", "/api/authors", "/api/authx/google"):
+        app.add_api_route(path, endpoint, methods=["GET"])
+
+    client=TestClient(app)
+
+    for path in ("/api/auth", "/api/auth/google"):
+        response=client.get(path, params={"count": "0"})
+        assert response.status_code == 422, path
+        assert all("input" not in item for item in response.json()["detail"]), path
+
+    for path in ("/api/authors", "/api/authx/google"):
+        response=client.get(path, params={"count": "0"})
+        assert response.status_code == 422, path
+        assert "input" in response.json()["detail"][0], path

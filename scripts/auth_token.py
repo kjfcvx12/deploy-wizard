@@ -37,16 +37,17 @@ from features.auth.services import Auth_Service
 
 # 안내문에 보여 줄 DB 위치 - sqlite 는 파일 경로, 그 밖은 종류와 호스트만. 사용자 이름·비밀번호·옵션은 싣지 않는다
 def script_db_label(db_url:str) -> str:
+    # 포트가 숫자가 아닌 주소는 ValueError 로 읽히지 않는다 - 안내문(토큰은 이미 발급됨)이 막히지 않게 둘 다 잡는다
     try:
         url=make_url(db_url)
-    except ArgumentError:
+
+        if url.get_backend_name() == "sqlite":
+            return mask_text(f"sqlite {url.database or ':memory:'}")
+
+        host=f"{url.host}:{url.port}" if url.host and url.port else (url.host or "")
+        return mask_text(f"{url.drivername} {host}/{url.database or ''}")
+    except (ArgumentError, ValueError):
         return "DB 주소를 읽을 수 없습니다"
-
-    if url.get_backend_name() == "sqlite":
-        return mask_text(f"sqlite {url.database or ':memory:'}")
-
-    host=f"{url.host}:{url.port}" if url.host and url.port else (url.host or "")
-    return mask_text(f"{url.drivername} {host}/{url.database or ''}")
 
 
 # 이메일로 active 사용자를 찾는다 - 없으면 한국어 오류

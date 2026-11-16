@@ -422,3 +422,134 @@ async def test_google_verify_stale_keys_served_when_refresh_fails(key1):
     with pytest.raises(Google_Auth_Error) as info:
         await verifier.verifier_google_verify(sign(key1, "k1"), {CLIENT_ID})
     assert info.value.status_code == 503
+
+
+# 가짜 네트워크 - 항상 실패하고 호출 URL 을 센다
+class Broken_Fetch:
+
+    def __init__(self):
+        self.calls:list[str]=[]
+
+    async def __call__(self, url:str) -> dict:
+        self.calls.append(url)
+        raise httpx.ConnectError("boom")
+
+
+# 콜드 스타트(캐시된 키 없음)에서 Google 이 막혀 있으면 첫 실패 뒤 쿨다운 동안은 새 호출 없이 바로 503 - 줄 선 요청이 줄줄이 10~20초씩 기다리지 않게
+@pytest.mark.asyncio
+async def test_google_verify_cold_start_outage_fails_fast_within_cooldown(key1):
+    broken=Broken_Fetch()
+    clock=[1000.0]
+    verifier=Google_Verifier(fetch_json=broken, now=lambda: clock[0])
+
+    with pytest.raises(Google_Auth_Error) as first:
+        await verifier.verifier_google_verify(sign(key1, "k1"), {CLIENT_ID})
+    assert first.value.status_code == 503
+    calls_after_first=len(broken.calls)
+    assert calls_after_first >= 1
+
+    # 쿨다운(60초) 안 - 새 네트워크 호출 없이 바로 503
+    clock[0]+=30
+    for _ in range(3):
+        with pytest.raises(Google_Auth_Error) as again:
+            await verifier.verifier_google_verify(sign(key1, "k1"), {CLIENT_ID})
+        assert again.value.status_code == 503
+        assert again.value.message == "Google 로그인 서버에 연결할 수 없습니다. 잠시 뒤 다시 시도해 주세요"
+    assert len(broken.calls) == calls_after_first
+
+    # 쿨다운이 지나면 다시 시도한다
+    clock[0]+=31
+    with pytest.raises(Google_Auth_Error):
+        await verifier.verifier_google_verify(sign(key1, "k1"), {CLIENT_ID})
+    assert len(broken.calls) > calls_after_first
+
+
+# 줄 선 요청이 한꺼번에 와도 첫 실패 하나만 네트워크를 부른다 (나머지는 쿨다운에 걸려 바로 503)
+@pytest.mark.asyncio
+async def test_google_verify_cold_start_outage_queued_requests_share_one_attempt(key1):
+    class Slow_Broken_Fetch(Broken_Fetch):
+        async def __call__(self, url:str) -> dict:
+            await asyncio.sleep(0.05)
+            return await Broken_Fetch.__call__(self, url)
+
+    broken=Slow_Broken_Fetch()
+    verifier=Google_Verifier(fetch_json=broken, now=lambda: 1000.0)
+
+    results=await asyncio.gather(*[verifier.verifier_google_verify(sign(key1, "k1"), {CLIENT_ID}) for _ in range(4)], return_exceptions=True)
+
+    assert all(isinstance(item, Google_Auth_Error) and item.status_code == 503 for item in results)
+    assert len(broken.calls) == 1
+
+
+# 이벤트 루프가 서로 다른 곳(asyncio.run 을 여러 번)에서 전역 검증기처럼 같은 검증기를 써도 락 때문에 RuntimeError 가 나지 않는다
+def test_google_verify_works_across_event_loops(key1):
+    fetch=Fake_Fetch([jwk_of(key1, "k1")])
+
+    class Slow_Fetch:
+        async def __call__(self, url:str) -> dict:
+            await asyncio.sleep(0.02)
+            return await fetch(url)
+
+    # now 를 매번 새 시각으로 - 두 번째 루프에서도 캐시가 만료돼 락을 다투며 다시 받게 한다
+    clock=[1000.0]
+    verifier=Google_Verifier(fetch_json=Slow_Fetch(), now=lambda: clock[0])
+
+    async def burst():
+        return await asyncio.gather(*[verifier.verifier_google_verify(sign(key1, "k1"), {CLIENT_ID}) for _ in range(3)])
+
+    for round_number in range(2):
+        clock[0]+=7200 * round_number
+        identities=asyncio.run(burst())
+        assert [item.sub for item in identities] == ["1234", "1234", "1234"]
+    assert len(fetch.calls) >= 4
+
+
+# 만료된 캐시를 새로 받지 못하는 동안(24시간 안) 모르는 kid 는 503 이 아니라 401 - 옛 키는 계속 쓰이고 네트워크도 부르지 않는다
+@pytest.mark.asyncio
+async def test_google_verify_stale_mode_unknown_kid_is_401_without_network(key1, key2):
+    fetch=Fake_Fetch([jwk_of(key1, "k1")])
+    clock=[1000.0]
+    verifier=Google_Verifier(fetch_json=fetch, now=lambda: clock[0])
+    await verifier.verifier_google_verify(sign(key1, "k1"), {CLIENT_ID})
+
+    broken=Broken_Fetch()
+    verifier._fetch_json=broken
+
+    # 캐시 만료 - 새로 받다 실패해도 옛 키(k1)는 계속 쓴다
+    clock[0]+=3601
+    assert (await verifier.verifier_google_verify(sign(key1, "k1"), {CLIENT_ID})).sub == "1234"
+    attempts=len(broken.calls)
+    assert attempts >= 1
+
+    # 쿨다운 안에서 모르는 kid - 401, 새 호출 없음
+    clock[0]+=10
+    with pytest.raises(Google_Auth_Error) as info:
+        await verifier.verifier_google_verify(sign(key2, "k2"), {CLIENT_ID})
+    assert info.value.status_code == 401 and info.value.message == MESSAGE_INVALID
+    assert len(broken.calls) == attempts
+
+    # 쿨다운이 지나 다시 시도하다 실패해도 모르는 kid 는 여전히 401 (503 이 아니다)
+    clock[0]+=61
+    with pytest.raises(Google_Auth_Error) as later:
+        await verifier.verifier_google_verify(sign(key2, "k2"), {CLIENT_ID})
+    assert later.value.status_code == 401
+    assert len(broken.calls) > attempts
+
+
+# 같은 stale 모드에서 두 번째 요청이 쿨다운 안이면 네트워크를 부르지 않고 옛 키로 통과한다
+@pytest.mark.asyncio
+async def test_google_verify_stale_mode_second_request_within_cooldown_makes_no_call(key1):
+    fetch=Fake_Fetch([jwk_of(key1, "k1")])
+    clock=[1000.0]
+    verifier=Google_Verifier(fetch_json=fetch, now=lambda: clock[0])
+    await verifier.verifier_google_verify(sign(key1, "k1"), {CLIENT_ID})
+
+    broken=Broken_Fetch()
+    verifier._fetch_json=broken
+    clock[0]+=3601
+    await verifier.verifier_google_verify(sign(key1, "k1"), {CLIENT_ID})
+    attempts=len(broken.calls)
+
+    clock[0]+=20
+    assert (await verifier.verifier_google_verify(sign(key1, "k1"), {CLIENT_ID})).sub == "1234"
+    assert len(broken.calls) == attempts
