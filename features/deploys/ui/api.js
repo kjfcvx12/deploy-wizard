@@ -10,9 +10,10 @@ export const deployApi = {
   getRemote: (repo_url, github_installation_id) => request(
     `/api/deploys/remote?repo_url=${encodeURIComponent(repo_url)}` +
     (github_installation_id ? `&github_installation_id=${github_installation_id}` : '')),
-  create: (repo_url, branch, aws_account_id, github_installation_id) => request('/api/deploys', {
+  // options 는 고른 것만 담긴 비용 옵션 (cpu, memory, planned_hours, min_tasks ...) - 없으면 본문이 지금까지와 같다
+  create: (repo_url, branch, aws_account_id, github_installation_id, options) => request('/api/deploys', {
     method: 'POST',
-    body: { repo_url, branch: branch || null, aws_account_id: aws_account_id || null, github_installation_id: github_installation_id || null },
+    body: { repo_url, branch: branch || null, aws_account_id: aws_account_id || null, github_installation_id: github_installation_id || null, ...(options || {}) },
   }),
   redeploy: (d_id) => request(`/api/deploys/${d_id}/redeploy`, { method: 'POST' }),
   stop: (d_id) => request(`/api/deploys/${d_id}/stop`, { method: 'POST' }),

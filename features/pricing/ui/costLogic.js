@@ -136,3 +136,23 @@ export function describeEstimate(estimate) {
     basis: e.basis_date ? `기준일 ${e.basis_date} · ${currency}` : null,
   }
 }
+
+// 분석 응답의 cost(기본 사양 추정)를 추정 응답 모양으로 - 가격이 없으면 null (한 달 금액만 있다)
+export function estimateFromCost(cost) {
+  if (!cost || !isNum(cost.hourly_usd)) return null
+  const monthly = isNum(cost.monthly_min) && cost.monthly_min === cost.monthly_max
+    ? [{ label: '한 달', hours: null, usd: cost.monthly_min }]
+    : []
+  return {
+    basis_date: cost.basis_date ?? null,
+    currency: cost.currency || 'USD',
+    spec_label: cost.spec_label ?? null,
+    components: cost.components || [],
+    hourly_usd: cost.hourly_usd,
+    periods: monthly,
+    arm64_hourly_usd: cost.arm64_hourly_usd ?? null,
+    arm64_saving_percent: null,
+    assumptions: [],
+    not_included: cost.not_included || [],
+  }
+}

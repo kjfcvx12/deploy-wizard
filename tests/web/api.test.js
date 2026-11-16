@@ -77,6 +77,38 @@ test('deployApi settings and health history', async () => {
   assert.equal(calls[2].url, '/api/deploys/2/health-history?hours=6')
 })
 
+test('deployApi.create: 옵션 없이는 기존과 같은 본문', async () => {
+  await deployApi.create('https://github.com/a/b', 'main', 3, 5)
+  assert.equal(calls[0].url, '/api/deploys')
+  assert.equal(calls[0].options.method, 'POST')
+  assert.equal(calls[0].options.body, JSON.stringify({
+    repo_url: 'https://github.com/a/b', branch: 'main', aws_account_id: 3, github_installation_id: 5,
+  }))
+  await deployApi.create('https://github.com/a/b', '', '', '')
+  assert.equal(calls[1].options.body, JSON.stringify({
+    repo_url: 'https://github.com/a/b', branch: null, aws_account_id: null, github_installation_id: null,
+  }))
+  await deployApi.create('https://github.com/a/b', 'main', 3, 5, {})
+  assert.equal(calls[2].options.body, calls[0].options.body)
+  await deployApi.create('https://github.com/a/b', 'main', 3, 5, null)
+  assert.equal(calls[3].options.body, calls[0].options.body)
+})
+
+test('deployApi.create: 옵션은 서버 필드 이름 그대로 병합', async () => {
+  const options = {
+    cpu: '1024', memory: '2048', planned_hours: 8,
+    min_tasks: 1, max_tasks: 3, scale_metric: 'AVERAGE_CPU', scale_target: 70,
+  }
+  await deployApi.create('https://github.com/a/b', 'main', 3, 5, options)
+  assert.deepEqual(JSON.parse(calls[0].options.body), {
+    repo_url: 'https://github.com/a/b', branch: 'main', aws_account_id: 3, github_installation_id: 5, ...options,
+  })
+  await deployApi.create('https://github.com/a/b', 'main', '', '', { planned_hours: 4 })
+  assert.deepEqual(JSON.parse(calls[1].options.body), {
+    repo_url: 'https://github.com/a/b', branch: 'main', aws_account_id: null, github_installation_id: null, planned_hours: 4,
+  })
+})
+
 test('incidentApi.getOne', async () => {
   await incidentApi.getOne(7)
   assert.equal(calls[0].url, '/api/incidents/7')

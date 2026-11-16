@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react'
+import { useCallback, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 
 import AccountPicker from '@features/accounts/ui/AccountPicker.jsx'
@@ -6,6 +6,9 @@ import AdvicePanel from '@features/advice/ui/AdvicePanel.jsx'
 import { adviceApi } from '@features/advice/ui/api.js'
 
 import { deployApi } from './api.js'
+
+// 비용 패널 선택의 처음 상태 - 옵션 없음, 올바름, 금액 모르는 상태
+const INITIAL_COST_STATE = { valid: true, hourly: null, options: {} }
 
 // 위: 연결 블록 고르기 (M6, 연결해 둔 것이 있을 때만). 아래: GitHub 주소 하나 - 직접 입력하거나, GitHub 연결을 골랐으면 그 계정의 레포 목록에서 고른다
 // 브랜치는 고르고 싶을 때만 불러온다
@@ -23,6 +26,8 @@ export default function DeployForm() {
   const [advice, setAdvice] = useState(null)
   const [analyzing, setAnalyzing] = useState(false)
   // 분석 요청 번호 - 입력이 바뀐 뒤 늦게 도착한 결과를 버리고, 같은 순간의 두 번째 클릭을 막는다
+  // 비용 패널에서 고른 옵션 - valid 가 false 면 배포 버튼을 막고, options 는 배포 요청에 실을 값 (고른 것만)
+  const [costState, setCostState] = useState(INITIAL_COST_STATE)
   const analysisId = useRef(0)
   const inflight = useRef(false)
 
@@ -32,8 +37,14 @@ export default function DeployForm() {
     inflight.current = false
     setAdvice(null)
     setAnalyzing(false)
+    setCostState(INITIAL_COST_STATE)
     setError('')
   }
+
+  // 비용 패널이 현재 선택을 알려 온다
+  const handleCostChange = useCallback((selection, valid, extra) => {
+    setCostState({ valid, hourly: extra?.hourly ?? null, options: extra?.options ?? {} })
+  }, [])
 
   const loadBranches = async () => {
     setError('')
@@ -59,6 +70,7 @@ export default function DeployForm() {
     const id = ++analysisId.current
     setError('')
     setAdvice(null)
+    setCostState(INITIAL_COST_STATE)
     setAnalyzing(true)
     try {
       const data = await adviceApi.analyze({
@@ -74,11 +86,11 @@ export default function DeployForm() {
 
   // 분석 결과를 본 뒤 배포 - 입력이 바뀌면 결과가 지워지므로 분석한 그대로의 입력으로 만든다
   const deploy = async () => {
-    if (busy || analyzing) return
+    if (busy || analyzing || !costState.valid) return
     setError('')
     setBusy(true)
     try {
-      const created = await deployApi.create(repoUrl.trim(), branch, awsAccountId, githubInstallationId)
+      const created = await deployApi.create(repoUrl.trim(), branch, awsAccountId, githubInstallationId, costState.options)
       navigate(`/deploys/${created.d_id}`)
     } catch (e) {
       setError(e.message)
@@ -130,7 +142,7 @@ export default function DeployForm() {
       </p>
       {error && !advice && <div className="notice err">{error}</div>}
     </form>
-    <AdvicePanel advice={advice} busy={busy || analyzing} onDeploy={deploy} onReset={invalidate} />
+    <AdvicePanel advice={advice} busy={busy || analyzing} costState={costState} onCostChange={handleCostChange} onDeploy={deploy} onReset={invalidate} />
     {advice && error && <div className="notice err advice-error">{error}</div>}
     </>
   )

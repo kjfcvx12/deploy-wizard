@@ -4,7 +4,7 @@ import './useAlias.mjs'
 
 const {
   formatUsd, formatHours, parsePlannedHours, validateScaling,
-  buildDeployOptions, buildEstimateBody, describeEstimate,
+  buildDeployOptions, buildEstimateBody, describeEstimate, estimateFromCost,
 } = await import('../../features/pricing/ui/costLogic.js')
 const { pricingApi } = await import('../../features/pricing/ui/api.js')
 
@@ -203,4 +203,24 @@ test('pricingApi: URL, method, JSON body', async () => {
   assert.equal(calls[1].url, '/api/pricing/estimate')
   assert.equal(calls[1].options.method, 'POST')
   assert.equal(calls[1].options.body, JSON.stringify({ cpu: '256', memory: '512', max_tasks: 2 }))
+})
+
+test('estimateFromCost: 분석 응답의 cost 를 추정 모양으로 (가격 없으면 null)', () => {
+  assert.equal(estimateFromCost(null), null)
+  assert.equal(estimateFromCost({ hourly_usd: null, components: [], not_included: [] }), null)
+  const e = estimateFromCost({
+    monthly_min: 26.79, monthly_max: 26.79, currency: 'USD', basis_date: '2026-11-11',
+    hourly_usd: 0.0367, components: [{ name: 'ALB', hourly_usd: 0.0225, note: null }], not_included: ['LCU'],
+    arm64_hourly_usd: 0.03, spec_label: '0.25 vCPU / 0.5 GB',
+  })
+  assert.equal(e.hourly_usd, 0.0367)
+  assert.equal(e.basis_date, '2026-11-11')
+  assert.deepEqual(e.periods, [{ label: '한 달', hours: null, usd: 26.79 }])
+  assert.deepEqual(e.not_included, ['LCU'])
+  const d = describeEstimate(e)
+  assert.equal(d.hourly, '$0.0367')
+  assert.equal(d.periods[0].usd, '$26.79')
+  assert.equal(d.arm, null)
+  const noMonthly = estimateFromCost({ hourly_usd: 0.04, components: [], not_included: [] })
+  assert.deepEqual(noMonthly.periods, [])
 })
