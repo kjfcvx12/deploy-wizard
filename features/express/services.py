@@ -227,7 +227,47 @@ class Express_Service:
                 kind="ecs_service" if ":ecs:" in arn else "ecr_repository"
                 resources.append(Express_Resource(kind=kind, arn=arn, name=arn.split("/", 1)[-1]))
 
-        return resources
+        return Express_Service.services_express_drop_gone(session, resources)
+
+
+    # 삭제가 끝난(INACTIVE)·이미 없는(MISSING) 서비스는 목록에서 뺀다 - 태그 API 는 이런 서비스도 계속 돌려준다
+    @staticmethod
+    def services_express_drop_gone(session:boto3.Session, resources:list[Express_Resource]) -> list[Express_Resource]:
+        gone=set()
+        by_cluster:dict[str, list[str]]={}
+
+        for resource in resources:
+            if resource.kind != "ecs_service":
+                continue
+            # service/<클러스터>/<이름> - 클러스터가 없는 옛 형식은 확인하지 않고 남긴다
+            parts=resource.arn.split(":service/", 1)[-1].split("/")
+            if len(parts) < 2:
+                continue
+            by_cluster.setdefault(parts[0], []).append(resource.arn)
+
+        if not by_cluster:
+            return resources
+
+        ecs=session.client("ecs")
+        for cluster, arns in by_cluster.items():
+            # describe_services 는 한 번에 10개까지
+            for start in range(0, len(arns), 10):
+                batch=arns[start:start + 10]
+                try:
+                    described=ecs.describe_services(cluster=cluster, services=batch)
+                except ClientError as e:
+                    # 상태를 모르면 남겨 둔다 - 지우지 못하는 쪽이 안전하다
+                    logger.warning("서비스 상태 확인 실패, 목록에 그대로 둔다 (%s) :%s", cluster, e)
+                    continue
+
+                for service in described.get("services") or []:
+                    if service.get("status") == "INACTIVE":
+                        gone.add(service["serviceArn"])
+                for failure in described.get("failures") or []:
+                    if failure.get("reason") == "MISSING":
+                        gone.add(failure["arn"])
+
+        return [resource for resource in resources if resource.arn not in gone]
 
 
     # ECR 리포지토리 삭제 (이미지 포함)
