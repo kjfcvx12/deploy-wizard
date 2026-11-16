@@ -1,13 +1,16 @@
 import sys
 import socket
+import sqlite3
 import argparse
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from sqlalchemy import create_engine
+from sqlalchemy.exc import SQLAlchemyError
 
 from shared.masking import mask_text
+from shared.secrets import Secret_Error
 from shared.settings import settings
 from shared.migrate import (migrate_db_path, migrate_readonly_engine, migrate_backup, migrate_restore_file, migrate_verify_db,
                             migrate_bootstrap, migrate_schema_pending, migrate_value_counts, migrate_plaintext_count,
@@ -36,6 +39,8 @@ from features.auth import models as auth_models
 
 PORT=8081
 MESSAGE_SERVER_RUNNING=f"서버가 켜져 있습니다 (:{PORT} 에 리스너가 있음). 서버를 끈 뒤 다시 실행하세요"
+# 다른 쓰기가 잠금을 쥐고 있을 때 기다리는 초
+WRITE_TIMEOUT=10
 
 
 # :8081 에 서버가 떠 있는지 - 접속이 되면 리스너가 있다
@@ -47,7 +52,20 @@ def port_in_use(port:int=PORT) -> bool:
 
 # 쓰기용 엔진 - 다른 쓰기가 잠깐 잠금을 쥐고 있으면 기다린다
 def writable_engine(db_path:Path):
-    return create_engine(f"sqlite:///{db_path.as_posix()}", connect_args={"timeout": 10})
+    # hide_parameters - 오류문에 바인드 값(원래 ARN 등)이 실리지 않게
+    return create_engine(f"sqlite:///{db_path.as_posix()}", connect_args={"timeout": WRITE_TIMEOUT}, hide_parameters=True)
+
+
+# 오류 한 줄 - DB 오류는 SQL·파라미터를 싣지 않고 종류와 한국어 안내만. 우리 쪽 오류(한국어, 값 없음)만 문구를 싣는다
+def describe_error(e:Exception) -> str:
+    if isinstance(e, (SQLAlchemyError, sqlite3.Error)):
+        origin=getattr(e, "orig", None) or e
+        if "locked" in str(origin).lower() or "busy" in str(origin).lower():
+            return f"{type(origin).__name__} - 다른 프로그램이 DB 에 쓰는 중입니다. 서버(다른 포트 포함)·deploy_cli.py·session_end.py 등 DB 를 쓰는 것을 모두 멈춘 뒤 다시 실행하세요"
+        return f"{type(origin).__name__} - DB 작업이 실패했습니다. 다른 프로그램이 DB 를 쓰고 있지 않은지, 백업으로 되돌릴지 확인하세요 (status 로 상태 확인)"
+    if isinstance(e, (Secret_Error, FileNotFoundError, RuntimeError, ValueError)):
+        return f"{type(e).__name__} :{mask_text(str(e))[:300]}"
+    return type(e).__name__
 
 
 # 개수 표를 한 줄씩 - 0 인 줄은 빼고, 없으면 "없음"
@@ -335,7 +353,7 @@ def main(argv:list[str] | None=None) -> int:
         return command_restore(db_path, backup_dir, Path(args.source).resolve(), args.yes)
 
     except Exception as e:
-        print(f"실패 - 다음 단계로 넘어가지 않았습니다. 쓰는 중이었다면 그 변경은 되돌려졌고, 만든 백업은 그대로 있습니다 :{mask_text(str(e))[:300]}")
+        print(f"실패 - 다음 단계로 넘어가지 않았습니다. 쓰는 중이었다면 그 변경은 되돌려졌고, 만든 백업은 그대로 있습니다 :{describe_error(e)}")
         return 1
 
 

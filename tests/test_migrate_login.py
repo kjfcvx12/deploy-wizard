@@ -382,6 +382,53 @@ def test_migrate_script_requires_yes(tmp_path, monkeypatch, capsys):
         assert secret not in out
 
 
+def test_migrate_script_error_hides_values(tmp_path, monkeypatch, capsys, caplog):
+    script=load_script("migrate_login")
+    monkeypatch.setattr(script, "port_in_use", lambda port=8081: False)
+    monkeypatch.setattr(script, "WRITE_TIMEOUT", 0.2)
+    db_path=make_old_db(tmp_path / "wizard.db")
+
+    # 열은 미리 더하고 기기 줄은 비워 둔다 - 첫 쓰기가 role_arn UPDATE(파라미터에 원래 ARN)가 되게
+    engine=sync_engine(db_path)
+    with engine.begin() as conn:
+        migrate_bootstrap(conn)
+        conn.execute(text("DELETE FROM push_devices"))
+    engine.dispose()
+
+    # 다른 프로그램이 쓰기 잠금을 쥐고 있다 → 진짜 OperationalError (database is locked)
+    holder=sqlite3.connect(db_path, isolation_level=None)
+    holder.execute("BEGIN IMMEDIATE")
+    try:
+        code=script.main(["encrypt", "--yes", "--db", str(db_path), "--backup-dir", str(tmp_path / "backups")])
+    finally:
+        holder.execute("ROLLBACK")
+        holder.close()
+
+    captured=capsys.readouterr()
+    output=captured.out + captured.err + caplog.text
+    assert code == 1
+    assert "OperationalError" in output and "다른 프로그램" in output
+    for plain in (OLD_ROLE_ARN, OLD_ACCOUNT_ID, OLD_LOGIN, "[parameters", "[SQL"):
+        assert plain not in output
+
+    # 바뀐 것이 없다
+    check=sqlite3.connect(db_path)
+    try:
+        assert check.execute("SELECT role_arn FROM aws_accounts").fetchone()[0] == OLD_ROLE_ARN
+    finally:
+        check.close()
+
+
+def test_migrate_engines_hide_parameters(tmp_path):
+    script=load_script("migrate_login")
+    db_path=make_old_db(tmp_path / "wizard.db")
+    from shared.migrate import migrate_readonly_engine
+
+    for engine in (script.writable_engine(db_path), migrate_readonly_engine(db_path)):
+        assert engine.hide_parameters is True
+        engine.dispose()
+
+
 def test_migrate_script_refuses_while_server_runs(tmp_path, monkeypatch):
     script=load_script("migrate_login")
     db_path=make_old_db(tmp_path / "wizard.db")

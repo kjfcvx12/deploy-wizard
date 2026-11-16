@@ -44,7 +44,8 @@ def migrate_readonly_connect(db_path:Path) -> sqlite3.Connection:
 
 # 읽기 전용 엔진 - status·작업 종료 검사처럼 보기만 하는 명령이 쓴다
 def migrate_readonly_engine(db_path:Path):
-    return create_engine("sqlite://", creator=lambda: migrate_readonly_connect(db_path))
+    # hide_parameters - 오류문에 바인드 값(원래 값)이 실리지 않게
+    return create_engine("sqlite://", creator=lambda: migrate_readonly_connect(db_path), hide_parameters=True)
 
 
 # DB 파일 검사 - 읽기 전용으로 열어 integrity_check 가 ok 인지 본다. 아니면 예외
