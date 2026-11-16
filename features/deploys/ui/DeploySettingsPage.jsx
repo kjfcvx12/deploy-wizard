@@ -61,6 +61,7 @@ function DeploySettings({ d_id }) {
   const [busy, setBusy] = useState({})
   const [message, setMessageState] = useState(null)
   const [hoursText, setHoursText] = useState('')
+  const [hoursInvalid, setHoursInvalid] = useState(false)
 
   // 화면이 살아 있는 동안만 상태를 바꾼다 - 닫힌 뒤 늦게 오는 응답과 안내 타이머는 버린다
   useEffect(() => {
@@ -152,9 +153,11 @@ function DeploySettings({ d_id }) {
     if (busyRef.current.planned_hours) return
     const { hours, error } = parsePlannedHours(hoursText)
     if (error) {
+      setHoursInvalid(true)
       showError(error)
       return
     }
+    setHoursInvalid(false)
     busyRef.current.planned_hours = true
     clearTimeout(timerRef.current)
     setBusy((b) => ({ ...b, planned_hours: true }))
@@ -230,8 +233,9 @@ function DeploySettings({ d_id }) {
             autoComplete="off"
             value={hoursText}
             disabled={!!busy.planned_hours}
-            aria-describedby={`${hoursId}-hint`}
-            onChange={(e) => setHoursText(e.target.value)}
+            aria-invalid={hoursInvalid && message?.tone === 'err' ? true : undefined}
+            aria-describedby={hoursInvalid && message?.tone === 'err' ? `${hoursId}-hint ${hoursId}-notice` : `${hoursId}-hint`}
+            onChange={(e) => { setHoursText(e.target.value); setHoursInvalid(false) }}
           />
           <button type="submit" disabled={!!busy.planned_hours}>저장</button>
         </div>
@@ -240,7 +244,7 @@ function DeploySettings({ d_id }) {
 
       {/* 읽어 주는 영역은 항상 떠 있게 두고 안에 안내만 넣고 뺀다 - 비어 있다가 채워질 때 스크린 리더가 읽는다 */}
       <div role="status" aria-live="polite" aria-atomic="true">
-        {!!message && <div ref={noticeRef} className={`notice ${message.tone}`} style={{ marginTop: 0, marginBottom: 12 }}>{message.text}</div>}
+        {!!message && <div ref={noticeRef} id={`${hoursId}-notice`} className={`notice ${message.tone}`} style={{ marginTop: 0, marginBottom: 12 }}>{message.text}</div>}
       </div>
 
       <p className="muted small">스위치는 누르는 즉시 저장되고, 예정 사용 시간은 [저장]을 눌러야 반영됩니다. 이미 진행 중인 배포에는 영향이 없습니다.</p>

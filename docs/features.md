@@ -12,7 +12,7 @@
 | `explains` | 한국어 에러 해설 (규칙 → LLM) | scheme · services · ui | M5 |
 | `envvars` | 소스에서 환경변수 이름 찾기(스캐너), 종류 분류(규칙 → AI 선택), 값 입력·건너뛰기, 컨테이너에 넣을 값, 실행 중 에러에서 이름 찾기 | models · scheme · crud · scan · services · router · ui | 백엔드 + 화면 (실제 AWS 검증 전) |
 | `advice` | 배포 전 분석 - 사양 수준·필요한 것·확신도 (읽기 전용, 숫자는 검증 전이라 비움) | scheme · services · router · ui | 백엔드 + 화면 (실제 AWS 검증 전) |
-| `pricing` | 비용 확인 - AWS 공개 가격 파일 읽기(24시간 캐시), 사양 프리셋 4개, 비용 추정(Fargate + ALB 고정분, ARM64 비교는 표시만), 자동 증설 값 검사 | scheme · services · router | 백엔드 (가짜 가격·Express 로만 확인, 프리셋·`scalingTarget`·기본 사양 실제 AWS 미검증), 화면은 다음 계획 |
+| `pricing` | 비용 확인 - AWS 공개 가격 파일 읽기(24시간 캐시), 사양 프리셋 4개, 비용 추정(Fargate + ALB 고정분, ARM64 비교는 표시만), 자동 증설 값 검사 | scheme · services · router · ui | 백엔드 (가짜 가격·Express 로만 확인, 프리셋·`scalingTarget`·기본 사양 실제 AWS 미검증), 화면은 웹 `ui/`에 있음 (브라우저 확인 전 상태) |
 | `accounts` | 사용자 AWS 계정 연결(CloudFormation+AssumeRole) · GitHub App 연결 - 연결·파이프라인 배선(private 클론 포함) 완료 | models · scheme · crud · services · router · cloudformation/ · ui | M6 (진행 중) |
 | `watches` | 코드 변경 감지 - 폴링(백그라운드) + 웹훅(서명 검증 + 디바운스) 둘 다 코드 완료 | services | M6 (코드 완료, 실제 검증 남음) |
 | `health` | 떠 있는 배포를 1분마다 점검해 이력을 남기는 감시 루프, 이력 정리(7일) | models · scheme · crud · services | D1 (코드 완료, 실제 AWS 미검증) |
@@ -86,7 +86,8 @@
 - **숫자는 비워 둔다.** `cpu` `memory`와 `cost`의 금액·기준일은 항상 `null`이다. Express Mode가 허용하는 CPU·메모리 조합과 요금 구성을 실제 배포로 확인한 뒤(D10) 채운다. 사용자가 수준을 고르는 기능(I-08)과 `deploys`의 `size_tier` 등 열도 그때까지 미룬다.
 - 정적 사이트는 마법사의 Node 템플릿이 `start` 없는 사이트를 처리하는지 확인하지 않았다 — `needs`에 `static_site`(`supported: true`)로 알리기만 한다.
 - `disk_write`는 정규식·AST 추정이라 임시·로그 쓰기를 잘못 잡을 수 있다.
-- **화면 (계획 B)**: `ui/api.js` · `ui/constants.js`(수준·확신도·필요한 것 라벨, 모르는 키는 원문 그대로) · `ui/AdvicePanel.jsx`(보여 주기만 하는 패널). 새 배포 폼(`deploys/ui/DeployForm.jsx`)이 [분석] -> 패널 -> [이 레포로 배포]의 두 단계를 조립한다 - `advice`가 `deploys`를 알지 않도록 배포 생성은 폼이 한다. 비용은 최소·최대가 둘 다 숫자일 때만 보여 주고 아니면 "아직 계산할 수 없습니다", `cpu`·`memory`는 그리지 않는다. 수준을 고르는 UI는 `size_tier` 백엔드(D10)가 생길 때까지 미룬다. 자세한 모양은 [`ui-spec.md`](./ui-spec.md) "분석 결과 패널".
+- **화면 (계획 B)**: `ui/api.js` · `ui/constants.js`(수준·확신도·필요한 것 라벨, 모르는 키는 원문 그대로) · `ui/AdvicePanel.jsx`(보여 주기만 하는 패널). 새 배포 폼(`deploys/ui/DeployForm.jsx`)이 [분석] -> 패널 -> [이 레포로 배포]의 두 단계를 조립한다 - `advice`가 `deploys`를 알지 않도록 배포 생성은 폼이 한다. 비용 영역은 `features/pricing/ui/CostPanel.jsx`가 그린다 (아래 `pricing` 화면). 예전의 "최소·최대" 비용 줄은 없어졌다. 수준을 고르는 UI는 `size_tier` 백엔드(D10)가 생길 때까지 미룬다. 자세한 모양은 [`ui-spec.md`](./ui-spec.md) "분석 결과 패널".
+- **화면 (`pricing/ui/`, 비용 확인 웹)**: `api.js`(`/api/pricing/*` 호출) · `constants.js`(만들어지는 리소스 문구, 요금 안내, 디바운스 300ms, 증설 기본값) · `costLogic.js`(순수 로직: 표시 형식, 입력 검증, 요청 본문, 추정 응답 -> 표시 글자, `estimateFromCost`, 남은 시간) · `latest.js`(요청 번호 가드) · `rejectText.js`(서버 거절 문구 한국어 보정) · `CostPanel.jsx`(표시). `advice/ui/AdvicePanel.jsx`가 `CostPanel`을 그리고, `deploys/ui/DeployForm.jsx`가 고른 옵션을 `deployApi.create`로 넘기며, `DeployDetailPage.jsx`·`DeploySettingsPage.jsx`가 `costLogic`을 가져다 쓴다 (화면 코드는 `pricing/ui`의 파일을 직접 가져온다 - "services 로만" 규칙은 파이썬 쪽 이야기다). 가격 숫자는 JS 에 적지 않는다. 모양은 [`ui-spec.md`](./ui-spec.md) "배포 전 비용 영역".
 
 ### accounts (M6, 진행 중)
 - **AWS 연결 완료**: `POST /aws`로 `external_id` 발급 → 사용자가 `cloudformation/deploy_wizard_role.yaml`을 직접 다운로드해 콘솔에서 스택 생성(공개 URL이 없어 원클릭 링크 대신 수동 업로드) → 역할 ARN을 `PATCH /aws/{a_id}/role-arn`에 붙여넣으면 `sts:AssumeRole`로 검증(`verified`/`invalid`).
