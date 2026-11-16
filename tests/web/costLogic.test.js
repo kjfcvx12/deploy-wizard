@@ -5,6 +5,7 @@ import './useAlias.mjs'
 const {
   formatUsd, formatHours, parsePlannedHours, validateScaling,
   buildDeployOptions, buildEstimateBody, describeEstimate, estimateFromCost,
+  planRemaining, formatRemaining, describeDeployPlan,
 } = await import('../../features/pricing/ui/costLogic.js')
 const { pricingApi } = await import('../../features/pricing/ui/api.js')
 
@@ -275,4 +276,99 @@ test('estimateFromCost: 분석 응답의 cost 를 추정 모양으로 (가격 �
   assert.equal(d.arm, null)
   const noMonthly = estimateFromCost({ hourly_usd: 0.04, components: [], not_included: [] })
   assert.deepEqual(noMonthly.periods, [])
+})
+
+const HOUR = 3600000
+const SINCE = '2026-11-16T01:00:00'
+const at = (iso) => new Date(iso)
+
+test('planRemaining: 계획·시작 시각이 없으면 none', () => {
+  const now = at('2026-11-16T02:00:00Z')
+  const none = { state: 'none', remainingMs: null }
+  assert.deepEqual(planRemaining(null, 4, now), none)
+  assert.deepEqual(planRemaining(SINCE, null, now), none)
+  assert.deepEqual(planRemaining(undefined, undefined, now), none)
+  assert.deepEqual(planRemaining(SINCE, 0, now), none)
+  assert.deepEqual(planRemaining(SINCE, -1, now), none)
+  assert.deepEqual(planRemaining(SINCE, NaN, now), none)
+  assert.deepEqual(planRemaining(SINCE, '4', now), none)
+  assert.deepEqual(planRemaining('', 4, now), none)
+  assert.deepEqual(planRemaining('어제', 4, now), none)
+  assert.deepEqual(planRemaining('not a date', 4, now), none)
+  assert.deepEqual(planRemaining(SINCE, 4, new Date('x')), none)
+  assert.deepEqual(planRemaining(SINCE, 4, null), none)
+})
+
+test('planRemaining: 남음, 정확히 경계, 지남 (서버 시각은 UTC 로 읽는다)', () => {
+  assert.deepEqual(planRemaining(SINCE, 4, at('2026-11-16T01:00:00Z')), { state: 'counting', remainingMs: 4 * HOUR })
+  assert.deepEqual(planRemaining(SINCE, 4, at('2026-11-16T04:00:00Z')), { state: 'counting', remainingMs: HOUR })
+  assert.deepEqual(planRemaining(SINCE, 1.5, at('2026-11-16T01:30:00Z')), { state: 'counting', remainingMs: HOUR })
+  assert.deepEqual(planRemaining(SINCE, 4, at('2026-11-16T04:59:59.999Z')), { state: 'counting', remainingMs: 1 })
+  // 정확히 끝나는 순간은 넘긴 것으로 본다
+  assert.deepEqual(planRemaining(SINCE, 4, at('2026-11-16T05:00:00Z')), { state: 'over', remainingMs: null })
+  assert.deepEqual(planRemaining(SINCE, 4, at('2026-11-17T05:00:00Z')), { state: 'over', remainingMs: null })
+  // Z 가 붙은 시각도 같다
+  assert.deepEqual(planRemaining('2026-11-16T01:00:00Z', 4, at('2026-11-16T02:00:00Z')), { state: 'counting', remainingMs: 3 * HOUR })
+  // 시작 전(시계가 어긋남)이어도 전체 시간을 넘지 않는다
+  assert.deepEqual(planRemaining(SINCE, 4, at('2026-11-16T00:00:00Z')), { state: 'counting', remainingMs: 4 * HOUR })
+})
+
+test('formatRemaining', () => {
+  assert.equal(formatRemaining(3 * HOUR + 12 * 60000), '3시간 12분 남음')
+  assert.equal(formatRemaining(59 * 60000), '59분 남음')
+  assert.equal(formatRemaining(59 * 60000 + 59999), '59분 남음')
+  assert.equal(formatRemaining(60000), '1분 남음')
+  assert.equal(formatRemaining(59999), '1분 미만 남음')
+  assert.equal(formatRemaining(1), '1분 미만 남음')
+  assert.equal(formatRemaining(0), '1분 미만 남음')
+  assert.equal(formatRemaining(HOUR), '1시간 남음')
+  assert.equal(formatRemaining(25 * HOUR), '1일 1시간 남음')
+  assert.equal(formatRemaining(24 * HOUR), '1일 남음')
+  assert.equal(formatRemaining(48 * HOUR + 30 * 60000), '2일 남음')
+  assert.equal(formatRemaining(NaN), '')
+  assert.equal(formatRemaining(null), '')
+  assert.equal(formatRemaining(Infinity), '')
+})
+
+const OPTIONS = {
+  specs: [{ label: '0.25 vCPU / 0.5 GB', cpu: '256', memory: '512' }, { label: '1 vCPU / 2 GB', cpu: '1024', memory: '2048' }],
+  scale_metrics: METRICS,
+}
+const NOW = at('2026-11-16T02:30:00Z')
+const base = { cpu: null, memory: null, min_tasks: null, max_tasks: null, scale_metric: null, planned_hours: null, running_since: null }
+
+test('describeDeployPlan: 값이 하나도 없으면 null', () => {
+  assert.equal(describeDeployPlan(base, OPTIONS, NOW), null)
+  assert.equal(describeDeployPlan({}, null, NOW), null)
+  assert.equal(describeDeployPlan(null, OPTIONS, NOW), null)
+})
+
+test('describeDeployPlan: 사양·증설·계획', () => {
+  const d = describeDeployPlan({
+    ...base, cpu: '1024', memory: '2048', min_tasks: 1, max_tasks: 3, scale_metric: 'AVERAGE_CPU',
+    planned_hours: 4, running_since: SINCE,
+  }, OPTIONS, NOW)
+  assert.equal(d.spec, '1 vCPU / 2 GB')
+  assert.equal(d.scaling, '자동 증설 1~3개 (CPU 사용률 기준)')
+  assert.equal(d.plan, '예정 사용 4시간 · 2시간 30분 남음')
+  assert.equal(d.over, false)
+})
+
+test('describeDeployPlan: 모르는 사양은 값 그대로, 옵션을 못 받아도 그린다', () => {
+  assert.equal(describeDeployPlan({ ...base, cpu: '512', memory: '1024' }, OPTIONS, NOW).spec, '512 / 1024')
+  assert.equal(describeDeployPlan({ ...base, cpu: '256', memory: '512' }, null, NOW).spec, '256 / 512')
+  const m = describeDeployPlan({ ...base, min_tasks: 1, max_tasks: 2, scale_metric: 'FOO' }, null, NOW)
+  assert.equal(m.scaling, '자동 증설 1~2개 (FOO 기준)')
+  assert.equal(m.spec, '기본 사양')
+  assert.equal(m.plan, null)
+})
+
+test('describeDeployPlan: 계획만 있을 때와 시간을 넘겼을 때', () => {
+  assert.equal(describeDeployPlan({ ...base, planned_hours: 24 }, OPTIONS, NOW).plan, '예정 사용 1일')
+  const over = describeDeployPlan({ ...base, planned_hours: 1, running_since: SINCE }, OPTIONS, NOW)
+  assert.equal(over.plan, '예정 사용 1시간 · 예정 시간을 넘겼습니다 — 멈추거나 삭제하세요')
+  assert.equal(over.over, true)
+  assert.equal(describeDeployPlan({ ...base, planned_hours: 0.04 }, OPTIONS, NOW).plan, '예정 사용 0.1시간 미만')
+  // 증설 값이 한쪽만 있으면 그리지 않는다
+  assert.equal(describeDeployPlan({ ...base, min_tasks: 1, planned_hours: 4 }, OPTIONS, NOW).scaling, null)
 })

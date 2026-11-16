@@ -1,3 +1,5 @@
+import { toMs } from '@shared/ui/time.js'
+
 const MAX_PLANNED_HOURS = 8760
 const INCOMPLETE_SCALING_TEXT = '증설 설정은 최소·최대·기준·목표값을 모두 정해야 합니다'
 
@@ -159,4 +161,58 @@ export function estimateFromCost(cost) {
     assumptions: [],
     not_included: cost.not_included || [],
   }
+}
+
+// 예정 사용 시간까지 남은 시간 - 계획이나 시작 시각이 없거나 읽을 수 없으면 none, 끝나는 순간부터 over (서버 시각은 UTC)
+export function planRemaining(runningSince, plannedHours, now) {
+  const none = { state: 'none', remainingMs: null }
+  if (!isNum(plannedHours) || plannedHours <= 0) return none
+  const start = toMs(runningSince)
+  const current = now instanceof Date ? now.getTime() : NaN
+  if (Number.isNaN(start) || Number.isNaN(current)) return none
+  const total = plannedHours * 3600000
+  const remaining = Math.min(total, start + total - current)
+  return remaining > 0 ? { state: 'counting', remainingMs: remaining } : { state: 'over', remainingMs: null }
+}
+
+// 남은 시간 표기 - "1일 1시간 남음", "3시간 12분 남음", "59분 남음", 1분 미만은 "1분 미만 남음"
+export function formatRemaining(ms) {
+  if (!isNum(ms)) return ''
+  const minutes = Math.floor(ms / 60000)
+  if (minutes < 1) return '1분 미만 남음'
+  const days = Math.floor(minutes / 1440)
+  const hours = Math.floor((minutes % 1440) / 60)
+  const rest = minutes % 60
+  if (days) return hours ? `${days}일 ${hours}시간 남음` : `${days}일 남음`
+  if (hours) return rest ? `${hours}시간 ${rest}분 남음` : `${hours}시간 남음`
+  return `${rest}분 남음`
+}
+
+// 배포 상세 머리 줄 - 사양·증설·사용 계획 글자 (모두 없으면 null). options 는 /pricing/options 응답(없어도 된다)
+export function describeDeployPlan(deploy, options, now) {
+  const d = deploy || {}
+  const hasSpec = !isBlank(d.cpu) && !isBlank(d.memory)
+  const hasScaling = isNum(d.min_tasks) && isNum(d.max_tasks)
+  const hasPlan = isNum(d.planned_hours) && d.planned_hours > 0
+  if (!hasSpec && !hasScaling && !hasPlan) return null
+
+  const preset = (options?.specs || []).find((s) => s.cpu === d.cpu && s.memory === d.memory)
+  const spec = hasSpec ? (preset?.label ?? `${d.cpu} / ${d.memory}`) : '기본 사양'
+
+  const metric = (options?.scale_metrics || []).find((m) => m.value === d.scale_metric)
+  const metricText = isBlank(d.scale_metric) ? '' : ` (${metric?.label ?? d.scale_metric} 기준)`
+  const scaling = hasScaling ? `자동 증설 ${d.min_tasks}~${d.max_tasks}개${metricText}` : null
+
+  let plan = null
+  let over = false
+  if (hasPlan) {
+    plan = `예정 사용 ${formatHours(d.planned_hours)}`
+    const left = planRemaining(d.running_since, d.planned_hours, now)
+    if (left.state === 'counting') plan += ` · ${formatRemaining(left.remainingMs)}`
+    if (left.state === 'over') {
+      over = true
+      plan += ' · 예정 시간을 넘겼습니다 — 멈추거나 삭제하세요'
+    }
+  }
+  return { spec, scaling, plan, over }
 }
