@@ -14,19 +14,22 @@ const toInteger = (value) => {
   return null
 }
 
-// 금액 표기 - USD 는 $12.34, 그 외 통화는 12.34 KRW
+// 금액 표기 - USD 는 $12.34, 그 외 통화는 12.34 KRW (반올림하면 0 이 되는 값은 부호 없이 0)
 export function formatUsd(value, digits = 2, currency = 'USD') {
   if (!isNum(value)) return '-'
-  const text = value.toFixed(digits)
+  const rounded = value.toFixed(digits)
+  const text = Number(rounded) === 0 ? (0).toFixed(digits) : rounded
   return currency === 'USD' ? `$${text}` : `${text} ${currency}`
 }
 
-// 시간 표기 - 24 는 1일, 168 은 1주일, 그 외 N시간 (소수는 최대 1자리)
+// 시간 표기 - 24 는 1일, 168 은 1주일, 그 외 N시간 (소수는 최대 1자리, 0.1 도 안 되는 양수는 "0.1시간 미만")
 export function formatHours(hours) {
   if (!isNum(hours)) return '-'
   if (hours === 24) return '1일'
   if (hours === 168) return '1주일'
-  return `${Number(hours.toFixed(1))}시간`
+  const rounded = Number(hours.toFixed(1))
+  if (hours > 0 && rounded === 0) return '0.1시간 미만'
+  return `${rounded}시간`
 }
 
 // 사용 예정 시간 입력 해석 - 비면 계획 없음, 잘못되면 한국어 오류
@@ -80,8 +83,9 @@ const plannedPart = (selection) => {
 export function buildDeployOptions(selection, cap, metrics) {
   const options = { ...specPart(selection), ...plannedPart(selection) }
   const scaling = selection?.scaling
-  if (scaling?.enabled && [scaling.min, scaling.max, scaling.metric, scaling.target].every((v) => !isBlank(v))
-      && validateScaling(scaling, cap, metrics) === null) {
+  // validateScaling 은 네 칸이 모두 빈 경우를 문제없음(null)으로 보므로, 값이 모두 있을 때만 싣는다
+  const filled = [scaling?.min, scaling?.max, scaling?.metric, scaling?.target].every((v) => !isBlank(v))
+  if (scaling?.enabled && filled && validateScaling(scaling, cap, metrics) === null) {
     options.min_tasks = Number(scaling.min)
     options.max_tasks = Number(scaling.max)
     options.scale_metric = scaling.metric
@@ -126,7 +130,7 @@ export function describeEstimate(estimate) {
 
   return {
     componentRows,
-    hourly: usd(e.hourly_usd, 4),
+    hourly: isNum(e.hourly_usd) ? usd(e.hourly_usd, 4) : null,
     periods,
     planned,
     max,
