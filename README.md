@@ -74,6 +74,28 @@ python scripts/cleanup.py --yes                               # 완전히 정리
 
 > ⚠️ **비용** — Express Mode가 만드는 로드밸런서는 떠 있는 동안 계속 과금된다. 작업을 끝낼 때 `cleanup.py`를 실행한다. AWS Budgets 예산 알림을 먼저 걸어 둘 것.
 
+> ⚠️ **작업 종료 전에 이전을 먼저 하세요** — 로그인 이전(아래 "로그인 이전") 전의 옛 `data/wizard.db`에서는 연결한 AWS 계정 정보를 읽지 못한다. 그러면 `session_end.py`·`cleanup.py`는 개발 계정 것만 처리하고, 끝에 경고와 함께 0 이 아닌 값(2)으로 끝난다 — 연결 계정 쪽 서비스는 계속 요금이 나갈 수 있다. 경고가 나오면 이전부터 하고 다시 실행한다.
+
+### 로그인 이전 (옛 `data/wizard.db` 옮기기)
+
+로그인 기능이 들어가며 사용자 관련 열(연결 계정의 `role_arn`·계정 ID, GitHub 로그인 이름, 푸시 기기 토큰)을 DB 에 암호화해 두고, 모든 표에 주인(`u_id`)을 붙인다. 옛 DB 는 `scripts/migrate_login.py`로 한 번 옮긴다. 평문이 남은 DB 로는 서버가 시작하지 않는다(한국어 오류로 이 절차를 안내한다). 키 준비는 아래 M6 절의 "암호화 키" 항목을 따른다.
+
+모든 명령은 **기본이 보기만**이고 `--yes`일 때만 쓴다. 쓰기 전에는 언제나 검사한(`integrity_check`) 백업 `data/backups/wizard-YYYYmmdd-HHMMSS.db`를 먼저 만든다. 출력에는 값 원문·토큰·이메일을 싣지 않는다(개수만).
+
+```bash
+# 1. 서버를 끈다 (:8081 에 서버가 떠 있으면 encrypt·rotate-keys --yes·restore 는 거절한다)
+python scripts/migrate_login.py backup                 # 2. 백업 (경로를 알려 준다)
+python scripts/migrate_login.py status                 # 3. 열마다 평문 수, 주인 없는 행 수 (읽기 전용)
+python scripts/migrate_login.py encrypt --yes          # 4. 열·인덱스 보정 → 기기 토큰 인덱스 채우기·중복 정리 → 평문 암호화 (두 번 실행해도 안전)
+uvicorn main:app --port=8081                           # 5. 서버를 켜고, 주인이 될 Google 계정으로 한 번 로그인한다
+python scripts/migrate_login.py assign-owner --email <그 이메일> --yes   # 6. 주인 없는 행만 그 사용자로 (이미 주인 있는 행은 그대로)
+#                                                        7. .env 에 AUTH_ENABLED=true 를 넣고 서버를 다시 켠다
+```
+
+- **되돌리기**: 서버를 끄고 `python scripts/migrate_login.py restore --from data/backups/wizard-….db --yes`. 지금 파일도 먼저 백업한 뒤 되돌린다.
+- **키 회전**: 새 키를 `SECRET_KEY`에, 예전 키를 `SECRET_KEYS_OLD`에 넣고 `rotate-keys --yes`. 되돌리는 명령은 없다 — 되돌리려면 `restore --from`과 예전 `.env` 키로. `status`로 못 읽는 값이 0건인지 본 뒤 `SECRET_KEYS_OLD`를 지운다.
+- ⚠️ **키 백업**: `SECRET_KEY`(와 `SECRET_KEYS_OLD`)·`BLIND_INDEX_KEY`를 잃으면 암호화된 값은 되살릴 수 없다. `.env`를 DB 백업과 따로, 안전한 곳에 함께 보관한다. 백업 파일에는 암호화 전 값이 그대로 있으니 이전을 확인한 뒤 안전한 곳에 두거나 지운다.
+
 ### M6 — 사용자 계정 연결 (진행 중)
 
 `/accounts` 화면에서 AWS·GitHub 계정을 연결하면, 개발자 자신의 계정이 아닌 곳에 배포할 수 있다. 둘 다 아래 값들을 한 번 수동으로 준비해야 한다(`setup_roles.py`와 같은 성격의 1회성 단계).

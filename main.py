@@ -14,6 +14,7 @@ from pathlib import Path
 from shared.settings import settings
 from shared.masking import mask_text
 from shared.database import async_engine, AsyncSessionLocal, bootstrap_schema
+from shared.migrate import migrate_check_startup
 
 # 모델을 import 해야 create_all 이 테이블을 안다
 from features.deploys import models as deploy_models
@@ -54,6 +55,10 @@ async def lifespan(app:FastAPI):
 
     # 표를 만들고, 이미 있는 표에는 새 열이 안 생기므로 모자란 열만 더한다
     await bootstrap_schema()
+
+    # 암호화 전 값(이전 전 옛 DB)이 남아 있으면 여기서 멈춘다 - 평문과 암호문이 섞여 저장되지 않게 (로그인 계획 Task 8)
+    async with async_engine.connect() as conn:
+        await conn.run_sync(migrate_check_startup)
 
     # 서버가 꺼지면서 끊긴 배포를 실패로 돌려놓는다
     await Deploy_Pipeline.pipeline_recover()

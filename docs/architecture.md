@@ -217,6 +217,13 @@ tests/web/                   node:test 로직 테스트 (npm run test:web)
 
 테이블은 시작할 때 `create_all`로 만든다 — SQLite `create_all`은 없는 테이블만 만들고, 있는 테이블에 컬럼을 추가하지 않는다. (D1) 그래서 `lifespan()`이 `create_all` 뒤에 `shared/database.py`의 `ensure_columns`를 부른다: `ENSURE_COLUMNS`에 적힌 열(지금은 `deploys`의 D1 네 열과 비용 확인 아홉 열)이 실제 표에 없으면 `ALTER TABLE ... ADD COLUMN`으로 더한다 (여러 번 불러도 안전, NOT NULL 열은 기본값이 있어야 한다). 새 열을 늘릴 때는 모델과 `ENSURE_COLUMNS`를 같이 고친다. 열을 지우거나 바꾸는 일은 여전히 못 한다 — 그런 일이 잦아지면 alembic을 붙인다. 시험에서는 옛 모양의 표로 보정이 되는 것을 확인했지만, 실제 `data/wizard.db`에서의 첫 실행은 아직 해 보지 않았다.
 
+### 키와 백업 (로그인 계획 Task 8)
+
+- 키는 `.env`에 따로 둔다: `SECRET_KEY`(Fernet, 암호화 열·`external_id_encrypted`) + `SECRET_KEYS_OLD`(회전 중 옛 키, 쉼표), `BLIND_INDEX_KEY`(HMAC 블라인드 인덱스 - `email_bidx`·`expo_token_bidx` 등), `AUTH_JWT_KEY`(액세스 JWT). 앞의 둘은 서버가 늘 요구한다. 잃으면 암호화된 값은 되살릴 수 없다 — `.env`는 DB 백업과 함께, 저장소 밖에 보관한다.
+- 암호화 열은 `Encrypted_Text`(`shared/crypto_types.py`)로 저장 계층에서만 암호화·복호화한다. 평문이 남은 옛 DB 는 읽을 때 이전 안내 오류를 내고, `lifespan()`이 `bootstrap_schema` 바로 뒤에 `shared/migrate.py`의 `migrate_check_startup`으로 평문 수를 세어 하나라도 있으면 서버 시작을 멈춘다 (새 DB·빈 표는 통과).
+- 옛 DB 이전은 `scripts/migrate_login.py`만 한다 (`shared/migrate.py`의 동기 함수 - raw SQL, 값 원문을 돌려주지 않고 개수만): `backup`(sqlite3 백업 API → `data/backups/wizard-YYYYmmdd-HHMMSS.db`, `integrity_check` 확인) → `status` → `encrypt --yes`(열·인덱스 보정, `push_devices.expo_token_bidx` 채우기와 같은 토큰 중복 정리 - 주인 있는 줄 → 최근 줄을 남기고 못 읽는 줄은 건드리지 않는다, 평문만 암호화, 끝나면 `secure_delete`+`VACUUM`으로 옛 원문이 파일에 남지 않게) → 로그인 → `assign-owner --email --yes`(`u_id IS NULL`인 행만, `notification_settings`처럼 `u_id`가 유일한 표는 한 줄만; 연결 블록과 계정·설치의 주인이 다르면 보고만). 쓰는 명령은 모두 기본이 보기만이고 `--yes`일 때 검사한 백업을 먼저 만든다. `rotate-keys`는 되돌리는 명령이 없다(`restore --from`). `restore`·`encrypt --yes`·`rotate-keys --yes`는 `:8081`에 서버가 떠 있으면 거절한다.
+- `session_end.py`·`cleanup.py`는 이전 전 DB 에서 연결 계정을 읽지 못하면 죽지 않고 개발 계정 몫은 처리한 뒤, 끝에 이전 안내를 내고 2 로 끝난다.
+
 ## 보안 메모
 
 - 레포 주소는 `https://github.com/소유자/레포`만 받고, git 인자는 리스트 + `--`로 넘긴다.
