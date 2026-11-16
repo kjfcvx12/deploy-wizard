@@ -13,7 +13,7 @@ Base URL: `http://localhost:8081` · 전부 JSON · 인증은 `AUTH_ENABLED`에 
 - **`AUTH_ENABLED=false` (기본)**: 지금처럼 토큰 없이 모든 API 가 동작한다(소유권 필터 없음). 웹·앱·MCP stdio 서버가 로그인 화면 전까지 그대로 쓴다. 보내온 `Authorization` 헤더는 무시한다 — 단 `/api/me`·`/api/auth/tokens*`는 꺼진 모드에서도 로그인 사용자가 있어야 한다.
 - **`AUTH_ENABLED=true`**: 아래 공개 경로를 뺀 모든 `/api/*`에 `Authorization: Bearer <토큰>`이 필요하다. 토큰은 액세스 JWT(`POST /api/auth/google`·`/refresh`가 준 것) 또는 개인 토큰(`dwp_…`, MCP 용). 사용자가 없거나 `active`가 아니면 401. 개인 토큰은 사용자의 이메일이 `AUTH_ALLOWED_EMAILS`에 아직 있어야 한다.
 - 켤 때 `.env`에 `AUTH_JWT_KEY`·`BLIND_INDEX_KEY`·`SECRET_KEY`가 모두 있어야 한다. 하나라도 없으면 서버가 시작하지 않는다(`로그인을 켜려면 .env 에 … 가 필요합니다`).
-- **공개 경로** (`features/auth/services.py`의 `PUBLIC_PATHS`): `/api/health`, `/api/watches/webhook`(서명 검증), `/api/accounts/github/callback`(서명된 `state`는 Task 6), `/api/accounts/aws/template`(사용자 정보 없는 정적 파일), `/api/auth/google`, `/api/auth/refresh`, `/api/auth/logout`. 그 밖의 경로는 `tests/test_auth_current_user.py`가 모든 라우트를 훑어 인증 의존성이 걸려 있는지 확인한다 — 새 라우트도 빠지면 시험이 실패한다.
+- **공개 경로** (`features/auth/services.py`의 `PUBLIC_PATHS`): `/api/health`, `/api/watches/webhook`(서명 검증), `/api/accounts/github/callback`(서명된 `state`로 보호, 아래 Accounts), `/api/accounts/aws/template`(사용자 정보 없는 정적 파일), `/api/auth/google`, `/api/auth/refresh`, `/api/auth/logout`. 그 밖의 경로는 `tests/test_auth_current_user.py`가 모든 라우트를 훑어 인증 의존성이 걸려 있는지 확인한다 — 새 라우트도 빠지면 시험이 실패한다.
 - 401 응답에는 언제나 `WWW-Authenticate: Bearer` 헤더가 붙고 `detail`은 `로그인이 필요합니다`. 남의 자원은 403 이 아니라 **404**(존재를 숨긴다).
 
 ### 소유권 (로그인 계획 Task 5)
@@ -22,7 +22,8 @@ Base URL: `http://localhost:8081` · 전부 JSON · 인증은 `AUTH_ENABLED`에 
 - `AUTH_ENABLED=true`: 목록은 내 것만, `d_id`·`i_id`를 받는 경로는 남의 것이면 없는 것과 같이 **404**. 배포 만들기·분석·브랜치 조회 본문의 `aws_account_id`·`github_installation_id`도 내 것이어야 한다 (남의 것·없는 것 404, 그 자격증명은 쓰이지 않는다). 새 배포의 주인은 만든 사용자.
 - `AUTH_ENABLED=false`: 주인을 보지 않는다 (주인 없는 옛 기록도 전부 보인다). 단 본문의 `aws_account_id`·`github_installation_id`는 있는 것이어야 한다 (없으면 404).
 - 서버 안 백그라운드(파이프라인·헬스 점검·감시·자동 복구)는 주인과 상관없이 모든 배포를 다룬다.
-- 계정 라우터(`/api/accounts/*`)의 주인 필터는 Task 6.
+- 계정 라우터(`/api/accounts/*`, 로그인 계획 Task 6): `AUTH_ENABLED=true`면 AWS 계정·GitHub 설치·연결 블록 목록은 내 것만, `a_id`·`g_id`·`c_id`를 받는 경로는 남의 것이면 **404** — AWS(AssumeRole·S3·IAM)·GitHub 호출 전에 막는다. 블록에 잇는 계정·설치(`PATCH /connections/{c_id}` 본문)도 내 것이어야 한다. 새로 만든 계정·블록·설치의 주인은 만든 사용자. 공개로 남는 것은 `/aws/template`(정적 파일)과 `/github/callback`(서명된 `state`).
+- 연결 정보 암호화: `aws_accounts.role_arn`·`aws_accounts.aws_account_id`·`github_installations.account_login`은 DB 에 Fernet 암호문으로 저장된다(`Encrypted_Text`). API 응답은 지금처럼 주인에게만 평문으로 보인다(필드 변화 없음). `installation_id`는 평문(웹훅·콜백이 이 값으로 찾는다). 이전 전 평문이 남은 DB 를 읽으면 `암호화 전 값이 DB 에 남아 있습니다. 서버를 끄고 python scripts/migrate_login.py backup → encrypt --yes 를 실행하세요` 오류가 난다(값을 섞어 읽지 않는다).
 
 ### 개인 토큰 (PAT, MCP 용)
 
@@ -476,8 +477,8 @@ AWS 공개 가격 파일(인증 없음)에서 Fargate·ALB 시간당 단가를 �
 | GET | `/api/accounts/aws/{a_id}/template-status` | 사용자 계정 스택의 템플릿 버전(위임 역할의 `template-version` 태그)과 최신 버전 비교. 역할 미등록·조회 실패 400 | 200 `Aws_Account_Template_Status` |
 | DELETE | `/api/accounts/aws/{a_id}/template-files` | 사용자 계정 S3(`cf-templates-*`)에 남은 `deploy_wizard_role.yaml`만 삭제. 역할 미등록 400, 역할에 권한 없음(옛 템플릿 스택) 403 | 200 `{message, deleted}` |
 | DELETE | `/api/accounts/aws/{a_id}` | 연결 삭제 (쓰던 배포는 연결만 해제) | 200 `dict` |
-| GET | `/api/accounts/github/install-url` | GitHub App 설치 화면 주소. `?c_id=`를 주면 주소에 `state=<c_id>`가 붙고, 콜백이 그 블록에 설치를 잇는다. 운영자가 앱을 등록하지 않았으면(`GITHUB_APP_SLUG` 없음) 503 | 200 `{"url": str}` |
-| GET | `/api/accounts/github/callback` | GitHub 설치 콜백 (`installation_id` 쿼리) - 설치 정보 저장 후 리다이렉트 | 302 → `/accounts?connected=github` |
+| GET | `/api/accounts/github/install-url` | GitHub App 설치 화면 주소. 주소에 언제나 서명된 `state`(HS256 JWT, `typ="gh_state"`, `u`=현재 사용자(끔 모드 `null`), `c`=`?c_id=`(없으면 `null`), 15분)가 붙고, 콜백이 그 사용자에게 설치를 주고 그 블록에 잇는다. 서명 키는 `AUTH_JWT_KEY`, 없으면(끔 모드) `SECRET_KEY`에서 HMAC-SHA256(용도 이름 `deploy-wizard:github-install-state`)으로 파생한 키 — 새 환경변수 없이 동작. 둘 다 없으면 503. 남의 `c_id` 404. 운영자가 앱을 등록하지 않았으면(`GITHUB_APP_SLUG` 없음) 503 | 200 `{"url": str}` |
+| GET | `/api/accounts/github/callback` | GitHub 설치 콜백 (공개, `installation_id`·`state` 쿼리) - `state` 서명·만료·종류를 확인해 설치를 `u`에게 저장하고 `c`가 그 사용자 블록이면 잇는다. 서명 불량·만료·옛 숫자 형식 `state` → 저장 없이 `/accounts?connected=github_error`. 이미 다른 사용자(또는 주인 없는 옛 설치)의 `installation_id`면 바꾸지 않고 `/accounts?connected=github_taken`(GitHub 조회 전). `state` 없음은 끔 모드에서만 받는다(GitHub 쪽에서 설치를 바꾸고 돌아온 경우, 블록 없이 저장); 켬 모드는 `github_error`. 리다이렉트 주소에 `state`·토큰을 싣지 않는다 | 302 → `/accounts?connected=github` |
 | GET | `/api/accounts/github/{g_id}/check` | 연결 확인 - 설치 토큰을 실제로 받아 접근 가능한 레포 수·이름(앞 5개). 끊겼으면 400 | 200 `Github_Installation_Check` |
 | GET | `/api/accounts/github/{g_id}/repositories` | 설치가 읽을 수 있는 레포 전부 (`full_name`, `html_url`, `private`, `default_branch`) - 새 배포 폼의 주소 목록. 100개씩 최대 1000개. 끊겼으면 400 | 200 `Github_Repository_Read[]` |
 | GET | `/api/accounts/github` | 전 GitHub 설치 조회 | 200 `Github_Installation_Read[]` |

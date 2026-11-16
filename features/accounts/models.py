@@ -1,4 +1,5 @@
 from shared.database import Base
+from shared.crypto_types import Encrypted_Text
 
 from sqlalchemy.orm import Mapped, mapped_column
 from sqlalchemy import String, Text, TIMESTAMP, ForeignKey, func
@@ -14,9 +15,10 @@ class Aws_Account(Base):
     u_id: Mapped[Optional[int]] = mapped_column(ForeignKey("users.u_id"), index=True)
 
     label: Mapped[str] = mapped_column(String(100), nullable=False)
-    role_arn: Mapped[Optional[str]] = mapped_column(String(255))
+    # role_arn·aws_account_id 는 Encrypted_Text 로 암호화 (로그인 계획 Task 6) - == 검색에 쓰지 않는다
+    role_arn: Mapped[Optional[str]] = mapped_column(Encrypted_Text)
     # sts:AssumeRole 로 검증된 뒤에만 채워진다
-    aws_account_id: Mapped[Optional[str]] = mapped_column(String(20))
+    aws_account_id: Mapped[Optional[str]] = mapped_column(Encrypted_Text)
     # shared.secrets.encrypt_secret 로 암호화. 평문은 생성 직후 응답에만 한 번 실어 보낸다
     external_id_encrypted: Mapped[str] = mapped_column(Text, nullable=False)
     region: Mapped[Optional[str]] = mapped_column(String(30))
@@ -37,8 +39,10 @@ class Github_Installation(Base):
     # 주인 (로그인 계획 Task 5) - 비면 인증 끔 시절의 것. ENSURE_COLUMNS·ENSURE_INDEXES 와 같아야 한다
     u_id: Mapped[Optional[int]] = mapped_column(ForeignKey("users.u_id"), index=True)
 
+    # 평문 - 웹훅·콜백이 이 값으로 찾는다 (개인 정보 아님)
     installation_id: Mapped[int] = mapped_column(nullable=False, unique=True)
-    account_login: Mapped[str] = mapped_column(String(100), nullable=False)
+    # Encrypted_Text 로 암호화 (로그인 계획 Task 6) - == 검색에 쓰지 않는다
+    account_login: Mapped[str] = mapped_column(Encrypted_Text, nullable=False)
     account_type: Mapped[Optional[str]] = mapped_column(String(20))
     # User|Organization
     repository_selection: Mapped[Optional[str]] = mapped_column(String(20))

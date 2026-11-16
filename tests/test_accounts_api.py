@@ -407,8 +407,11 @@ def test_github_app_jwt_is_signed_correctly(monkeypatch, tmp_path):
 async def test_github_install_url(client, monkeypatch):
     monkeypatch.setattr(accounts_module.settings, "github_app_slug", "deploy-wizard-test")
 
+    # 주소에는 언제나 서명된 state 가 붙는다 (로그인 계획 Task 6 - 숫자 블록 번호가 아니다)
     response=await client.get("/api/accounts/github/install-url")
-    assert response.json()["url"] == "https://github.com/apps/deploy-wizard-test/installations/new"
+    url=response.json()["url"]
+    assert url.startswith("https://github.com/apps/deploy-wizard-test/installations/new?state=")
+    assert pyjwt.decode(url.split("state=", 1)[1], options={"verify_signature": False})["typ"] == "gh_state"
 
     # 운영자가 앱을 아직 등록하지 않았으면 깨진 주소(/apps//installations/new) 대신 한국어 안내
     monkeypatch.setattr(accounts_module.settings, "github_app_slug", None)
@@ -457,10 +460,11 @@ async def test_connection_block_flow(client, monkeypatch):
     assert (await client.post(f"/api/accounts/connections/{c_id}/aws")).status_code == 409
     assert (await client.post("/api/accounts/connections/999/aws")).status_code == 404
 
-    # GitHub - 설치 주소에 블록 번호를 state 로 싣고, 콜백이 그 블록에 잇는다
+    # GitHub - 설치 주소에 블록 번호를 서명한 state 로 싣고, 콜백이 그 블록에 잇는다
     url=(await client.get("/api/accounts/github/install-url", params={"c_id": c_id})).json()["url"]
-    assert url == f"https://github.com/apps/deploy-wizard-test/installations/new?state={c_id}"
-    await client.get("/api/accounts/github/callback", params={"installation_id": 555, "state": str(c_id)}, follow_redirects=False)
+    state=url.split("state=", 1)[1]
+    assert pyjwt.decode(state, options={"verify_signature": False})["c"] == c_id
+    await client.get("/api/accounts/github/callback", params={"installation_id": 555, "state": state}, follow_redirects=False)
 
     block=(await client.get("/api/accounts/connections")).json()[0]
     assert block["aws"]["a_id"] == setup["a_id"] and block["aws"]["status"] == "pending"
