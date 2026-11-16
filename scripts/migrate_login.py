@@ -49,7 +49,12 @@ MESSAGE_UNREADABLE_REFUSE=("지금 키로 못 읽는 암호화 값이 {count}건
 # 변경은 저장됐는데 파일 정리(VACUUM)가 실패했다 - 옛 값이 파일 빈 공간에 남아 있을 수 있다
 MESSAGE_SCRUB_FAILED=("{done} 끝났지만 옛 값 지우기(VACUUM)에 실패했습니다. 변경은 이미 저장되어 있습니다. "
                       "옛 값이 DB 파일의 빈 공간에 남아 있을 수 있습니다 :{error}\n"
-                      "다음: 디스크 여유와 다른 프로그램이 DB 를 쓰고 있지 않은지 확인한 뒤 python scripts/migrate_login.py {command} 를 다시 실행하세요 (바꿀 것이 없으면 지우기만 다시 합니다)")
+                      "다음: 디스크 여유와 다른 프로그램이 DB 를 쓰고 있지 않은지 확인한 뒤 python scripts/migrate_login.py {command} 를 다시 실행하세요{retry_note}")
+# 다시 실행했을 때 일어나는 일 - encrypt 는 바꿀 것이 없으면 지우기만 다시 하지만, rotate-keys 는 값을 모두 새로 암호화하고 백업도 하나 더 만든다
+RETRY_NOTES={
+    "encrypt --yes": " (바꿀 것이 없으면 지우기만 다시 합니다)",
+    "rotate-keys --yes": " (옛 키 암호문을 모두 다시 새로 암호화하고 백업도 하나 더 만듭니다)",
+}
 MESSAGE_VERIFY_FAILED=("{done} 끝났지만 DB 파일 검사(integrity_check)에 실패했습니다 :{error}\n"
                        "다음: 파일을 더 쓰지 말고 백업({backup})으로 restore --from 할지 확인하세요")
 
@@ -84,7 +89,7 @@ def scrub_after_commit(db_path:Path, done:str, command:str, backup:Path | None) 
     try:
         migrate_scrub(db_path)
     except Exception as e:
-        print(MESSAGE_SCRUB_FAILED.format(done=done, error=describe_error(e), command=command))
+        print(MESSAGE_SCRUB_FAILED.format(done=done, error=describe_error(e), command=command, retry_note=RETRY_NOTES.get(command, "")))
         return 1
 
     try:
@@ -394,7 +399,7 @@ def main(argv:list[str] | None=None) -> int:
         return command_restore(db_path, backup_dir, Path(args.source).resolve(), args.yes)
 
     except Exception as e:
-        print(f"실패 - 다음 단계로 넘어가지 않았습니다. 쓰는 중이었다면 값 변경(암호화·주인 지정)은 되돌려졌습니다. 열·인덱스 더하기는 이미 반영되었을 수 있고 다시 실행해도 안전합니다. 만든 백업은 그대로 있습니다 :{describe_error(e)}")
+        print(f"실패 - 다음 단계로 넘어가지 않았습니다. 쓰는 중이었다면 값 변경(암호화·키 회전·주인 지정)은 되돌려졌습니다. 열·인덱스 더하기는 이미 반영되었을 수 있고 다시 실행해도 안전합니다. 만든 백업은 그대로 있습니다 :{describe_error(e)}")
         return 1
 
 

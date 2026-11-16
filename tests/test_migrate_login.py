@@ -590,6 +590,52 @@ def test_migrate_encrypt_scrub_failure_does_not_claim_rollback(tmp_path, monkeyp
     assert "옛 값 지우기" in capsys.readouterr().out
 
 
+def test_migrate_rotate_scrub_failure_has_its_own_hint(tmp_path, monkeypatch, capsys):
+    key_a=Fernet.generate_key().decode()
+    key_b=Fernet.generate_key().decode()
+    monkeypatch.setattr(settings, "secret_key", key_a)
+    monkeypatch.setattr(settings, "secret_keys_old", None)
+    script=load_script("migrate_login")
+    monkeypatch.setattr(script, "port_in_use", lambda port=8081: False)
+    db_path=make_old_db(tmp_path / "wizard.db")
+    engine=sync_engine(db_path)
+    with engine.begin() as conn:
+        migrate_bootstrap(conn)
+        migrate_encrypt_plaintext(conn, dry_run=False)
+    engine.dispose()
+    monkeypatch.setattr(settings, "secret_key", key_b)
+    monkeypatch.setattr(settings, "secret_keys_old", key_a)
+    args=["--db", str(db_path), "--backup-dir", str(tmp_path / "backups")]
+
+    def failing_scrub(path):
+        raise sqlite3.OperationalError("disk I/O error")
+
+    monkeypatch.setattr(script, "migrate_scrub", failing_scrub)
+    code=script.main(["rotate-keys", "--yes"] + args)
+
+    out=capsys.readouterr().out
+    assert code == 1
+    assert "키 회전은 끝났지만 옛 값 지우기(VACUUM)에 실패했습니다" in out
+    assert "rotate-keys --yes" in out
+    # 바꿀 것이 없으면 지우기만 다시 한다는 말은 rotate-keys 에는 맞지 않는다 (다시 실행하면 모두 새로 암호화하고 백업을 더 만든다)
+    assert "바꿀 것이 없으면" not in out
+    assert "백업" in out and "새로 암호화" in out
+
+
+def test_migrate_failure_message_names_all_value_changes(tmp_path, monkeypatch, capsys):
+    script=load_script("migrate_login")
+    db_path=make_old_db(tmp_path / "wizard.db")
+
+    def exploding_status(path):
+        raise RuntimeError("status exploded")
+
+    monkeypatch.setattr(script, "command_status", exploding_status)
+    assert script.main(["status", "--db", str(db_path)]) == 1
+
+    out=capsys.readouterr().out
+    assert "암호화·키 회전·주인 지정" in out and "되돌려졌" in out
+
+
 def test_migrate_encrypt_refuses_unreadable_values(tmp_path, monkeypatch, capsys):
     script=load_script("migrate_login")
     monkeypatch.setattr(script, "port_in_use", lambda port=8081: False)

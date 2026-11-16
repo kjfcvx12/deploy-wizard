@@ -4,6 +4,9 @@ import httpx
 
 from features.mcp.guard import guard_text_clip
 
+# 로그인이 켜진 서버가 토큰을 거절했을 때의 안내 - 토큰 원문은 싣지 않는다
+MESSAGE_TOKEN_REQUIRED="배포 마법사 로그인 토큰이 없거나 만료되었습니다. python scripts/auth_token.py create --email <주소> --name mcp 로 만들어 WIZARD_API_TOKEN 에 넣으세요"
+
 
 # 서버가 돌려준 실패를 한국어 한 줄로 담는 예외
 class Wizard_Error(Exception):
@@ -49,6 +52,8 @@ class Wizard_Client:
             detail=response.json().get("detail")
         except (ValueError, AttributeError):
             detail=None
+        if response.status_code == 401:
+            return MESSAGE_TOKEN_REQUIRED
         if response.status_code == 422:
             return "입력 형식이 맞지 않습니다. 값을 확인해 주세요."
         if isinstance(detail, str) and detail:

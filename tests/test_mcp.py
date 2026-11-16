@@ -99,6 +99,40 @@ async def test_client_error_messages_korean():
 
 
 @pytest.mark.asyncio
+async def test_mcp_client_401_message():
+    secret="dwp_secret-token-value-123"
+    seen=[]
+
+    def unauthorized(request:httpx.Request) -> httpx.Response:
+        seen.append(request.headers.get("authorization"))
+        return httpx.Response(401, json={"detail":"로그인이 필요합니다"}, headers={"WWW-Authenticate":"Bearer"})
+
+    client=make_client(unauthorized, token=secret)
+    try:
+        with pytest.raises(Wizard_Error) as exc_info:
+            await client.client_request("GET", "/api/deploys")
+    finally:
+        await client.aclose()
+
+    message=exc_info.value.message
+    assert exc_info.value.status_code == 401
+    assert "auth_token.py" in message and "WIZARD_API_TOKEN" in message
+    assert "--name mcp" in message
+    # 보낸 토큰 원문은 안내에 들어가지 않는다
+    assert seen == [f"Bearer {secret}"] and secret not in message
+
+    # 토큰 없이 부른 401 도 같은 안내
+    assert "auth_token.py" in await error_message(unauthorized)
+
+    # 404 는 기존대로 서버가 준 문구
+    def not_found(request:httpx.Request) -> httpx.Response:
+        return httpx.Response(404, json={"detail":"해당 id의 배포가 없습니다"})
+
+    message=await error_message(not_found)
+    assert "해당 id의 배포가 없습니다" in message and "auth_token.py" not in message
+
+
+@pytest.mark.asyncio
 async def test_client_logs_tail_pages_past_500():
     total=1200
     afters:list[int]=[]
