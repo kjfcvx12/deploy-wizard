@@ -4,7 +4,7 @@ from datetime import datetime, timedelta, timezone
 import jwt
 from fastapi import Depends, HTTPException, Request, status
 
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy.exc import IntegrityError, OperationalError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from shared.database import get_db
@@ -40,9 +40,11 @@ MESSAGE_LOGIN_REQUIRED="로그인이 필요합니다"
 MESSAGE_NOT_ALLOWED="로그인이 허용된 계정이 아닙니다"
 MESSAGE_ORIGIN="허용되지 않은 출처입니다"
 MESSAGE_PAT_MANAGE="개인 토큰으로는 개인 토큰을 관리할 수 없습니다. 로그인해서 관리해 주세요"
+MESSAGE_PAT_DELETE="개인 토큰으로는 계정을 삭제할 수 없습니다. 로그인한 앱이나 웹에서 삭제해 주세요"
 MESSAGE_PAT_NOT_FOUND="개인 토큰을 찾을 수 없습니다"
 MESSAGE_JWT_KEY_MISSING="로그인 설정이 완료되지 않았습니다 (AUTH_JWT_KEY 확인)"
 MESSAGE_DELETE_CONFIRM="계정을 삭제하려면 confirm 에 true 를 보내야 합니다"
+MESSAGE_DELETE_BUSY="지금 다른 작업이 DB를 쓰고 있습니다. 잠시 뒤 다시 시도해 주세요"
 MESSAGE_DELETE_LIVE="먼저 멈추거나 삭제해야 하는 서비스가 있습니다"
 MESSAGE_DELETE_DONE="계정을 삭제했습니다. AWS CloudFormation 스택과 GitHub 앱 설치는 직접 지워 주세요"
 MESSAGE_DELETE_ECR="남아 있는 ECR 이미지 저장소({names})도 AWS 콘솔에서 직접 지워 주세요"
@@ -365,12 +367,12 @@ class Auth_Service:
         return user.u_id
 
 
-    # 개인 토큰 관리는 로그인(액세스 토큰)으로만 - 개인 토큰으로는 403 (새어 나간 토큰이 스스로 늘어나지 않게)
+    # 로그인(액세스 토큰)으로만 - 개인 토큰으로는 403 (새어 나간 토큰이 스스로 늘어나거나 계정을 지우지 못하게). 문구는 호출한 곳이 정한다
     @staticmethod
-    def services_auth_require_access(user:Current_User) -> int:
+    def services_auth_require_access(user:Current_User, pat_message:str=MESSAGE_PAT_MANAGE) -> int:
         u_id=Auth_Service.services_auth_require_user(user)
         if user.via == "pat":
-            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=MESSAGE_PAT_MANAGE)
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=pat_message)
         return u_id
 
 
@@ -535,5 +537,8 @@ class Auth_Service:
 
         except Exception as e:
             await db.rollback()
+            # 다른 작업이 SQLite 쓰기 잠금을 쥐고 있으면 500 이 아니라 503 - 아무것도 지워지지 않았으니 다시 시도하면 된다
+            if isinstance(e, OperationalError) and "database is locked" in str(e):
+                raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=MESSAGE_DELETE_BUSY) from None
             raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                                 detail=f"계정 삭제 실패 :{mask_text(str(e))[:200]}")

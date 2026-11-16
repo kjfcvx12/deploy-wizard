@@ -29,7 +29,8 @@ from auth_helpers import make_user, auth_header
 
 MESSAGE_LIVE="먼저 멈추거나 삭제해야 하는 서비스가 있습니다"
 MESSAGE_CONFIRM="계정을 삭제하려면 confirm 에 true 를 보내야 합니다"
-MESSAGE_PAT_MANAGE="개인 토큰으로는 개인 토큰을 관리할 수 없습니다. 로그인해서 관리해 주세요"
+MESSAGE_PAT_DELETE="개인 토큰으로는 계정을 삭제할 수 없습니다. 로그인한 앱이나 웹에서 삭제해 주세요"
+MESSAGE_BUSY="지금 다른 작업이 DB를 쓰고 있습니다. 잠시 뒤 다시 시도해 주세요"
 
 # 표 이름 -> 기록 수를 세는 대상 (계정 삭제가 건드려야 하거나 건드리면 안 되는 표 전부)
 TABLES=("deploys", "deploy_logs", "deploy_issues", "deploy_releases", "deploy_env_vars", "health_checks", "incidents", "recovery_actions",
@@ -209,7 +210,7 @@ async def test_delete_me_requires_login_and_rejects_pat(client):
     response=await delete_me(client, {"Authorization": f"Bearer {pat}"})
 
     assert response.status_code == 403
-    assert response.json()["detail"] == MESSAGE_PAT_MANAGE
+    assert response.json()["detail"] == MESSAGE_PAT_DELETE
     assert await counts() == before
     assert (await user_row(login["user"]["u_id"]))[0] == "active"
     assert client.calls == []
@@ -325,21 +326,44 @@ async def test_delete_me_old_access_token_rejected_when_auth_enabled(client, mon
     assert (await client.get("/api/deploys", headers=headers)).status_code == 401
 
 
-# 남의 기록은 그대로 - 다른 사용자의 표별 기록 수가 삭제 전후 같다
+# 한 사용자의 기록 내용 - 표마다 그 사용자(u_id)·그 사용자 배포(d_id)·그 사용자 인시던트(i_id)에 딸린 행을 통째로 (삭제 전후를 견주는 데 쓴다)
+async def rows_of_user(u_id:int) -> dict:
+    deploy_ids=f"SELECT d_id FROM deploys WHERE u_id={u_id}"
+    queries={"deploys": f"SELECT * FROM deploys WHERE u_id={u_id} ORDER BY d_id",
+             "connections": f"SELECT * FROM connections WHERE u_id={u_id} ORDER BY c_id",
+             "aws_accounts": f"SELECT * FROM aws_accounts WHERE u_id={u_id} ORDER BY a_id",
+             "github_installations": f"SELECT * FROM github_installations WHERE u_id={u_id} ORDER BY g_id",
+             "notifications": f"SELECT * FROM notifications WHERE u_id={u_id} ORDER BY n_id",
+             "push_devices": f"SELECT * FROM push_devices WHERE u_id={u_id} ORDER BY p_d_id",
+             "notification_settings": f"SELECT * FROM notification_settings WHERE u_id={u_id}",
+             "incidents": f"SELECT * FROM incidents WHERE d_id IN ({deploy_ids}) ORDER BY i_id",
+             "recovery_actions": f"SELECT * FROM recovery_actions WHERE i_id IN (SELECT i_id FROM incidents WHERE d_id IN ({deploy_ids})) ORDER BY 1"}
+    for table in ("deploy_logs", "deploy_issues", "deploy_releases", "deploy_env_vars", "health_checks"):
+        queries[table]=f"SELECT * FROM {table} WHERE d_id IN ({deploy_ids}) ORDER BY 1"
+    return {table: [tuple(row) for row in await sql(query)] for table, query in queries.items()}
+
+
+# 남의 기록은 그대로 - 다른 사용자의 행이 표마다 삭제 전후 내용까지 같고, 지운 사용자의 행은 하나도 없다
 @pytest.mark.asyncio
 async def test_delete_me_leaves_other_user(client):
     other=await make_user_other()
-    await seed(other, "b")
-    baseline=await counts()
+    other_deploys=await seed(other, "b")
+    other_before=await rows_of_user(other)
+    # 시험이 빈 표를 비교하지 않도록 - 남의 표마다 행이 있다
+    assert all(rows for rows in other_before.values()), {table: len(rows) for table, rows in other_before.items()}
 
     login=await login_app(client)
-    await seed(login["user"]["u_id"], "a")
-    assert await counts() != baseline
+    u_id=login["user"]["u_id"]
+    await seed(u_id, "a")
+    mine_before=await rows_of_user(u_id)
+    assert all(rows for rows in mine_before.values())
 
     response=await delete_me(client, {"Authorization": f"Bearer {login['access_token']}"})
 
     assert response.status_code == 200, response.text
-    assert await counts() == baseline
+    assert await rows_of_user(other) == other_before
+    assert [row[0] for row in (await rows_of_user(other))["deploys"]] == other_deploys
+    assert all(rows == [] for rows in (await rows_of_user(u_id)).values())
     async with AsyncSessionLocal() as db:
         assert (await Auth_Crud.crud_user_get_by_u_id(db, other)).status == "active"
     assert (await client.get("/api/deploys", headers=auth_header(other))).json() != []
@@ -536,3 +560,60 @@ async def test_delete_me_no_leftover_ecr_message_when_none(client):
     assert response.status_code == 200, response.text
     assert response.json()["leftover_ecr_repositories"] == []
     assert "ECR" not in response.json()["message"]
+
+
+# 쓰기 잠금 때문에 삭제가 막히면 500 이 아니라 503 + 다시 시도 안내 - 아무것도 지워지지 않고 사용자는 그대로 active, 토큰도 살아 있다
+@pytest.mark.asyncio
+@pytest.mark.parametrize("where", ["first_write", "later_step"])
+async def test_delete_me_database_locked_503(client, monkeypatch, where):
+    from sqlalchemy.exc import OperationalError
+    from features.notifications.services import Notification_Service
+
+    login=await login_app(client)
+    u_id=login["user"]["u_id"]
+    headers={"Authorization": f"Bearer {login['access_token']}"}
+    await seed(u_id, "a")
+    before=await counts()
+    locked=OperationalError("UPDATE users SET ...", {}, sqlite3.OperationalError("database is locked"))
+
+    if where == "first_write":
+        async def touch_locked(db, user_id, now):
+            raise locked
+
+        monkeypatch.setattr(Auth_Crud, "crud_user_touch_active", staticmethod(touch_locked))
+    else:
+        original=Notification_Service.services_notification_forget_user
+
+        async def forget_then_locked(db, user_id):
+            await original(db, user_id)
+            raise locked
+
+        monkeypatch.setattr(Notification_Service, "services_notification_forget_user", staticmethod(forget_then_locked))
+
+    response=await delete_me(client, headers)
+
+    assert response.status_code == 503, response.text
+    assert response.json()["detail"] == MESSAGE_BUSY
+    assert await counts() == before
+    assert (await user_row(u_id))[0] == "active"
+    async with async_engine.begin() as conn:
+        assert (await conn.execute(text("SELECT COUNT(*) FROM refresh_tokens WHERE u_id=:u AND revoked_at IS NULL"), {"u": u_id})).scalar() == 1
+    assert client.calls == []
+
+
+# 잠금과 상관없는 다른 DB 오류는 그대로 500
+@pytest.mark.asyncio
+async def test_delete_me_other_database_error_stays_500(client, monkeypatch):
+    from sqlalchemy.exc import OperationalError
+
+    login=await login_app(client)
+
+    async def touch_broken(db, user_id, now):
+        raise OperationalError("UPDATE users SET ...", {}, sqlite3.OperationalError("disk I/O error"))
+
+    monkeypatch.setattr(Auth_Crud, "crud_user_touch_active", staticmethod(touch_broken))
+
+    response=await delete_me(client, {"Authorization": f"Bearer {login['access_token']}"})
+
+    assert response.status_code == 500
+    assert response.json()["detail"].startswith("계정 삭제 실패 :")

@@ -179,7 +179,7 @@ class Deploy_Service:
             await Github_Service.services_github_assert_owned(db, github_installation_id, u_id)
 
         try:
-            token=await Github_Service.services_github_token_by_g_id(db, github_installation_id) if github_installation_id else None
+            token=await Github_Service.services_github_token_by_g_id(db, github_installation_id) if github_installation_id is not None else None
             return await asyncio.to_thread(Repo_Service.services_repo_remote, repo_url, token)
 
         except ValueError as e:

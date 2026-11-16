@@ -7,7 +7,7 @@ from shared.settings import settings
 
 from features.auth.scheme import (Auth_Google_Request, Auth_Refresh_Request, Auth_Token, User_Read, Current_User,
                                   Api_Token_Create, Api_Token_Read, Api_Token_Issued, Auth_Delete_Read)
-from features.auth.services import Auth_Service
+from features.auth.services import Auth_Service, MESSAGE_PAT_DELETE
 
 
 router=APIRouter(prefix='/api', tags=['Auth'])
@@ -110,6 +110,6 @@ async def router_auth_body_read(request:Request):
 # DELETE 계정 삭제 - 본문 {"confirm": true} 필수. 기록만 지우고 AWS·GitHub 는 건드리지 않는다. 로그인(액세스 토큰)으로만, 개인 토큰은 403
 @router.delete('/me', response_model=Auth_Delete_Read)
 async def router_auth_me_delete(request:Request, user:Current_User=Depends(Auth_Service.services_auth_login_user), db:AsyncSession=Depends(get_db)):
-    u_id=Auth_Service.services_auth_require_access(user)
+    u_id=Auth_Service.services_auth_require_access(user, MESSAGE_PAT_DELETE)
     Auth_Service.services_auth_delete_confirm(await router_auth_body_read(request))
     return await Auth_Service.services_auth_account_delete(db, u_id)
