@@ -531,3 +531,19 @@ details.env-group > summary { font-size: 14px; }
   .notif-item { min-height: 64px; }
   button.copy { min-height: 40px; padding: 5px 16px; }
 }
+
+/* 로그인 화면 - 상단 바 없이 가운데 카드 하나 */
+.login-page { min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 16px; }
+.login-card { width: 100%; max-width: 400px; margin-bottom: 0; padding: 24px; }
+.login-title { margin: 0 0 16px; font-size: 20px; line-height: 1.4; overflow-wrap: anywhere; }
+.login-card p { margin: 0 0 12px; }
+.login-gis { display: flex; justify-content: center; min-height: 44px; margin-top: 16px; max-width: 100%; }
+.login-gis[hidden] { display: none; }
+.login-wait { display: block; width: 100%; min-height: 44px; margin-top: 16px; }
+.login-actions { margin-top: 16px; }
+.login-actions button { min-height: 44px; }
+.login-card .notice { margin-top: 12px; overflow-wrap: anywhere; }
+@media (max-width: 640px) {
+  .login-card { padding: 20px 16px; }
+  .login-actions button { flex: 1 1 100%; }
+}

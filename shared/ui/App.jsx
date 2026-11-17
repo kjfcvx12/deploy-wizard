@@ -1,5 +1,6 @@
 import { Routes, Route, Link } from 'react-router-dom'
 
+import LoginPage from '@features/auth/ui/LoginPage.jsx'
 import RequireAuth from '@features/auth/ui/RequireAuth.jsx'
 import DeployListPage from '@features/deploys/ui/DeployListPage.jsx'
 import DeployDetailPage from '@features/deploys/ui/DeployDetailPage.jsx'
@@ -43,13 +44,12 @@ function Shell() {
 }
 
 // 화면은 기능 폴더가 가지고 있고, 여기서는 경로만 잇는다
-// 안내 창(/guide/...)은 따로 뜨는 작은 창이라 상단 바 없이 보여준다
+// 로그인(/login)과 안내 창(/guide/...)은 상단 바 없이 보여준다 - 안내 창은 따로 뜨는 작은 창이다
 // 로그인이 필요한 서버에서는 두 곳 모두 RequireAuth 가 로그인 화면(/login)으로 보낸다
 export default function App() {
   return (
     <Routes>
-      {/* 로그인 화면 자리 - 실제 화면은 다음 Task 에서 만든다 */}
-      <Route path="/login" element={<p className="muted">로그인 화면을 준비하고 있습니다.</p>} />
+      <Route path="/login" element={<LoginPage />} />
       <Route path="/guide/:kind" element={<RequireAuth><ConnectGuidePage /></RequireAuth>} />
       <Route path="*" element={<RequireAuth><Shell /></RequireAuth>} />
     </Routes>
