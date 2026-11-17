@@ -1,4 +1,10 @@
-import { request, deployApi, envApi, adviceApi, accountApi } from '../api'
+import * as SecureStore from 'expo-secure-store'
+import { Platform } from 'react-native'
+import {
+  request, deployApi, envApi, adviceApi, accountApi, authApi,
+  AUTH_NO_RETRY_PATHS, onUnauthorized, resetUnauthorizedForTest,
+} from '../api'
+import { getAccessToken, getSessionStatus, setSession, setRefresher, markBooted, resetSessionForTest } from '../auth/session'
 
 const okResponse = (data, status = 200) => ({
   ok: status >= 200 && status < 300,
@@ -8,6 +14,9 @@ const okResponse = (data, status = 200) => ({
 
 beforeEach(() => {
   global.fetch = jest.fn()
+  resetSessionForTest()
+  resetUnauthorizedForTest()
+  SecureStore.__reset()
 })
 
 afterEach(() => {
@@ -221,5 +230,170 @@ describe('accountApi (읽기 전용)', () => {
     expect(global.fetch.mock.calls[0][0]).toBe('http://localhost:8081/api/accounts/connections')
     await accountApi.getGithubRepositories(3)
     expect(global.fetch.mock.calls[1][0]).toBe('http://localhost:8081/api/accounts/github/3/repositories')
+  })
+})
+
+describe('request: 로그인 토큰', () => {
+  const unauthorized = () => okResponse({ detail: '로그인이 필요합니다' }, 401)
+
+  test('no token no header: 끔 모드 요청은 지금과 같다 (Authorization·credentials 없음)', async () => {
+    global.fetch.mockResolvedValue(okResponse({}))
+    await request('/api/deploys', { method: 'POST', body: { a: 1 } })
+    const [, init] = global.fetch.mock.calls[0]
+    expect(init.headers).toEqual({ 'Content-Type': 'application/json' })
+    expect(init.credentials).toBeUndefined()
+    expect(init).not.toHaveProperty('auth')
+  })
+
+  test('토큰이 있으면 Bearer, 호출자가 준 헤더는 합친다', async () => {
+    await setSession({ access_token: 'A1', refresh_token: 'dwr_1' })
+    global.fetch.mockResolvedValue(okResponse({}))
+    await request('/api/deploys', { headers: { 'X-Test': '1' } })
+    expect(global.fetch.mock.calls[0][1].headers).toEqual({ 'Content-Type': 'application/json', Authorization: 'Bearer A1', 'X-Test': '1' })
+  })
+
+  test('401 refresh retry once: 갱신 뒤 새 토큰으로 한 번만 다시 보낸다', async () => {
+    await setSession({ access_token: 'A1', refresh_token: 'dwr_1' })
+    const refresher = jest.fn(async () => ({ access_token: 'A2', refresh_token: 'dwr_2' }))
+    setRefresher(refresher)
+    global.fetch.mockResolvedValueOnce(unauthorized()).mockResolvedValueOnce(okResponse({ ok: 1 }))
+    await expect(request('/api/deploys')).resolves.toEqual({ ok: 1 })
+    expect(refresher).toHaveBeenCalledTimes(1)
+    expect(global.fetch).toHaveBeenCalledTimes(2)
+    expect(global.fetch.mock.calls[1][1].headers.Authorization).toBe('Bearer A2')
+  })
+
+  test('다시 보낸 것도 401 이면 그 오류를 던지고 더 갱신하지 않는다', async () => {
+    await setSession({ access_token: 'A1', refresh_token: 'dwr_1' })
+    const refresher = jest.fn(async () => ({ access_token: 'A2', refresh_token: 'dwr_2' }))
+    setRefresher(refresher)
+    global.fetch.mockResolvedValue(unauthorized())
+    await expect(request('/api/deploys')).rejects.toMatchObject({ status: 401, message: '로그인이 필요합니다' })
+    expect(refresher).toHaveBeenCalledTimes(1)
+    expect(global.fetch).toHaveBeenCalledTimes(2)
+  })
+
+  test('갱신이 거절되면 원래 401 을 던진다', async () => {
+    await setSession({ access_token: 'A1', refresh_token: 'dwr_1' })
+    setRefresher(async () => { throw Object.assign(new Error('만료'), { status: 401 }) })
+    global.fetch.mockResolvedValue(unauthorized())
+    await expect(request('/api/deploys')).rejects.toMatchObject({ status: 401, message: '로그인이 필요합니다' })
+    expect(getSessionStatus()).toBe('signed_out')
+    expect(global.fetch).toHaveBeenCalledTimes(1)
+  })
+
+  test('동시에 401 을 받은 다섯 요청은 갱신 한 번을 같이 기다렸다가 모두 다시 간다', async () => {
+    await setSession({ access_token: 'A1', refresh_token: 'dwr_1' })
+    let release
+    const gate = new Promise((resolve) => { release = resolve })
+    const refresher = jest.fn(async () => { await gate; return { access_token: 'A2', refresh_token: 'dwr_2' } })
+    setRefresher(refresher)
+    global.fetch.mockImplementation(async (url, init) => (init.headers.Authorization === 'Bearer A2' ? okResponse({ url }) : unauthorized()))
+    const runs = [1, 2, 3, 4, 5].map((n) => request(`/api/deploys/${n}`))
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    release()
+    const results = await Promise.all(runs)
+    expect(results).toHaveLength(5)
+    expect(refresher).toHaveBeenCalledTimes(1)
+    expect(global.fetch).toHaveBeenCalledTimes(10)
+  })
+
+  test('auth paths never refresh: 네 경로는 401 이어도 갱신·재시도하지 않는다', async () => {
+    expect(AUTH_NO_RETRY_PATHS).toEqual(['/api/auth/google', '/api/auth/refresh', '/api/auth/logout', '/api/auth/config'])
+    await setSession({ access_token: 'A1', refresh_token: 'dwr_1' })
+    const refresher = jest.fn(async () => ({ access_token: 'A2' }))
+    setRefresher(refresher)
+    global.fetch.mockResolvedValue(unauthorized())
+    for (const path of AUTH_NO_RETRY_PATHS) {
+      await expect(request(`${path}?x=1`, { method: 'POST' })).rejects.toMatchObject({ status: 401 })
+    }
+    expect(refresher).not.toHaveBeenCalled()
+    expect(global.fetch).toHaveBeenCalledTimes(4)
+  })
+
+  test('오프라인에서 갱신이 실패하면 그 오류를 던지고 로그아웃하지 않는다', async () => {
+    await setSession({ access_token: 'A1', refresh_token: 'dwr_1' })
+    setRefresher(async () => { throw new Error('서버에 연결할 수 없습니다') })
+    global.fetch.mockResolvedValue(unauthorized())
+    await expect(request('/api/deploys')).rejects.toThrow('서버에 연결할 수 없습니다')
+    expect(getSessionStatus()).toBe('signed_in')
+    expect(getAccessToken()).toBe('A1')
+    await expect(SecureStore.getItemAsync('dw-refresh')).resolves.toBe('dwr_1')
+  })
+
+  test('토큰 없이 signed_out 이면 갱신하지 않고 onUnauthorized 를 5초에 한 번 부른다', async () => {
+    markBooted('signed_out')
+    const refresher = jest.fn(async () => ({ access_token: 'A2' }))
+    setRefresher(refresher)
+    const handler = jest.fn()
+    onUnauthorized(handler)
+    global.fetch.mockResolvedValue(unauthorized())
+    await expect(request('/api/deploys')).rejects.toMatchObject({ status: 401 })
+    await expect(request('/api/deploys')).rejects.toMatchObject({ status: 401 })
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(refresher).not.toHaveBeenCalled()
+    expect(handler).toHaveBeenCalledTimes(1)
+    expect(global.fetch).toHaveBeenCalledTimes(2)
+  })
+
+  test('auth:false 요청은 토큰을 붙이지 않는다', async () => {
+    await setSession({ access_token: 'A1', refresh_token: 'dwr_1' })
+    global.fetch.mockResolvedValue(okResponse({}))
+    await request('/api/auth/config', { auth: false })
+    expect(global.fetch.mock.calls[0][1].headers.Authorization).toBeUndefined()
+  })
+})
+
+describe('authApi', () => {
+  const lastCall = () => global.fetch.mock.calls[global.fetch.mock.calls.length - 1]
+  beforeEach(() => global.fetch.mockResolvedValue(okResponse({})))
+
+  test('web auth calls include credentials: 웹 번들의 /api/auth/ 호출은 쿠키를 싣고 갱신·로그아웃 본문이 없다', async () => {
+    jest.replaceProperty(Platform, 'OS', 'web')
+    await authApi.refresh('dwr_1')
+    expect(lastCall()[0]).toBe('http://localhost:8081/api/auth/refresh')
+    expect(lastCall()[1].credentials).toBe('include')
+    expect(lastCall()[1].method).toBe('POST')
+    expect(lastCall()[1].body).toBeUndefined()
+    await authApi.logout(null)
+    expect(lastCall()[0]).toBe('http://localhost:8081/api/auth/logout')
+    expect(lastCall()[1].credentials).toBe('include')
+    expect(lastCall()[1].body).toBeUndefined()
+    await authApi.loginGoogle('idt', 'web')
+    expect(lastCall()[1].credentials).toBe('include')
+    await deployApi.getAll()
+    expect(lastCall()[1].credentials).toBeUndefined()
+  })
+
+  test('native refresh sends body: 안드로이드는 본문으로 보내고 쿠키를 싣지 않는다', async () => {
+    jest.replaceProperty(Platform, 'OS', 'android')
+    await authApi.refresh('dwr_1')
+    expect(lastCall()[0]).toBe('http://localhost:8081/api/auth/refresh')
+    expect(JSON.parse(lastCall()[1].body)).toEqual({ refresh_token: 'dwr_1' })
+    expect(lastCall()[1].credentials).toBeUndefined()
+    await authApi.logout('dwr_2')
+    expect(lastCall()[0]).toBe('http://localhost:8081/api/auth/logout')
+    expect(JSON.parse(lastCall()[1].body)).toEqual({ refresh_token: 'dwr_2' })
+  })
+
+  test('loginGoogle 은 id_token 과 platform 을 보내고 토큰을 붙이지 않는다', async () => {
+    jest.replaceProperty(Platform, 'OS', 'android')
+    await setSession({ access_token: 'A1', refresh_token: 'dwr_1' })
+    await authApi.loginGoogle('idt', 'android')
+    expect(lastCall()[0]).toBe('http://localhost:8081/api/auth/google')
+    expect(lastCall()[1].method).toBe('POST')
+    expect(JSON.parse(lastCall()[1].body)).toEqual({ id_token: 'idt', platform: 'android' })
+    expect(lastCall()[1].headers.Authorization).toBeUndefined()
+  })
+
+  test('getConfig·getMe·deleteMe', async () => {
+    await authApi.getConfig()
+    expect(lastCall()[0]).toBe('http://localhost:8081/api/auth/config')
+    await authApi.getMe()
+    expect(lastCall()[0]).toBe('http://localhost:8081/api/me')
+    await authApi.deleteMe()
+    expect(lastCall()[0]).toBe('http://localhost:8081/api/me')
+    expect(lastCall()[1].method).toBe('DELETE')
+    expect(JSON.parse(lastCall()[1].body)).toEqual({ confirm: true })
   })
 })

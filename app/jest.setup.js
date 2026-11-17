@@ -17,3 +17,16 @@ jest.mock('expo-notifications', () => ({
   getLastNotificationResponse: jest.fn(() => null),
   clearLastNotificationResponse: jest.fn(),
 }))
+
+// expo-secure-store 는 네이티브 모듈이라 jest 에서는 메모리 Map 으로 바꾼다 (설치한 58.0.3 의 getItemAsync·setItemAsync·deleteItemAsync 이름 그대로). __reset 으로 비우고 __items 로 들여다본다
+jest.mock('expo-secure-store', () => {
+  const items = new Map()
+  return {
+    getItemAsync: jest.fn(async (key) => (items.has(key) ? items.get(key) : null)),
+    setItemAsync: jest.fn(async (key, value) => { items.set(key, String(value)) }),
+    deleteItemAsync: jest.fn(async (key) => { items.delete(key) }),
+    isAvailableAsync: jest.fn(async () => true),
+    __reset: () => items.clear(),
+    __items: () => items,
+  }
+})
