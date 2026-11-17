@@ -113,6 +113,63 @@ test('two tabs refresh once', async () => {
   assert.equal(tabB.getSessionStatus(), 'signed_in')
 })
 
+test('login in other tab during pending refresh is not logged out', async () => {
+  const locks = fakeLocks()
+  const bus = fakeBus()
+  const tabA = createSession({ tabSync: createTabSync({ locks, channel: bus.make() }) })
+  const tabB = createSession({ tabSync: createTabSync({ locks, channel: bus.make() }) })
+  let reject
+  tabA.setRefresher(() => new Promise((_, no) => { reject = no }))
+  const pending = tabA.refreshSession()
+  await wait(5)
+  tabB.setSession({ access_token: 'B1', user: { u_id: 1 }, expires_in: 900 })
+  assert.equal(tabA.getAccessToken(), 'B1')
+  bus.sent.length = 0
+  reject(failure(401))
+  assert.equal(await pending, true)
+  assert.equal(tabB.getSessionStatus(), 'signed_in')
+  assert.equal(tabB.getAccessToken(), 'B1')
+  assert.equal(tabA.getSessionStatus(), 'signed_in')
+  assert.equal(bus.sent.filter((m) => m.type === 'signed_out').length, 0)
+})
+
+test('unknown status 401 refresh failing quietly', async () => {
+  const locks = fakeLocks()
+  const bus = fakeBus()
+  const tabA = createSession({ tabSync: createTabSync({ locks, channel: bus.make() }) })
+  const tabB = createSession({ tabSync: createTabSync({ locks, channel: bus.make() }) })
+  const seen = []
+  tabA.subscribeSession((state) => seen.push(state))
+  tabA.setRefresher(async () => { throw failure(401) })
+  assert.equal(tabA.getSessionStatus(), 'unknown')
+  assert.equal(await tabA.refreshSession(), false)
+  assert.equal(tabA.getSessionStatus(), 'signed_out')
+  assert.deepEqual(seen, [{ status: 'signed_out', user: null }])
+  assert.equal(bus.sent.length, 0)
+  assert.equal(tabB.getSessionStatus(), 'unknown')
+  // 이미 signed_out 이면 다시 알리지 않는다
+  assert.equal(await tabA.refreshSession(), false)
+  assert.equal(seen.length, 1)
+  assert.equal(bus.sent.length, 0)
+})
+
+test('signed_in 401 refresh failing still expires', async () => {
+  const locks = fakeLocks()
+  const bus = fakeBus()
+  const tabA = createSession({ tabSync: createTabSync({ locks, channel: bus.make() }) })
+  const tabB = createSession({ tabSync: createTabSync({ locks, channel: bus.make() }) })
+  tabA.setSession({ access_token: 'A1', user: { u_id: 1 }, expires_in: 900 })
+  const seen = []
+  tabB.subscribeSession((state) => seen.push(state))
+  bus.sent.length = 0
+  tabA.setRefresher(async () => { throw failure(401) })
+  assert.equal(await tabA.refreshSession(), false)
+  assert.equal(tabA.getSessionStatus(), 'signed_out')
+  assert.deepEqual(bus.sent, [{ type: 'signed_out', reason: 'expired' }])
+  assert.equal(tabB.getSessionStatus(), 'signed_out')
+  assert.equal(seen.at(-1).reason, 'expired')
+})
+
 test('signed_out broadcast', () => {
   const locks = fakeLocks()
   const bus = fakeBus()

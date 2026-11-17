@@ -1,4 +1,4 @@
-import { getAccessToken, refreshSession } from './session.js'
+import { getAccessToken, getSessionStatus, refreshSession } from './session.js'
 
 export const NETWORK_ERROR_TEXT = '서버에 연결할 수 없습니다. 서버가 켜져 있는지 확인해 주세요'
 
@@ -58,6 +58,8 @@ export async function request(path, options = {}) {
 
   // 원래 401 오류 - 갱신이 안 되면 이것을 던진다
   const original = await read(response).then(() => null, (e) => e)
+  // 토큰 없이 나갔고 이미 로그아웃 상태면 갱신하지 않는다 (첫 확인 중인 unknown 은 쿠키로 갱신해 본다)
+  if (!sentToken && getSessionStatus() === 'signed_out') throw original
   // 이 요청이 나간 뒤 다른 요청이 이미 갱신했으면 다시 갱신하지 않고 새 토큰으로 보낸다
   const current = getAccessToken()
   const refreshed = current && current !== sentToken ? true : await refreshSession()

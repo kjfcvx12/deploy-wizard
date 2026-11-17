@@ -100,6 +100,29 @@ test('request: no token 401 without refresher throws original', async () => {
   assert.equal(calls.length, 1)
 })
 
+test('signed_out user: 401 does not call refresher', async () => {
+  session.markBooted('signed_out')
+  let refreshes = 0
+  session.setRefresher(async () => { refreshes += 1; return { access_token: 'A2', user: {}, expires_in: 900 } })
+  const seen = []
+  session.subscribeSession((state) => seen.push(state))
+  reply = answer(401, { detail: '로그인이 필요합니다' })
+  await assert.rejects(request('/api/deploys'), (e) => e.status === 401 && e.message === '로그인이 필요합니다')
+  assert.equal(refreshes, 0)
+  assert.equal(calls.length, 1)
+  assert.equal(seen.length, 0)
+  assert.equal(session.getSessionStatus(), 'signed_out')
+})
+
+test('unknown status 401 still tries cookie refresh', async () => {
+  let refreshes = 0
+  session.setRefresher(async () => { refreshes += 1; return { access_token: 'A2', user: { u_id: 1 }, expires_in: 900 } })
+  replies(answer(401, { detail: '만료' }), answer(200, { v: 2 }))
+  assert.deepEqual(await request('/api/deploys'), { v: 2 })
+  assert.equal(refreshes, 1)
+  assert.equal(calls[1].options.headers.Authorization, 'Bearer A2')
+})
+
 test('request: bearer attached and headers merged', async () => {
   session.setSession({ access_token: 'A1', user: { u_id: 1 }, expires_in: 900 })
   await request('/api/deploys', { method: 'POST', body: { a: 1 }, headers: { 'X-Test': 'y' } })

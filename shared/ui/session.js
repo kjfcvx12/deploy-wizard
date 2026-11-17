@@ -76,15 +76,25 @@ export function createSession({ tabSync = defaultTabSync } = {}) {
   const setRefresher = (fn) => { refresher = typeof fn === 'function' ? fn : null }
 
   // 잠금 안에서 실제로 갱신한다 - 기다리는 동안 다른 탭이 세션을 바꿨으면 네트워크 없이 그 결과를 쓴다
-  const refreshLocked = async (startedVersion) => {
+  const refreshLocked = async (startedVersion, startedStatus) => {
     if (version !== startedVersion) return status === 'signed_in'
     if (!refresher) return false
+    // 갱신 요청 중에 다른 탭(또는 이 탭의 로그인)이 새 세션을 만들었는지 보려고 바로 앞에서 적어 둔다
+    const callVersion = version
     let token
     try {
       token = await refresher()
     } catch (e) {
       if (REFRESH_DEAD_STATUSES.includes(e?.status)) {
-        clearSession('expired')
+        // 요청 중에 세션이 바뀌었으면 이 거절은 옛 쿠키 기준이다 - 새 세션을 지우지 않는다
+        if (version !== callVersion) return status === 'signed_in'
+        if (startedStatus === 'signed_in') {
+          clearSession('expired')
+        } else if (status !== 'signed_out') {
+          // 로그인한 적 없는(또는 첫 확인 중인) 탭 - 만료 알림·다른 탭 방송 없이 조용히 로그아웃 상태로
+          wipe()
+          notify()
+        }
         return false
       }
       throw e
@@ -98,7 +108,8 @@ export function createSession({ tabSync = defaultTabSync } = {}) {
     if (inflight) return inflight
     if (!refresher) return Promise.resolve(false)
     const startedVersion = version
-    inflight = tabSync.runExclusive(REFRESH_LOCK, () => refreshLocked(startedVersion))
+    const startedStatus = status
+    inflight = tabSync.runExclusive(REFRESH_LOCK, () => refreshLocked(startedVersion, startedStatus))
       .finally(() => { inflight = null })
     return inflight
   }
