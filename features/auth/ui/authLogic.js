@@ -88,8 +88,9 @@ export async function runBoot({ getConfig, refresh, getStatus, markBooted, hasHi
     markBooted('signed_out')
     return { error: false }
   }
+  let refreshed
   try {
-    await refresh()
+    refreshed = await refresh()
   } catch (e) {
     if (config.auth_required) return { error: true }
     if (!live()) return { error: false }
@@ -99,10 +100,15 @@ export async function runBoot({ getConfig, refresh, getStatus, markBooted, hasHi
     return { error: false }
   }
   if (!live()) return { error: false }
+  // 끈 서버: 갱신이 확실한 거절(401·403)을 삼키고 false 로 끝났으면 힌트도 지운다
+  if (!config.auth_required && refreshed === false) clearHint()
   // 갱신이 성공했거나 서버가 쿠키를 거절한 확실한 결과일 때만 첫 확인을 끝낸다
   markBooted(getStatus())
   return { error: false }
 }
+
+// 설정 다시 읽기가 실패했을 때 오류 표시를 켤지 - 가장 새 읽기이고 아직 아는 설정이 없을 때만 (아니면 영영 불러오는 중에 머문다)
+export const reloadFailureFlagsError = ({ config, latest }) => latest === true && !config
 
 const DELETE_DONE_TEXT = '계정을 삭제했습니다'
 const ME_PATH = '/me'

@@ -16,6 +16,8 @@ export default function LoginPage() {
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   const [gisError, setGisError] = useState('')
+  // 스크립트를 못 불러왔을 때 [다시 시도] 가 올린다 - 효과를 다시 돌려 새로 불러온다
+  const [gisAttempt, setGisAttempt] = useState(0)
   const buttonBox = useRef(null)
   const latest = useRef({})
   const handler = useRef(null)
@@ -51,7 +53,7 @@ export default function LoginPage() {
       })
       .catch((e) => { if (!cancelled) setGisError(e.message) })
     return () => { cancelled = true }
-  }, [view.kind, clientId])
+  }, [view.kind, clientId, gisAttempt])
 
   return (
     <main className="login-page">
@@ -80,7 +82,14 @@ export default function LoginPage() {
                 <div className="login-gis" ref={buttonBox} hidden={busy} />
                 {busy && <button className="login-wait" disabled>로그인하는 중…</button>}
                 {error && <div className="notice err" role="alert">{error}</div>}
-                {gisError && <div className="notice err" role="alert">{gisError}</div>}
+                {gisError && (
+                  <>
+                    <div className="notice err" role="alert">{gisError}</div>
+                    <div className="row login-actions">
+                      <button onClick={() => setGisAttempt((n) => n + 1)}>다시 시도</button>
+                    </div>
+                  </>
+                )}
               </>
             )}
 

@@ -2,7 +2,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import './useAlias.mjs'
 
-const { runBoot, normalizeConfig, routeDecision } = await import('../../features/auth/ui/authLogic.js')
+const { runBoot, normalizeConfig, routeDecision, reloadFailureFlagsError } = await import('../../features/auth/ui/authLogic.js')
 
 // 시작 확인용 가짜 - 호출 기록과 상태를 들고 있다
 const bootHarness = ({ config, configError, refreshError, startStatus = 'unknown', hint = true, refreshStatus } = {}) => {
@@ -51,6 +51,35 @@ test('runBoot: off mode, refresh 503 or network error ends signed_out, hint kept
     assert.deepEqual(log.booted, ['signed_out'], String(status))
     assert.equal(log.cleared, 0, String(status))
   }
+})
+
+test('runBoot: off mode, refresh swallowed a definitive refusal (returns false) clears the hint', async () => {
+  const { deps, log } = bootHarness({ config: { auth_required: false }, refreshStatus: 'signed_out' })
+  const result = await runBoot(deps)
+  assert.deepEqual(result, { error: false })
+  assert.equal(log.refresh, 1)
+  assert.equal(log.cleared, 1)
+  assert.deepEqual(log.booted, ['signed_out'])
+})
+
+test('runBoot: off mode, refresh success keeps the hint', async () => {
+  const { deps, log } = bootHarness({ config: { auth_required: false }, refreshStatus: 'signed_in' })
+  await runBoot(deps)
+  assert.equal(log.cleared, 0)
+  assert.deepEqual(log.booted, ['signed_in'])
+})
+
+test('runBoot: auth required, refresh returning false does not touch the hint', async () => {
+  const { deps, log } = bootHarness({ config: { auth_required: true } })
+  await runBoot(deps)
+  assert.equal(log.cleared, 0)
+})
+
+test('reloadFailureFlagsError: only a latest, failed reload with no config known flags the error', () => {
+  assert.equal(reloadFailureFlagsError({ config: null, latest: true }), true)
+  assert.equal(reloadFailureFlagsError({ config: undefined, latest: true }), true)
+  assert.equal(reloadFailureFlagsError({ config: { auth_required: false }, latest: true }), false)
+  assert.equal(reloadFailureFlagsError({ config: null, latest: false }), false)
 })
 
 test('runBoot: off mode without the hint does not refresh', async () => {

@@ -48,17 +48,37 @@ export function loadGoogleIdentity(doc = document, timeoutMs = 10000) {
   return promise
 }
 
+// 이 페이지에서 이미 initialize 한 Google 로그인 객체별 상태 - 같은 클라이언트 ID 로 다시 initialize 하면 경고가 나서 한 번만 한다
+const initialized = new WeakMap()
+
+// 어두운 화면이면 검은 버튼, 아니면 흰 버튼 (matchMedia 가 없으면 흰 버튼)
+export function gisButtonTheme(matchMedia = globalThis.matchMedia) {
+  try {
+    return typeof matchMedia === 'function' && matchMedia.call(globalThis, '(prefers-color-scheme: dark)')?.matches ? 'filled_black' : 'outline'
+  } catch {
+    return 'outline'
+  }
+}
+
 // Google 로그인 버튼을 그린다 - 콜백의 credential(id_token)만 onCredential 에 넘기고, One Tap 은 띄우지 않는다
 export function renderGoogleButton(gisId, element, { client_id, onCredential }) {
-  gisId.initialize({
-    client_id,
-    auto_select: false,
-    callback: (response) => {
-      const credential = response?.credential
-      if (typeof credential === 'string' && credential) onCredential(credential)
-    },
-  })
+  const state = initialized.get(gisId)
+  if (state && state.clientId === client_id) {
+    // 콜백은 처음 initialize 때 정해지므로, 가장 새 처리기를 가리키게만 바꾼다
+    state.onCredential = onCredential
+  } else {
+    const next = { clientId: client_id, onCredential }
+    initialized.set(gisId, next)
+    gisId.initialize({
+      client_id,
+      auto_select: false,
+      callback: (response) => {
+        const credential = response?.credential
+        if (typeof credential === 'string' && credential) next.onCredential(credential)
+      },
+    })
+  }
   // 다시 그려도 버튼이 겹치지 않게 비운다
   element.replaceChildren?.()
-  gisId.renderButton(element, { type: 'standard', theme: 'outline', size: 'large', text: 'signin_with', locale: 'ko' })
+  gisId.renderButton(element, { type: 'standard', theme: gisButtonTheme(), size: 'large', text: 'signin_with', locale: 'ko' })
 }

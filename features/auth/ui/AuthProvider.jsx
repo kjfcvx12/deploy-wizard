@@ -5,7 +5,7 @@ import {
 } from '@shared/ui/session.js'
 import { onUnauthorized } from '@shared/ui/api.js'
 import { authApi } from './api.js'
-import { CONFIG_OFF, normalizeConfig, runBoot, runSignOut } from './authLogic.js'
+import { CONFIG_OFF, normalizeConfig, reloadFailureFlagsError, runBoot, runSignOut } from './authLogic.js'
 import { clearUserScopedStorage, forgetSessionHint, hadSessionHint, rememberSessionHint } from './userData.js'
 
 // 갱신 호출을 세션에 한 번 등록한다 (화면보다 먼저 - 401 재시도가 이것을 쓴다)
@@ -25,7 +25,14 @@ async function loadConfig() {
 
 // 로그인 상태를 앱 전체에 알린다 - 시작할 때 설정을 읽고 필요하면 조용히 세션을 되살린다
 export function AuthProvider({ children }) {
-  const [config, setConfig] = useState(null)
+  const [config, setConfigState] = useState(null)
+  // 지금 아는 설정 - 다시 읽기가 실패했을 때 화면에 설정이 있는지 본다
+  const configRef = useRef(null)
+  // 설정을 상태와 ref 에 함께 반영한다
+  const setConfig = useCallback((next) => {
+    configRef.current = next
+    setConfigState(next)
+  }, [])
   // 설정을 못 읽었거나 시작 갱신이 연결 문제로 끝나 로그인 여부를 정하지 못한 상태
   const [configError, setConfigError] = useState(false)
   const [status, setStatus] = useState(getSessionStatus())
@@ -56,7 +63,7 @@ export function AuthProvider({ children }) {
       onConfig: (loaded) => { if (configAt === configSeq.current) setConfig(loaded) },
     })
     if (result.error && live()) setConfigError(true)
-  }, [])
+  }, [setConfig])
 
   // 설정을 다시 읽는다 (서버가 도중에 켜졌거나 꺼졌을 수 있다) - 실패하면 지금 설정을 둔다
   const reloadConfig = useCallback(async () => {
@@ -66,9 +73,10 @@ export function AuthProvider({ children }) {
       const loaded = await loadConfig()
       if (configAt === configSeq.current) setConfig(loaded)
     } catch {
-      // 연결이 안 되면 지금 알고 있는 설정으로 계속한다
+      // 연결이 안 되면 지금 알고 있는 설정으로 계속한다 - 아직 아는 설정이 없으면(시작의 읽기를 이 읽기가 밀어냈다) 오류로 보여 다시 시도할 수 있게 한다
+      if (reloadFailureFlagsError({ config: configRef.current, latest: configAt === configSeq.current })) setConfigError(true)
     }
-  }, [])
+  }, [setConfig])
 
   useEffect(() => {
     const unsubscribe = subscribeSession((state) => {

@@ -537,7 +537,7 @@ details.env-group > summary { font-size: 14px; }
 .login-card { width: 100%; max-width: 400px; margin-bottom: 0; padding: 24px; }
 .login-title { margin: 0 0 16px; font-size: 20px; line-height: 1.4; overflow-wrap: anywhere; }
 .login-card p { margin: 0 0 12px; }
-.login-gis { display: flex; justify-content: center; min-height: 44px; margin-top: 16px; max-width: 100%; }
+.login-gis { display: flex; justify-content: center; min-height: 44px; margin-top: 16px; max-width: 100%; min-width: 0; overflow: hidden; }
 .login-gis[hidden] { display: none; }
 .login-wait { display: block; width: 100%; min-height: 44px; margin-top: 16px; }
 .login-actions { margin-top: 16px; }
