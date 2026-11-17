@@ -13,7 +13,7 @@ Base URL: `http://localhost:8081` · 전부 JSON · 인증은 `AUTH_ENABLED`에 
 - **`AUTH_ENABLED=false` (기본)**: 지금처럼 토큰 없이 모든 API 가 동작한다(소유권 필터 없음). 웹·앱·MCP stdio 서버가 로그인 화면 전까지 그대로 쓴다. 보내온 `Authorization` 헤더는 무시한다 — 단 `/api/me`·`/api/auth/tokens*`는 꺼진 모드에서도 로그인 사용자가 있어야 한다.
 - **`AUTH_ENABLED=true`**: 아래 공개 경로를 뺀 모든 `/api/*`에 `Authorization: Bearer <토큰>`이 필요하다. 토큰은 액세스 JWT(`POST /api/auth/google`·`/refresh`가 준 것) 또는 개인 토큰(`dwp_…`, MCP 용). 사용자가 없거나 `active`가 아니면 401. 개인 토큰은 사용자의 이메일이 `AUTH_ALLOWED_EMAILS`에 아직 있어야 한다.
 - `SECRET_KEY`·`BLIND_INDEX_KEY`는 **어느 모드에서나** `.env`에 있어야 한다(암호화 열·블라인드 인덱스를 늘 쓴다). 없으면 서버가 시작하지 않는다(`서버를 시작하려면 .env 에 … 가 필요합니다` + 생성 명령). 켤 때는 `AUTH_JWT_KEY`도 있어야 한다(`로그인을 켜려면 .env 에 AUTH_JWT_KEY 가 필요합니다`).
-- **공개 경로** (`features/auth/services.py`의 `PUBLIC_PATHS`): `/api/health`, `/api/watches/webhook`(서명 검증), `/api/accounts/github/callback`(서명된 `state`로 보호, 아래 Accounts), `/api/accounts/aws/template`(사용자 정보 없는 정적 파일), `/api/auth/google`, `/api/auth/refresh`, `/api/auth/logout`. 그 밖의 경로는 `tests/test_auth_current_user.py`가 모든 라우트를 훑어 인증 의존성이 걸려 있는지 확인한다 — 새 라우트도 빠지면 시험이 실패한다.
+- **공개 경로** (`features/auth/services.py`의 `PUBLIC_PATHS`): `/api/health`, `/api/watches/webhook`(서명 검증), `/api/accounts/github/callback`(서명된 `state`로 보호, 아래 Accounts), `/api/accounts/aws/template`(사용자 정보 없는 정적 파일), `/api/auth/google`, `/api/auth/refresh`, `/api/auth/logout`, `/api/auth/config`(로그인 설정, 비밀 없음). 그 밖의 경로는 `tests/test_auth_current_user.py`가 모든 라우트를 훑어 인증 의존성이 걸려 있는지 확인한다 — 새 라우트도 빠지면 시험이 실패한다.
 - 401 응답에는 언제나 `WWW-Authenticate: Bearer` 헤더가 붙고 `detail`은 `로그인이 필요합니다`. 남의 자원은 403 이 아니라 **404**(존재를 숨긴다).
 
 ### 소유권 (로그인 계획 Task 5)
@@ -44,6 +44,7 @@ Google `id_token`으로 로그인해 액세스 토큰(JWT, 900초)과 리프레�
 
 | Method | Endpoint | 설명 | 성공 |
 |--------|----------|------|------|
+| GET | `/api/auth/config` | 공개(인증·DB 없음, 켠 모드에서도 `Authorization` 불필요). 클라이언트가 로그인이 필요한지·가능한지 알아보는 값. 비밀(`AUTH_JWT_KEY`·`SECRET_KEY`·`BLIND_INDEX_KEY`·허용 이메일)은 싣지 않는다 | 200 `Auth_Config_Read` |
 | POST | `/api/auth/google` | 본문 `{id_token, platform}`. Google 서명·`aud`(그 플랫폼의 클라이언트 ID)·`iss`·`exp`·`email_verified` 검증 → 사용자를 찾거나(`google_sub`) 만들고 새 계열로 토큰 발급. 있는 사용자는 이메일·이름·사진을 갱신 | 200 `Auth_Token` |
 | POST | `/api/auth/refresh` | 본문 `{refresh_token}`(앱) 또는 쿠키 `dw_refresh`(웹, 본문 생략·`null`). 쓴 토큰은 폐기하고 같은 계열의 새 토큰 발급. **이미 폐기된 토큰이 다시 오면 그 계열 전체를 폐기하고 401.** 같은 토큰으로 동시에 두 번 오면 하나만 200 | 200 `Auth_Token` |
 | POST | `/api/auth/logout` | 그 토큰의 계열 폐기 + 쿠키 삭제. 토큰이 없거나 몰라도 200 | 200 `{"message": "로그아웃했습니다"}` |
@@ -67,6 +68,12 @@ Google `id_token`으로 로그인해 액세스 토큰(JWT, 900초)과 리프레�
 - **사용자 행은 남기고 개인 정보를 지운다**: `status="deleted"`, `name`·`picture_url` 은 `null`, `google_sub`·`email` 은 상수 `"deleted"`(암호화 저장), 두 블라인드 인덱스는 `blind_index("deleted", u_id)` 로 바꾼다. 같은 Google 계정으로 다시 로그인하면 **새 사용자**(새 `u_id`, 이전 기록 없음)가 된다.
 - 리프레시 토큰·개인 토큰은 모두 폐기된다. 이미 받은 액세스 토큰은 만료 전이어도 다음 요청부터 401 이다 (`status != active`).
 - 응답: `{"message": "계정을 삭제했습니다. AWS CloudFormation 스택과 GitHub 앱 설치는 직접 지워 주세요. 남아 있는 ECR 이미지 저장소(a, b)도 AWS 콘솔에서 직접 지워 주세요", "deleted": {"deploys": n, "accounts": n, "notifications": n}, "leftover_ecr_repositories": ["a", "b"]}` (`accounts` 는 연결 블록 + AWS 계정 + GitHub 설치 기록 수, `notifications` 는 알림 + 기기 + 설정 줄 수. 남는 저장소가 없으면 목록은 `[]` 이고 `message` 는 앞 문장만).
+
+### `Auth_Config_Read`
+```json
+{ "auth_required": true, "login_available": true, "platforms": ["android", "web"], "google_client_id_web": "123-abc.apps.googleusercontent.com", "pat_default_days": 30, "pat_max_days": 90 }
+```
+`auth_required` = `AUTH_ENABLED`. `platforms` = `LOGIN_PLATFORMS` 중 받을 Google 클라이언트 ID 가 하나라도 설정된 것(정렬). `login_available` = `platforms`가 비어 있지 않고 `AUTH_JWT_KEY`가 있음. `google_client_id_web` = `GOOGLE_CLIENT_ID_WEB`(앞뒤 공백 제거, 없으면 `null`) — 클라이언트 ID 는 공개 값이다. `pat_default_days`·`pat_max_days` = `AUTH_PAT_DEFAULT_DAYS`·`AUTH_PAT_MAX_DAYS`.
 
 ### `Auth_Token`
 ```json

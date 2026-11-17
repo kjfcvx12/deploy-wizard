@@ -5,7 +5,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from shared.database import get_db
 from shared.settings import settings
 
-from features.auth.scheme import (Auth_Google_Request, Auth_Refresh_Request, Auth_Token, User_Read, Current_User,
+from features.auth.scheme import (Auth_Config_Read, Auth_Google_Request, Auth_Refresh_Request, Auth_Token, User_Read, Current_User,
                                   Api_Token_Create, Api_Token_Read, Api_Token_Issued, Auth_Delete_Read)
 from features.auth.services import Auth_Service, MESSAGE_PAT_DELETE
 
@@ -34,6 +34,12 @@ def router_auth_refresh_token_pick(request:Request, payload:Auth_Refresh_Request
 
     Auth_Service.services_auth_origin_check(request.headers.get("origin"))
     return cookie, True
+
+
+# GET 로그인 설정 - 공개 (인증·DB 없음). 클라이언트가 로그인 화면을 띄울지, 어느 플랫폼으로 로그인할 수 있는지 안다
+@router.get('/auth/config', response_model=Auth_Config_Read)
+async def router_auth_config():
+    return Auth_Service.services_auth_config()
 
 
 # POST Google 로그인 - 웹은 리프레시를 쿠키로 (Origin 확인 필수), 앱은 본문으로

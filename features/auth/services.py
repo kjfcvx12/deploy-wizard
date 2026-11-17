@@ -16,7 +16,7 @@ from features.auth import google
 from features.auth.google import Google_Auth_Error
 from features.auth.crud import Auth_Crud
 from features.auth.models import User
-from features.auth.scheme import LOGIN_PLATFORMS, Auth_Token, User_Read, Current_User, Api_Token_Create, Api_Token_Read, Api_Token_Issued
+from features.auth.scheme import LOGIN_PLATFORMS, Auth_Config_Read, Auth_Token, User_Read, Current_User, Api_Token_Create, Api_Token_Read, Api_Token_Issued
 
 # 로그인 (로그인 계획 Task 3) - Google id_token 으로 사용자를 찾거나 만들고, 액세스 JWT + 회전하는 리프레시 토큰을 준다
 # 토큰 원문·id_token·이메일은 로그·오류 문구에 싣지 않는다. 리프레시 토큰은 SHA-256 hex 만 저장한다
@@ -33,7 +33,7 @@ PAT_TOUCH_SECONDS=60
 # 인증 없이 열린 경로 (로그인 계획 Task 4). 여기에 없는 /api 경로는 모두 services_auth_current_user 를 거쳐야 한다 (tests/test_auth_current_user.py 가 지킨다)
 # 웹훅은 서명(GITHUB_WEBHOOK_SECRET), GitHub 콜백은 서명된 state(Task 6), 템플릿은 사용자 정보 없는 정적 파일
 PUBLIC_PATHS={"/api/health", "/api/watches/webhook", "/api/accounts/github/callback", "/api/accounts/aws/template",
-              "/api/auth/google", "/api/auth/refresh", "/api/auth/logout"}
+              "/api/auth/google", "/api/auth/refresh", "/api/auth/logout", "/api/auth/config"}
 
 MESSAGE_EXPIRED="로그인이 만료되었습니다. 다시 로그인해 주세요"
 MESSAGE_LOGIN_REQUIRED="로그인이 필요합니다"
@@ -66,6 +66,20 @@ class Auth_Service:
     def services_auth_client_ids(platform:str) -> set[str]:
         values=(getattr(settings, name, None) for name in LOGIN_PLATFORMS.get(platform, ()))
         return {value.strip() for value in values if isinstance(value, str) and value.strip()}
+
+
+    # 공개 로그인 설정 - 로그인 필요 여부·가능한 플랫폼(클라이언트 ID 가 설정된 것)·웹 클라이언트 ID(공개 값). DB 를 열지 않고 비밀은 싣지 않는다
+    @staticmethod
+    def services_auth_config() -> Auth_Config_Read:
+        platforms=sorted(name for name in LOGIN_PLATFORMS if Auth_Service.services_auth_client_ids(name))
+        web_id=(settings.google_client_id_web or "").strip() or None
+
+        return Auth_Config_Read(auth_required=settings.auth_enabled,
+                                login_available=bool(platforms) and bool(settings.auth_jwt_key),
+                                platforms=platforms,
+                                google_client_id_web=web_id,
+                                pat_default_days=settings.auth_pat_default_days,
+                                pat_max_days=settings.auth_pat_max_days)
 
 
     # 쿠키로 온 요청의 출처 확인 - Origin 이 CORS 허용 목록에 있어야 한다 (없거나 밖이면 403)

@@ -26,6 +26,16 @@ class Auth_Google_Request(BaseModel):
         return value
 
 
+# 공개 로그인 설정 - 클라이언트가 로그인이 필요한지·가능한지 알아보는 값. 클라이언트 ID 는 공개 값이고 비밀(키·허용 이메일)은 싣지 않는다
+class Auth_Config_Read(BaseModel):
+    auth_required: bool
+    login_available: bool
+    platforms: list[str]
+    google_client_id_web: str | None = None
+    pat_default_days: int
+    pat_max_days: int
+
+
 # 앱은 본문에 refresh_token 을 넣고, 웹은 비워 두면 쿠키(dw_refresh)를 쓴다
 class Auth_Refresh_Request(BaseModel):
     refresh_token: str | None = None
