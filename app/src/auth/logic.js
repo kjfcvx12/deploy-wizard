@@ -56,6 +56,14 @@ export function authRoute({ config, configError, status, segments }) {
   return status === 'signed_in' ? 'allow' : 'to_login'
 }
 
+// 알림 탭으로 화면을 옮겨도 되는지 - 지금 경로를 보여도 되고(allow), 정말 들어온 상태(로그인했거나 로그인이 필요 없는 서버)일 때만
+// 로그인이 필요한 서버의 로그인 화면은 allow 지만 아직 들어온 것이 아니다 - 그동안 누른 알림은 로그인 뒤에 한 번 옮긴다
+export function notificationRouteAllowed({ config, configError, status, segments }) {
+  if (authRoute({ config, configError, status, segments }) !== 'allow') return false
+  if (status === 'signed_in') return true
+  return Boolean(config) && !config.auth_required
+}
+
 // 시작 때 리프레시를 해 볼지 - 네이티브는 보안 저장소에 원문이 있을 때만, 웹 번들은 쿠키를 볼 수 없어 로그인이 필요하거나 할 수 있는 서버에서만
 export function shouldTryRefresh({ platform, config, hasStoredRefresh }) {
   if (platform === 'web') return Boolean(config?.auth_required || config?.login_available)

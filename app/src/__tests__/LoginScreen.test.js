@@ -30,9 +30,19 @@ jest.mock('expo-router', () => {
     ThemeProvider: ({ children }) => children,
     Stack,
     useRouter: () => ({ push: mockPush, replace: mockReplace }),
-    useSegments: () => mockSegments,
+    // 세그먼트가 바뀌면(mockNavigate) 다시 그린다
+    useSegments: () => require('react').useSyncExternalStore(
+      (fn) => { mockSegmentListeners.add(fn); return () => mockSegmentListeners.delete(fn) },
+      () => mockSegments,
+    ),
   }
 })
+const mockSegmentListeners = new Set()
+// replace 가 실제로 경로를 바꾸는 것처럼 - '/login' 은 ['login'], 그 밖은 []
+const mockNavigate = (to) => {
+  mockSegments = to === '/login' ? ['login'] : []
+  for (const fn of [...mockSegmentListeners]) fn()
+}
 jest.mock('expo-status-bar', () => ({ StatusBar: () => null }))
 jest.mock('../api', () => ({
   ...jest.requireActual('../api'),
@@ -306,6 +316,84 @@ describe('경로 보호 (루트 레이아웃)', () => {
     expect(authApi.getConfig).toHaveBeenCalledTimes(2)
     fetchSpy.mockRestore()
     api.resetUnauthorizedForTest()
+  })
+})
+
+describe('알림 탭은 로그인 뒤에만 (경로가 실제로 바뀌는 경우)', () => {
+  const DEFAULT_ACTION = 'expo.modules.notifications.actions.DEFAULT'
+  const tap = (link, id = 'n1') => ({ actionIdentifier: DEFAULT_ACTION, notification: { request: { identifier: id, content: { data: { link } } } } })
+
+  beforeEach(() => {
+    mockReplace.mockImplementation(mockNavigate)
+  })
+
+  test('로그인 필요 + 알림으로 켜짐: 로그인 화면에서는 옮기지 않고, 로그인한 뒤 한 번만 옮긴다', async () => {
+    mockSegments = []
+    Notifications.getLastNotificationResponse.mockReturnValue(tap('deploywizard://deploys/3', 'cold'))
+    await render(<RootLayout />)
+    await waitFor(() => expect(mockReplace).toHaveBeenCalledWith('/login'))
+    expect(mockSegments).toEqual(['login'])
+    const button = await screen.findByRole('button', { name: BUTTON })
+    expect(mockPush).not.toHaveBeenCalled()
+    await fireEvent.press(button)
+    await waitFor(() => expect(mockPush).toHaveBeenCalledWith('/deploys/3'))
+    expect(mockReplace).toHaveBeenLastCalledWith('/')
+    expect(mockPush).toHaveBeenCalledTimes(1)
+    expect(screen.getByTestId('home')).toBeTruthy()
+  })
+
+  test('로그인 화면이 열려 있는 동안 누른 알림도 로그인 뒤에 한 번 옮긴다', async () => {
+    await render(<RootLayout />)
+    const button = await screen.findByRole('button', { name: BUTTON })
+    const listener = Notifications.addNotificationResponseReceivedListener.mock.calls[0][0]
+    await act(async () => { listener(tap('deploywizard://incidents/9')) })
+    expect(mockPush).not.toHaveBeenCalled()
+    await fireEvent.press(button)
+    await waitFor(() => expect(mockPush).toHaveBeenCalledWith('/incidents/9'))
+    expect(mockPush).toHaveBeenCalledTimes(1)
+  })
+
+  test('끔 모드는 지금처럼 바로 옮긴다 (로그인 화면이어도)', async () => {
+    authApi.getConfig.mockResolvedValue(OFF)
+    await render(<RootLayout />)
+    await screen.findByRole('button', { name: '로그인하지 않고 계속' })
+    const listener = Notifications.addNotificationResponseReceivedListener.mock.calls[0][0]
+    await act(async () => { listener(tap('deploywizard://deploys/12')) })
+    expect(mockPush).toHaveBeenCalledTimes(1)
+    expect(mockPush).toHaveBeenCalledWith('/deploys/12')
+  })
+})
+
+describe('덮개 뒤 화면은 접근성에서 숨긴다', () => {
+  test('덮인 동안 뒤 틀은 no-hide-descendants + aria-hidden, 덮개는 모달 - 풀리면 되돌린다', async () => {
+    mockSegments = []
+    const config = deferred()
+    authApi.getConfig.mockReturnValue(config.promise)
+    await render(<RootLayout />)
+    // 숨겨진 틀이라 보조기기 기준 조회로는 뒤 화면을 찾을 수 없다
+    expect(screen.queryByTestId('home')).toBeNull()
+    const behind = screen.getByTestId('auth-behind', { includeHiddenElements: true })
+    expect(behind.props.importantForAccessibility).toBe('no-hide-descendants')
+    expect(behind.props['aria-hidden']).toBe(true)
+    expect(screen.getByTestId('auth-cover').props.accessibilityViewIsModal).toBe(true)
+    expect(screen.getByTestId('auth-cover').props['aria-modal']).toBe(true)
+    // 덮개의 글은 읽을 수 있다
+    expect(screen.getByText('불러오는 중…')).toBeTruthy()
+    await act(async () => { config.resolve({ ...OFF, login_available: false }) })
+    await waitFor(() => expect(screen.queryByTestId('auth-cover')).toBeNull())
+    expect(screen.getByTestId('auth-behind').props.importantForAccessibility).toBe('auto')
+    expect(screen.getByTestId('auth-behind').props['aria-hidden']).toBe(false)
+    expect(screen.getByTestId('home')).toBeTruthy()
+  })
+
+  test('연결 오류 덮개의 다시 시도 버튼은 숨겨지지 않는다', async () => {
+    mockSegments = []
+    authApi.getConfig.mockRejectedValueOnce(new Error('서버에 연결할 수 없습니다'))
+    await render(<RootLayout />)
+    expect(await screen.findByRole('button', { name: '다시 시도' })).toBeTruthy()
+    expect(screen.getByText('서버에 연결할 수 없습니다')).toBeTruthy()
+    expect(screen.getByTestId('auth-behind', { includeHiddenElements: true }).props['aria-hidden']).toBe(true)
+    expect(screen.queryByTestId('home')).toBeNull()
   })
 })
 

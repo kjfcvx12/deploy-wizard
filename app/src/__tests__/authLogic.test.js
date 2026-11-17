@@ -1,6 +1,6 @@
 import {
   CONFIG_OFF, normalizeConfig, loginErrorText, parseLiveDeploys, deleteResultView, authRoute, runBoot,
-  shouldTryRefresh, loginViewState, afterLogoutPath, runSignOut, UNSUPPORTED_PLATFORM_TEXT,
+  shouldTryRefresh, loginViewState, notificationRouteAllowed, afterLogoutPath, runSignOut, UNSUPPORTED_PLATFORM_TEXT,
 } from '../auth/logic'
 import { Google_Sign_In_Error, GENERIC_SIGN_IN_TEXT } from '../auth/googleError'
 
@@ -120,6 +120,25 @@ describe('authRoute', () => {
     [{ config: ON, status: 'signed_out', segments: ['loginx'] }, 'to_login'],
   ])('%j -> %s', (input, expected) => {
     expect(authRoute(input)).toBe(expected)
+  })
+})
+
+describe('notificationRouteAllowed (알림 탭 이동)', () => {
+  test.each([
+    [{ config: ON, status: 'signed_out', segments: ['login'] }, false],
+    [{ config: ON, status: 'unknown', segments: ['login'] }, false],
+    [{ config: null, status: 'unknown', segments: ['login'] }, false],
+    [{ config: ON, status: 'signed_in', segments: ['login'] }, false],
+    [{ config: ON, status: 'signed_out', segments: [] }, false],
+    [{ config: ON, status: 'unknown', segments: [] }, false],
+    [{ config: ON, status: 'signed_in', segments: [] }, true],
+    [{ config: ON, status: 'signed_in', segments: ['deploys', '[d_id]'] }, true],
+    [{ config: OFF, status: 'signed_out', segments: [] }, true],
+    [{ config: OFF, status: 'signed_out', segments: ['login'] }, true],
+    [{ config: OFF, configError: true, status: 'signed_out', segments: [] }, false],
+    [{ config: null, status: 'signed_out', segments: [] }, false],
+  ])('%j -> %s', (input, expected) => {
+    expect(notificationRouteAllowed(input)).toBe(expected)
   })
 })
 
