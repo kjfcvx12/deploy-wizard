@@ -4,7 +4,7 @@ import { formatTime } from '@shared/ui/time.js'
 
 import { authApi } from './api.js'
 import { useAuth } from './AuthProvider.jsx'
-import { copyText, mcpEnvLine, tokenExpiryText, validateTokenForm } from './authLogic.js'
+import { copyText, mcpEnvLine, shouldCloseIssuedPanel, tokenExpiryText, validateTokenForm } from './authLogic.js'
 
 const TITLE = '개인 토큰 (MCP)'
 const DESCRIPTION = 'Claude Code 같은 MCP 클라이언트가 이 계정으로 마법사를 쓰게 하는 토큰입니다. 원문은 만들 때 한 번만 보입니다.'
@@ -24,7 +24,7 @@ export default function TokensCard() {
   const [days, setDays] = useState('')
   const [formError, setFormError] = useState(null)
   const [busy, setBusy] = useState(false)
-  // 방금 만든 토큰 원문 - { token, name } 이거나 null. 다른 곳에 두지 않는다
+  // 방금 만든 토큰 원문 - { token, name, a_t_id } 이거나 null (a_t_id 는 비밀이 아니다). 원문은 다른 곳에 두지 않는다
   const [issued, setIssued] = useState(null)
   // 복사 결과 - 각 칸이 'ok' | 'fail' | undefined (원문은 담지 않는다)
   const [copied, setCopied] = useState({})
@@ -34,6 +34,7 @@ export default function TokensCard() {
   const live = useRef(true)
   const seq = useRef(0)
   const dialog = useRef(null)
+  const cancelRef = useRef(null)
   const panel = useRef(null)
 
   // 목록 읽기 - 늦게 도착한 옛 응답은 버린다
@@ -83,7 +84,7 @@ export default function TokensCard() {
         setFormError('토큰을 받지 못했습니다. 목록을 확인하고 다시 만들어 주세요')
       } else {
         setCopied({})
-        setIssued({ token: response.token, name: typeof response.name === 'string' ? response.name : body.name })
+        setIssued({ token: response.token, name: typeof response.name === 'string' ? response.name : body.name, a_t_id: response.a_t_id })
       }
       load()
     } catch (e) {
@@ -105,10 +106,16 @@ export default function TokensCard() {
     if (live.current) setCopied((prev) => ({ ...prev, [which]: ok ? 'ok' : 'fail' }))
   }
 
-  // 폐기 확인 창 열기
+  // 폐기 확인 창 열기 - 초점을 [취소]에 둔다 (기본 초점이 버튼 순서에 기대지 않게)
   function askRevoke(item) {
     setRevokeTarget(item)
     dialog.current?.showModal()
+    cancelRef.current?.focus()
+  }
+
+  // Esc·바깥 닫기로 창이 닫히면 폐기 대상을 비운다 (폐기 중에는 revoke 가 끝나고 비운다)
+  function onRevokeDialogClose() {
+    if (!revoking) setRevokeTarget(null)
   }
 
   // 확인 창에서 [폐기]를 눌렀을 때 - 404 는 이미 없는 것이니 목록만 새로 읽는다
@@ -120,10 +127,13 @@ export default function TokensCard() {
     setNotice(null)
     try {
       await authApi.revokeToken(target.a_t_id)
+      // 지금 원문이 보이는 토큰을 폐기했으면 죽은 토큰의 원문이 남지 않게 패널을 닫는다
+      if (live.current && shouldCloseIssuedPanel(issued, target.a_t_id)) closeIssued()
       await load()
       if (live.current) setNotice({ kind: 'ok', text: '개인 토큰을 폐기했습니다' })
     } catch (e) {
       if (e?.status === 404) {
+        if (live.current && shouldCloseIssuedPanel(issued, target.a_t_id)) closeIssued()
         await load()
         if (live.current) setNotice({ kind: 'warn', text: '이미 폐기되었거나 없는 토큰입니다. 목록을 새로 읽었습니다' })
       } else if (live.current) {
@@ -223,12 +233,12 @@ export default function TokensCard() {
         {issued && <div className="token-hint muted" style={{ marginTop: 8 }}>위 토큰을 먼저 닫아야 새로 만들 수 있습니다.</div>}
       </form>
 
-      <dialog ref={dialog}>
+      <dialog ref={dialog} onClose={onRevokeDialogClose}>
         <h2 style={{ marginTop: 0 }}>토큰을 폐기할까요?</h2>
         {revokeTarget && <p className="token-dialog-name">{revokeTarget.name} <span className="muted">…{revokeTarget.last4}</span></p>}
         <p>{REVOKE_WARNING}</p>
         <div className="row" style={{ justifyContent: 'flex-end' }}>
-          <button autoFocus onClick={() => dialog.current?.close()}>취소</button>
+          <button ref={cancelRef} onClick={() => dialog.current?.close()}>취소</button>
           <button className="danger" onClick={revoke}>폐기</button>
         </div>
       </dialog>

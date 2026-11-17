@@ -232,6 +232,9 @@ export function tokenExpiryText(expiresAt, now = Date.now()) {
   return `${d.getFullYear()}년 ${d.getMonth() + 1}월 ${d.getDate()}일까지 (${left}일 남음)`
 }
 
+// 폐기한 토큰이 발급 패널에 원문이 보이는 바로 그 토큰이면 패널을 닫아야 하는지 (원문이 죽은 토큰으로 남지 않게)
+export const shouldCloseIssuedPanel = (issued, revokedId) => revokedId !== undefined && revokedId !== null && issued?.a_t_id === revokedId
+
 // MCP 등록에 붙여 넣을 환경변수 한 줄 (원문이 들어 있으니 로그에 남기지 않는다)
 export const mcpEnvLine = (token) => `WIZARD_API_TOKEN=${token}`
 

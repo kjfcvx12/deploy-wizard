@@ -5,7 +5,7 @@ import './useAlias.mjs'
 const {
   normalizeConfig, CONFIG_OFF, routeDecision, safeNext, loginErrorText,
   parseLiveDeploys, deleteResultView, safePictureUrl, loginPathFor, authNavLinkView, meViewState, afterLogoutPath, runSignOut,
-  validateTokenForm, tokenExpiryText, mcpEnvLine, copyText, topbarNavVisible, retryServerLogout,
+  validateTokenForm, tokenExpiryText, mcpEnvLine, copyText, topbarNavVisible, retryServerLogout, shouldCloseIssuedPanel,
 } = await import('../../features/auth/ui/authLogic.js')
 const { clearUserScopedStorage, HAD_SESSION_KEY } = await import('../../features/auth/ui/userData.js')
 const { authApi } = await import('../../features/auth/ui/api.js')
@@ -250,6 +250,15 @@ test('topbarNavVisible: only when signed in or the server does not require login
   assert.equal(topbarNavVisible({ config: null, status: 'signed_in' }), true)
 })
 
+test('shouldCloseIssuedPanel: only when the revoked token is the one shown in the panel', () => {
+  const issued = { token: 'dwp_x', name: 'mcp', a_t_id: 7 }
+  assert.equal(shouldCloseIssuedPanel(issued, 7), true)
+  assert.equal(shouldCloseIssuedPanel(issued, 8), false)
+  assert.equal(shouldCloseIssuedPanel(null, 7), false)
+  assert.equal(shouldCloseIssuedPanel({ token: 'dwp_x', name: 'mcp' }, 7), false)
+  assert.equal(shouldCloseIssuedPanel(issued, undefined), false)
+})
+
 test('retryServerLogout: true when the server call works, false when it fails', async () => {
   let calls = 0
   assert.equal(await retryServerLogout(async () => { calls += 1 }), true)
@@ -372,16 +381,21 @@ test('validateTokenForm: a missing config falls back to the default max of 90 da
 
 test('tokenExpiryText: remaining days (rounded up), expired, never', () => {
   const now = Date.parse('2026-11-17T12:00:00Z')
+  // 날짜는 브라우저의 현지 날짜라 시험 기계의 시간대에 기대지 않게 기대 문구를 같은 시각의 현지 날짜로 만든다 (UTC 시각을 Z 로 적어 준다)
+  const until = (utcIso, left) => {
+    const d = new Date(utcIso)
+    return `${d.getFullYear()}년 ${d.getMonth() + 1}월 ${d.getDate()}일까지 (${left}일 남음)`
+  }
   // 서버는 UTC 를 Z 없이 보낸다
-  assert.equal(tokenExpiryText('2026-12-17T12:00:00', now), '2026년 12월 17일까지 (30일 남음)')
-  assert.equal(tokenExpiryText('2026-12-17T12:00:00Z', now), '2026년 12월 17일까지 (30일 남음)')
-  assert.equal(tokenExpiryText('2026-12-17T11:59:59.123456', now), '2026년 12월 17일까지 (30일 남음)')
+  assert.equal(tokenExpiryText('2026-12-17T12:00:00', now), until('2026-12-17T12:00:00Z', 30))
+  assert.equal(tokenExpiryText('2026-12-17T12:00:00Z', now), until('2026-12-17T12:00:00Z', 30))
+  assert.equal(tokenExpiryText('2026-12-17T11:59:59.123456', now), until('2026-12-17T11:59:59.123Z', 30))
   // 1초라도 남았으면 1일 (올림)
-  assert.equal(tokenExpiryText('2026-11-17T12:00:01', now), '2026년 11월 17일까지 (1일 남음)')
-  assert.equal(tokenExpiryText('2026-11-18T12:00:01', now), '2026년 11월 18일까지 (2일 남음)')
-  assert.equal(tokenExpiryText('2026-11-18T12:00:00', now), '2026년 11월 18일까지 (1일 남음)')
+  assert.equal(tokenExpiryText('2026-11-17T12:00:01', now), until('2026-11-17T12:00:01Z', 1))
+  assert.equal(tokenExpiryText('2026-11-18T12:00:01', now), until('2026-11-18T12:00:01Z', 2))
+  assert.equal(tokenExpiryText('2026-11-18T12:00:00', now), until('2026-11-18T12:00:00Z', 1))
   // Date 로 넘겨도 같다
-  assert.equal(tokenExpiryText('2026-12-17T12:00:00', new Date(now)), '2026년 12월 17일까지 (30일 남음)')
+  assert.equal(tokenExpiryText('2026-12-17T12:00:00', new Date(now)), until('2026-12-17T12:00:00Z', 30))
 })
 
 test('tokenExpiryText: past or equal is expired, null is never, unreadable is explained', () => {
