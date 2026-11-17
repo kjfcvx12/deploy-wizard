@@ -45,3 +45,12 @@ export function rememberSessionHint() {
     // 저장이 막힌 브라우저 - 새로고침하면 로그인 화면으로 갈 수 있다
   }
 }
+
+// 로그인 표시를 지운다 (쿠키가 더는 쓸 수 없을 때)
+export function forgetSessionHint() {
+  try {
+    window.localStorage.removeItem(HAD_SESSION_KEY)
+  } catch {
+    // 저장이 막힌 브라우저 - 지울 것이 없다
+  }
+}

@@ -63,3 +63,42 @@ export function loginErrorText(error) {
   const fromServer = typeof error?.status === 'number' && message && !/^요청 실패 \(\d+\)$/.test(message)
   return fromServer ? message : LOGIN_FAILED_TEXT
 }
+
+// 시작 확인의 순서를 정한다 (순수 - 호출은 모두 주입) - 설정 읽기 -> 필요하면 갱신 -> 첫 확인 끝내기. 연결 문제로 정하지 못하면 { error: true }
+// 로그인이 필요한 서버에서는 연결 실패·5xx 를 로그아웃으로 보지 않고, 끈 서버에서는 세션이 필요 없어 어떤 갱신 실패든 로그아웃 상태로 끝낸다
+export async function runBoot({ getConfig, refresh, getStatus, markBooted, hasHint, clearHint, live = () => true, onConfig = () => {} }) {
+  let config
+  let missing = false
+  try {
+    config = normalizeConfig(await getConfig())
+  } catch (e) {
+    if (e?.status !== 404) return { error: true }
+    // 옛 서버 - 로그인 끔으로 보고 갱신도 시도하지 않는다
+    config = CONFIG_OFF
+    missing = true
+  }
+  if (!live()) return { error: false }
+  onConfig(config)
+
+  // 다른 탭의 로그인 등으로 이미 정해졌으면 더 하지 않는다
+  if (getStatus() !== 'unknown') return { error: false }
+  // 로그인이 필요 없고 로그인한 적도 없으면(또는 옛 서버면) 갱신하지 않는다
+  if (missing || (!config.auth_required && !hasHint())) {
+    markBooted('signed_out')
+    return { error: false }
+  }
+  try {
+    await refresh()
+  } catch (e) {
+    if (config.auth_required) return { error: true }
+    if (!live()) return { error: false }
+    // 끈 서버: 쿠키가 더는 쓸 수 없다는 확실한 답(401·403·404)이면 힌트도 지운다
+    if ([401, 403, 404].includes(e?.status)) clearHint()
+    markBooted('signed_out')
+    return { error: false }
+  }
+  if (!live()) return { error: false }
+  // 갱신이 성공했거나 서버가 쿠키를 거절한 확실한 결과일 때만 첫 확인을 끝낸다
+  markBooted(getStatus())
+  return { error: false }
+}

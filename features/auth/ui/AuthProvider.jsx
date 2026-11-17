@@ -3,9 +3,10 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useRef, use
 import {
   clearSession, getSessionStatus, getSessionUser, markBooted, refreshSession, setRefresher, setSession, subscribeSession,
 } from '@shared/ui/session.js'
+import { onUnauthorized } from '@shared/ui/api.js'
 import { authApi } from './api.js'
-import { CONFIG_OFF, normalizeConfig } from './authLogic.js'
-import { clearUserScopedStorage, hadSessionHint, rememberSessionHint } from './userData.js'
+import { CONFIG_OFF, normalizeConfig, runBoot } from './authLogic.js'
+import { clearUserScopedStorage, forgetSessionHint, hadSessionHint, rememberSessionHint } from './userData.js'
 
 // 갱신 호출을 세션에 한 번 등록한다 (화면보다 먼저 - 401 재시도가 이것을 쓴다)
 setRefresher(() => authApi.refresh())
@@ -31,47 +32,39 @@ export function AuthProvider({ children }) {
   const [user, setUser] = useState(getSessionUser())
   // 가장 최근 시작 번호 - 늦게 끝난 옛 시작이 상태를 덮어쓰지 않게
   const bootSeq = useRef(0)
+  // 가장 최근 설정 읽기 번호 - 시작과 다시 읽기가 겹쳐도 가장 새 것만 반영한다
+  const configSeq = useRef(0)
 
   // 설정 읽기 → (필요하면) 갱신 → 첫 확인 끝내기. 다시 시도도 이 함수
   const boot = useCallback(async () => {
     bootSeq.current += 1
     const seq = bootSeq.current
     const live = () => seq === bootSeq.current
+    configSeq.current += 1
+    const configAt = configSeq.current
     setConfigError(false)
 
-    let loaded
-    try {
-      loaded = await loadConfig()
-    } catch {
-      if (live()) setConfigError(true)
-      return
-    }
-    if (!live()) return
-    setConfig(loaded)
-
-    // 다른 탭의 로그인 등으로 이미 정해졌으면 더 하지 않는다
-    if (getSessionStatus() !== 'unknown') return
-    // 로그인이 필요 없고 로그인한 적도 없으면 갱신하지 않는다 (끔 모드에서 쓸데없는 호출 방지)
-    if (!loaded.auth_required && !hadSessionHint()) {
-      markBooted('signed_out')
-      return
-    }
-    try {
-      await refreshSession()
-    } catch {
-      // 연결 실패·서버 오류는 "로그아웃"이 아니다 - 로그인 여부를 정하지 않고 다시 시도하게 한다
-      if (live()) setConfigError(true)
-      return
-    }
-    if (!live()) return
-    // 갱신이 성공했거나 서버가 쿠키를 거절한 확실한 결과일 때만 첫 확인을 끝낸다
-    markBooted(getSessionStatus())
+    const result = await runBoot({
+      getConfig: () => authApi.getConfig(),
+      refresh: refreshSession,
+      getStatus: getSessionStatus,
+      markBooted,
+      hasHint: hadSessionHint,
+      clearHint: forgetSessionHint,
+      live,
+      // 더 새로 읽은 설정이 있으면 덮어쓰지 않는다
+      onConfig: (loaded) => { if (configAt === configSeq.current) setConfig(loaded) },
+    })
+    if (result.error && live()) setConfigError(true)
   }, [])
 
-  // 로그인 만료를 받으면 설정을 다시 읽는다 (서버가 도중에 켜졌거나 꺼졌을 수 있다) - 실패하면 지금 설정을 둔다
+  // 설정을 다시 읽는다 (서버가 도중에 켜졌거나 꺼졌을 수 있다) - 실패하면 지금 설정을 둔다
   const reloadConfig = useCallback(async () => {
+    configSeq.current += 1
+    const configAt = configSeq.current
     try {
-      setConfig(await loadConfig())
+      const loaded = await loadConfig()
+      if (configAt === configSeq.current) setConfig(loaded)
     } catch {
       // 연결이 안 되면 지금 알고 있는 설정으로 계속한다
     }
@@ -81,16 +74,23 @@ export function AuthProvider({ children }) {
     const unsubscribe = subscribeSession((state) => {
       setStatus(state.status)
       setUser(state.user ?? null)
+      // 로그인이 되면 이전의 연결 오류 표시는 더 이상 맞지 않는다
+      if (state.status === 'signed_in') setConfigError(false)
+      // 로그인 만료를 받으면 설정을 다시 읽는다
       if (state.status === 'signed_out' && state.reason === 'expired') reloadConfig()
     })
+    // 로그인한 적 없는 탭이 401 을 받으면(서버가 로그인 필수로 바뀐 듯) 설정을 다시 읽는다 - 약속을 돌려줘 끝날 때까지 다시 부르지 않게 한다
+    const unsubscribeUnauthorized = onUnauthorized(() => reloadConfig())
     // 구독하기 전에 바뀐 상태를 따라잡는다
     setStatus(getSessionStatus())
     setUser(getSessionUser())
     boot()
     return () => {
       unsubscribe()
-      // 이 시작이 끝나도 상태를 건드리지 않게 한다
+      unsubscribeUnauthorized()
+      // 이 시작·설정 읽기가 끝나도 상태를 건드리지 않게 한다
       bootSeq.current += 1
+      configSeq.current += 1
     }
   }, [boot, reloadConfig])
 
