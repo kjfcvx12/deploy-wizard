@@ -1,5 +1,6 @@
 import {
   Google_Sign_In_Error, DEV_BUILD_TEXT, NO_PLAY_SERVICES_TEXT, GENERIC_SIGN_IN_TEXT, NOT_CONFIGURED_TEXT,
+  DEVELOPER_ERROR_TEXT, DEVELOPER_ERROR_CODE,
 } from './googleError'
 
 export { Google_Sign_In_Error }
@@ -26,6 +27,11 @@ function isNoPlayServicesError(error, statusCodes) {
   return error != null && typeof error === 'object' && error.code === statusCodes.PLAY_SERVICES_NOT_AVAILABLE
 }
 
+// 라이브러리 오류가 안드로이드 DEVELOPER_ERROR(앱 서명·OAuth 클라이언트 설정 불일치)인지 - 코드는 문자열 '10'
+function isDeveloperError(error) {
+  return error != null && typeof error === 'object' && String(error.code) === DEVELOPER_ERROR_CODE
+}
+
 // signIn 결과 모양(17.0.0: { type:'success', data:{ idToken } } | { type:'cancelled' })은 여기서만 푼다 - 'cancelled' | idToken 문자열 | null
 function pickResult(result) {
   if (result?.type === 'cancelled') return 'cancelled'
@@ -40,7 +46,8 @@ export async function googleSignIn({ webClientId } = {}) {
   try {
     // 서버는 안드로이드 로그인의 aud 로 웹 클라이언트 ID 를 받는다 (백엔드 Ruling 13) - 다른 ID 는 넘기지 않는다
     GoogleSignin.configure({ webClientId })
-    const hasPlay = await GoogleSignin.hasPlayServices()
+    // 옛 Play 서비스면 업데이트 창을 띄우도록 옵션을 분명히 준다 (17.0.0 의 기본값도 true)
+    const hasPlay = await GoogleSignin.hasPlayServices({ showPlayServicesUpdateDialog: true })
     if (hasPlay === false) throw new Google_Sign_In_Error(NO_PLAY_SERVICES_TEXT)
     const picked = pickResult(await GoogleSignin.signIn())
     if (picked === 'cancelled') return { cancelled: true }
@@ -50,6 +57,7 @@ export async function googleSignIn({ webClientId } = {}) {
     if (error instanceof Google_Sign_In_Error) throw error
     if (isCancelError(error, statusCodes)) return { cancelled: true }
     if (isNoPlayServicesError(error, statusCodes)) throw new Google_Sign_In_Error(NO_PLAY_SERVICES_TEXT)
+    if (isDeveloperError(error)) throw new Google_Sign_In_Error(DEVELOPER_ERROR_TEXT)
     throw new Google_Sign_In_Error(GENERIC_SIGN_IN_TEXT)
   }
 }

@@ -22,9 +22,9 @@ cp .env.example .env     # 서버 주소를 환경에 맞게 고친다
 계정 연결 화면의 템플릿 내려받기 링크(`/api/accounts/aws/template`)는 서버가 준 상대 경로에 이 주소를 붙여 연다. 그래서 `localhost` 로 빌드한 앱은 실제 폰에서 이 링크를 열 수 없다. 폰에서 쓰려면 위 표의 LAN 주소로 빌드해야 한다. GitHub 설치를 마친 뒤 GitHub 이 부르는 콜백(서버의 `/github/callback`)이 설치를 저장한다. 그래서 GitHub 앱에 등록된 콜백 주소가 **폰의 브라우저에서 열려야** 한다. 열리지 않으면 설치가 저장되지 않아 앱으로 돌아와도 아무것도 바뀌지 않는다 (앱은 `아직 설치가 확인되지 않았습니다 ...` 안내를 보이고, 그 경우 PC 에서 연결해야 한다). 앱은 콜백이 보내는 `?connected=github` 페이지를 쓰지 않고, 앱으로 돌아오면 목록을 다시 읽는다 (아래 "플랫폼별로 다르게 한 것").
 
 값은 빌드할 때 코드에 박힌다. 바꾼 뒤에는 `npx expo start --clear` 로 다시 켠다.
-서버는 인증이 없는 로컬 전용이다 (1단계). 밖에 열지 않는다. 로그인·토큰 코드는 아직 없다.
+서버는 기본이 인증이 꺼진 로컬 전용이다 (1단계). 밖에 열지 않는다. 로그인 코드는 있다 (`src/auth/`, 화면은 `app/login.js`·`app/me.js`·`app/delete-account.js`). 서버가 로그인 필수(`auth_required`)로 켜져 있을 때만 로그인 화면이 열리고, 꺼져 있으면 지금처럼 바로 쓴다. 이 저장소에서 로그인을 켠 서버나 실제 기기로 돌려 보지는 못했다.
 
-**Google 로그인은 개발 빌드(EAS)에서만 된다. Expo Go 는 네이티브 모듈이 없어 지원하지 않는다** (앱은 `개발 빌드에서만 Google 로그인을 할 수 있습니다 ...` 안내를 보인다). 안드로이드는 `@react-native-google-signin/google-signin` 17.0.0 의 무료(Original) API 를 쓰고, 이 판은 안드로이드에서 옛 Google Sign-In SDK 를 쓴다 (라이브러리 README: `It uses the legacy Google Sign-In SDK on Android`, 현대 구현은 유료 판). 지원 종료 시점은 라이브러리 문서로 따로 확인해야 한다 (verify against the library docs). 라이브러리 호출은 `src/auth/google.js` 한 파일에만 있고, 웹 번들은 `google.web.js`(GIS)·`GoogleWebButton.web.js` 를 쓴다. 앱은 웹 클라이언트 ID 만 `configure` 에 넘기고 (서버가 안드로이드 로그인의 `aud` 로 웹 클라이언트 ID 를 받는다), `app.json` 의 플러그인에는 옵션이 없다 (`iosUrlScheme` 은 iOS 전용이라 넣지 않았다).
+**Google 로그인은 네이티브 모듈이 들어간 EAS 빌드(APK)에서만 된다. Expo Go 는 네이티브 모듈이 없어 지원하지 않는다** (`expo-dev-client` 는 이 앱에 설치돼 있지 않다. 개발 클라이언트를 쓰려면 따로 설치해야 한다) (앱은 `개발 빌드에서만 Google 로그인을 할 수 있습니다 ...` 안내를 보인다). 안드로이드는 `@react-native-google-signin/google-signin` 17.0.0 의 무료(Original) API 를 쓰고, 이 판은 안드로이드에서 옛 Google Sign-In SDK 를 쓴다 (라이브러리 README: `It uses the legacy Google Sign-In SDK on Android`, 현대 구현은 유료 판). 지원 종료 시점은 라이브러리 문서로 따로 확인해야 한다 (verify against the library docs). 라이브러리 호출은 `src/auth/google.js` 한 파일에만 있고, 웹 번들은 `google.web.js`(GIS)·`GoogleWebButton.web.js` 를 쓴다. 앱은 웹 클라이언트 ID 만 `configure` 에 넘기고 (서버가 안드로이드 로그인의 `aud` 로 웹 클라이언트 ID 를 받는다), `app.json` 의 플러그인에는 옵션이 없다 (`iosUrlScheme` 은 iOS 전용이라 넣지 않았다).
 
 `.env` 는 커밋하지 않는다 (`app/.env` 는 `.gitignore` 에 있다). Windows PowerShell 에서는 `cp` 대신 `Copy-Item .env.example .env` 를 쓴다.
 
@@ -75,7 +75,7 @@ src/components/FooterSlot.js     설정 화면 맨 아래 안내 자리 (아래 
 
 목록 머리줄에는 알림 종(`🔔`, 안 읽은 수 배지 `99+` 까지)과 `＋ 새 배포` 가 있고, 그 밑 줄에 `계정 연결`·`알림 설정` 칩이 있다. 끝나지 않은 인시던트가 있는 배포는 목록 위에 `{레포}에 문제가 있습니다 · 자동 복구 중` (자동 복구가 꺼져 있거나 인시던트가 `needs_action` 이면 `확인이 필요합니다`) 배너가 한 줄씩 나오고 누르면 인시던트 화면으로 간다. `running` 카드에는 헬스 점이 붙는다. 배포 상세에는 인시던트 카드가 있다. 목록은 화면에 다시 올 때마다 새로 읽는다. `/new` 는 `계정 연결` 에서 `선택`한 블록(없으면 쓸 수 있는 블록이 하나뿐일 때 그것)을 미리 고르고, 쓸 수 있는 연결이 없으면 `계정 연결 열기` 안내를 보여 준다. `계정 연결` 에 다녀와 다시 보이면 연결 목록을 다시 읽는다 (직접 고른 선택은 덮지 않고, 고른 블록이 사라지거나 쓸 수 없게 되면 선택과 분석 결과를 비운다).
 
-없는 것: 인시던트 목록 화면(상세만 있다), 로그인, 스토어 빌드(EAS), 운영 에이전트, 오프라인 저장, 생체 인식 잠금, GitHub·AWS 에서 앱으로 돌아오는 딥링크, 웹의 "PC에서 이어서 하기" 같은 링크. 앱 이름과 번들 ID(`app.json`)는 임시값이다.
+없는 것: 인시던트 목록 화면(상세만 있다), 스토어 빌드(EAS), 운영 에이전트, 오프라인 저장, 생체 인식 잠금, GitHub·AWS 에서 앱으로 돌아오는 딥링크, 웹의 "PC에서 이어서 하기" 같은 링크. 앱 이름과 번들 ID(`app.json`)는 임시값이다.
 
 ## 한 화면 규칙 (계획 F, 2026-11-15)
 

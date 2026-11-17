@@ -5,6 +5,7 @@ const DEV_BUILD_TEXT = '개발 빌드에서만 Google 로그인을 할 수 있�
 const NO_PLAY_TEXT = '이 기기에서 Google Play 서비스를 쓸 수 없습니다'
 const GENERIC_TEXT = 'Google 로그인을 하지 못했습니다. 잠시 뒤 다시 시도해 주세요'
 const NOT_CONFIGURED_TEXT = 'Google 로그인이 아직 설정되지 않았습니다 (서버의 GOOGLE_CLIENT_ID_WEB)'
+const DEVELOPER_TEXT = 'Google 로그인 설정이 맞지 않습니다 (앱 서명 SHA-1·OAuth 클라이언트 확인)'
 
 // 라이브러리가 던지는 오류 모양 (code 가 붙은 Error)
 const codedError = (code, message = 'raw library message') => Object.assign(new Error(message), { code })
@@ -22,7 +23,31 @@ describe('googleSignIn (native)', () => {
     expect(result).toEqual({ idToken: 'idt' })
     expect(GoogleSignin.configure).toHaveBeenCalledWith({ webClientId: 'web-client.apps.googleusercontent.com' })
     expect(GoogleSignin.hasPlayServices).toHaveBeenCalledTimes(1)
+    // 17.0.0 타입(HasPlayServicesParams)의 옵션 이름 그대로 - 업데이트 창을 분명히 켠다
+    expect(GoogleSignin.hasPlayServices).toHaveBeenCalledWith({ showPlayServicesUpdateDialog: true })
     expect(GoogleSignin.signIn).toHaveBeenCalledTimes(1)
+  })
+
+  it('DEVELOPER_ERROR (code "10") -> fixed Korean setup text, no library text', async () => {
+    GoogleSignin.signIn.mockRejectedValue(codedError('10', 'DEVELOPER_ERROR: Follow troubleshooting instructions at https://example.invalid/SECRET'))
+    const error = await googleSignIn({ webClientId: 'w' }).catch((e) => e)
+    expect(error).toBeInstanceOf(Google_Sign_In_Error)
+    expect(error.message).toBe(DEVELOPER_TEXT)
+    expect(error.message).not.toMatch(/DEVELOPER_ERROR|SECRET|troubleshooting/)
+    expect(String(error.cause ?? '')).not.toMatch(/SECRET|DEVELOPER_ERROR/)
+  })
+
+  it('DEVELOPER_ERROR is also caught when hasPlayServices rejects, and a numeric 10 counts', async () => {
+    GoogleSignin.hasPlayServices.mockRejectedValue(codedError(10))
+    await expect(googleSignIn({ webClientId: 'w' })).rejects.toThrow(DEVELOPER_TEXT)
+    expect(GoogleSignin.signIn).not.toHaveBeenCalled()
+  })
+
+  it('other numeric-looking codes stay generic', async () => {
+    GoogleSignin.signIn.mockRejectedValue(codedError('7'))
+    await expect(googleSignIn({ webClientId: 'w' })).rejects.toThrow(GENERIC_TEXT)
+    GoogleSignin.signIn.mockRejectedValue(codedError('100'))
+    await expect(googleSignIn({ webClientId: 'w' })).rejects.toThrow(GENERIC_TEXT)
   })
 
   it('cancel response -> cancelled', async () => {
