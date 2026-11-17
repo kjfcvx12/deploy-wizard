@@ -5,7 +5,7 @@ import './useAlias.mjs'
 const {
   normalizeConfig, CONFIG_OFF, routeDecision, safeNext, loginErrorText,
   parseLiveDeploys, deleteResultView, safePictureUrl, loginPathFor, authNavLinkView, meViewState, afterLogoutPath, runSignOut,
-  validateTokenForm, tokenExpiryText, mcpEnvLine, copyText,
+  validateTokenForm, tokenExpiryText, mcpEnvLine, copyText, topbarNavVisible, retryServerLogout,
 } = await import('../../features/auth/ui/authLogic.js')
 const { clearUserScopedStorage, HAD_SESSION_KEY } = await import('../../features/auth/ui/userData.js')
 const { authApi } = await import('../../features/auth/ui/api.js')
@@ -230,6 +230,32 @@ test('parseLiveDeploys: non-string input gives an empty message and no items', (
 test('deleteResultView: message as is and the repository list', () => {
   const out = deleteResultView({ message: '계정을 삭제했습니다.', leftover_ecr_repositories: ['a', 'b'], deleted: { deploys: 1 } })
   assert.deepEqual(out, { message: '계정을 삭제했습니다.', leftovers: ['a', 'b'] })
+})
+
+test('deleteResultView: duplicate repository names are listed once (React keys stay unique)', () => {
+  assert.deepEqual(deleteResultView({ message: 'm', leftover_ecr_repositories: ['a', 'b', 'a', ' b '] }).leftovers, ['a', 'b'])
+})
+
+test('parseLiveDeploys: a repeated d_id is listed once', () => {
+  const out = parseLiveDeploys('먼저 멈춰야 합니다: #3 my-app, #5 other, #3 my-app')
+  assert.deepEqual(out.items, [{ d_id: 3, label: 'my-app' }, { d_id: 5, label: 'other' }])
+})
+
+test('topbarNavVisible: only when signed in or the server does not require login', () => {
+  assert.equal(topbarNavVisible({ config: { auth_required: true }, status: 'signed_in' }), true)
+  assert.equal(topbarNavVisible({ config: { auth_required: false }, status: 'signed_out' }), true)
+  assert.equal(topbarNavVisible({ config: { auth_required: true }, status: 'signed_out' }), false)
+  assert.equal(topbarNavVisible({ config: { auth_required: true }, status: 'unknown' }), false)
+  assert.equal(topbarNavVisible({ config: null, status: 'signed_out' }), false)
+  assert.equal(topbarNavVisible({ config: null, status: 'signed_in' }), true)
+})
+
+test('retryServerLogout: true when the server call works, false when it fails', async () => {
+  let calls = 0
+  assert.equal(await retryServerLogout(async () => { calls += 1 }), true)
+  assert.equal(await retryServerLogout(async () => { throw new Error('down') }), false)
+  assert.equal(await retryServerLogout(() => { throw new Error('sync') }), false)
+  assert.equal(calls, 1)
 })
 
 test('deleteResultView: no list, a non-array, junk entries and null all degrade safely', () => {

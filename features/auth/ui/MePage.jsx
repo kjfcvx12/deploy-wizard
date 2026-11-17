@@ -4,9 +4,11 @@ import { Link, Navigate, useNavigate } from 'react-router-dom'
 import { useAuth } from './AuthProvider.jsx'
 import DeleteAccountCard from './DeleteAccountCard.jsx'
 import TokensCard from './TokensCard.jsx'
-import { afterLogoutPath, deleteResultView, meViewState, safePictureUrl } from './authLogic.js'
+import { authApi } from './api.js'
+import { afterLogoutPath, deleteResultView, meViewState, retryServerLogout, safePictureUrl } from './authLogic.js'
 
 const LOGOUT_FAILED_TEXT = '서버에서 로그아웃하지 못했습니다. 연결되면 다시 로그아웃해 주세요.'
+const LOGOUT_RETRY_FAILED_TEXT = '다시 로그아웃하지 못했습니다. 연결을 확인한 뒤 다시 시도해 주세요.'
 const ECR_GUIDE_TEXT = 'AWS 콘솔의 ECR 에서 직접 지워 주세요. 요금이 나갈 수 있습니다.'
 
 // 내 정보 (S-15) - 계정 정보·알림 설정 링크·로그아웃·계정 삭제. 끝난 뒤의 결과 화면은 세션이 없어도 보인다
@@ -17,6 +19,9 @@ export default function MePage() {
   const [ended, setEnded] = useState(null)
   // 로그아웃 중 - 세션이 지워져도 로그인 화면으로 먼저 튕겨 나가지 않게 한다
   const [hold, setHold] = useState(false)
+  // 로그아웃 실패 화면에서 서버 로그아웃을 다시 시도하는 중 / 다시 시도도 실패함
+  const [retrying, setRetrying] = useState(false)
+  const [retryFailed, setRetryFailed] = useState(false)
   const view = meViewState({ config, configError, status, ended: ended !== null, hold })
 
   // 결과 화면이 그려진 뒤에야 이 브라우저의 세션·저장값을 지운다
@@ -27,13 +32,29 @@ export default function MePage() {
   // 로그아웃 - 서버에서 못 끝냈으면 이 브라우저는 로그아웃하되 그 사실을 알린다
   async function logout() {
     setHold(true)
-    const { serverLoggedOut } = await signOut()
-    if (serverLoggedOut) {
-      navigate(afterLogoutPath(config), { replace: true })
-      return
+    try {
+      const { serverLoggedOut } = await signOut()
+      if (serverLoggedOut) {
+        navigate(afterLogoutPath(config), { replace: true })
+        return
+      }
+      setEnded({ kind: 'logout_failed' })
+    } finally {
+      setHold(false)
     }
-    setHold(false)
-    setEnded({ kind: 'logout_failed' })
+  }
+
+  // 로그아웃 실패 화면에서 서버 로그아웃만 다시 시도 - 되면 떠나고, 또 실패하면 이 화면에 머문다
+  async function retryLogout() {
+    setRetrying(true)
+    setRetryFailed(false)
+    try {
+      const done = await retryServerLogout(() => authApi.logout())
+      if (done) navigate(afterLogoutPath(config), { replace: true })
+      else setRetryFailed(true)
+    } finally {
+      setRetrying(false)
+    }
   }
 
   if (view.kind === 'loading') return <p className="muted">불러오는 중…</p>
@@ -76,8 +97,10 @@ export default function MePage() {
       <section className="card me-result">
         <h1 className="page-title">이 브라우저에서 로그아웃했습니다</h1>
         <div className="notice warn" role="alert">{LOGOUT_FAILED_TEXT}</div>
+        {retryFailed && <div className="notice err" role="alert">{LOGOUT_RETRY_FAILED_TEXT}</div>}
         <div className="row" style={{ marginTop: 16 }}>
-          <button className="primary" onClick={() => navigate(afterLogoutPath(config), { replace: true })}>
+          <button onClick={retryLogout} disabled={retrying}>{retrying ? '로그아웃하는 중…' : '다시 로그아웃'}</button>
+          <button className="primary" onClick={() => navigate(afterLogoutPath(config), { replace: true })} disabled={retrying}>
             {config?.auth_required ? '로그인 화면으로' : '처음으로'}
           </button>
         </div>

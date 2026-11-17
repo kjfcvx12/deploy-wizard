@@ -10,8 +10,15 @@ const DELETE_FAILED_TEXT = '계정을 삭제하지 못했습니다'
 // 계정 삭제 카드 (빨간 테두리) - 확인 창 뒤에 지우고, 성공하면 응답을 onDeleted 로 넘긴다. 서비스를 대신 멈추거나 지우지 않고 링크만 준다
 export default function DeleteAccountCard({ onDeleted }) {
   const dialog = useRef(null)
+  const cancelRef = useRef(null)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState(null)
+
+  // 확인 창을 열고 초점을 [취소]에 둔다 - 기본 초점이 버튼 순서에 기대지 않게
+  function askDelete() {
+    dialog.current?.showModal()
+    cancelRef.current?.focus()
+  }
 
   // 확인 창에서 [삭제]를 눌렀을 때
   async function remove() {
@@ -34,7 +41,7 @@ export default function DeleteAccountCard({ onDeleted }) {
       <h2>계정 삭제</h2>
       <p>{DELETE_DESCRIPTION}</p>
       <div className="row">
-        <button className="danger" onClick={() => dialog.current?.showModal()} disabled={busy}>{busy ? '삭제하는 중…' : '계정 삭제'}</button>
+        <button className="danger" onClick={askDelete} disabled={busy}>{busy ? '삭제하는 중…' : '계정 삭제'}</button>
       </div>
 
       {error && (
@@ -57,7 +64,7 @@ export default function DeleteAccountCard({ onDeleted }) {
         <h2 style={{ marginTop: 0 }}>계정을 삭제할까요?</h2>
         <p>{DELETE_DESCRIPTION}</p>
         <div className="row" style={{ justifyContent: 'flex-end' }}>
-          <button autoFocus onClick={() => dialog.current?.close()}>취소</button>
+          <button ref={cancelRef} onClick={() => dialog.current?.close()}>취소</button>
           <button className="danger" onClick={remove}>삭제</button>
         </div>
       </dialog>

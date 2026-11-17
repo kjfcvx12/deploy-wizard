@@ -12,10 +12,15 @@ import NotificationSettingsPage from '@features/notifications/ui/NotificationSet
 import AccountsPage from '@features/accounts/ui/AccountsPage.jsx'
 import AuthNavLink from '@features/auth/ui/AuthNavLink.jsx'
 import MePage from '@features/auth/ui/MePage.jsx'
+import { useAuth } from '@features/auth/ui/AuthProvider.jsx'
+import { topbarNavVisible } from '@features/auth/ui/authLogic.js'
 import ConnectGuidePage from '@features/accounts/ui/ConnectGuidePage.jsx'
 
 // 상단 바가 있는 보통 화면들의 틀
 function Shell({ children }) {
+  const { config, status } = useAuth()
+  // 로그인하지 않은 방문자·계정 삭제 뒤 결과 화면에서는 알림을 읽으러 나가지 않는다 (토큰 없이 부르는 일을 막는다)
+  const navVisible = topbarNavVisible({ config, status })
   return (
     <div className="shell">
       <header className="topbar">
@@ -23,8 +28,8 @@ function Shell({ children }) {
           <span className="brand-mark">▲</span> AWS 자동 배포 마법사
         </Link>
         <nav className="row">
-          <BellLink />
-          <Link to="/accounts" className="topbar-link">계정 연결</Link>
+          {navVisible && <BellLink />}
+          {navVisible && <Link to="/accounts" className="topbar-link">계정 연결</Link>}
           <AuthNavLink />
           <span className="topbar-note">GitHub 주소 하나로 HTTPS 주소까지</span>
         </nav>

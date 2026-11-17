@@ -125,7 +125,8 @@ export function parseLiveDeploys(detail) {
     const found = /^#(\d+) ([^\s,]+)$/.exec(piece)
     const dId = found ? Number(found[1]) : 0
     if (!found || !Number.isSafeInteger(dId) || dId < 1) return raw
-    items.push({ d_id: dId, label: found[2] })
+    // 같은 서비스가 두 번 나와도 한 번만 (목록 key 가 겹치지 않게)
+    if (!items.some((item) => item.d_id === dId)) items.push({ d_id: dId, label: found[2] })
   }
   return { message: detail.slice(0, at), items }
 }
@@ -134,7 +135,8 @@ export function parseLiveDeploys(detail) {
 export function deleteResultView(response) {
   const message = typeof response?.message === 'string' && response.message.trim() ? response.message : DELETE_DONE_TEXT
   const list = response?.leftover_ecr_repositories
-  const leftovers = Array.isArray(list) ? list.filter((name) => typeof name === 'string' && name.trim()).map((name) => name.trim()) : []
+  // 같은 이름은 한 번만 (목록 key 가 겹치지 않게)
+  const leftovers = Array.isArray(list) ? [...new Set(list.filter((name) => typeof name === 'string' && name.trim()).map((name) => name.trim()))] : []
   return { message, leftovers }
 }
 
@@ -174,6 +176,19 @@ export function meViewState({ config, configError, status, ended, hold }) {
 // 로그아웃한 뒤 갈 곳 - 로그인이 필요한 서버는 로그인 화면, 끈 모드는 처음 화면
 export function afterLogoutPath(config) {
   return config?.auth_required ? '/login' : '/'
+}
+
+// 상단 바의 알림·계정 연결 링크를 그릴지 - 로그인했거나 로그인이 필요 없는 서버일 때만 (세션 없이 알림을 읽으려 하지 않게)
+export const topbarNavVisible = ({ config, status }) => status === 'signed_in' || (!!config && config.auth_required === false)
+
+// 서버 로그아웃만 다시 시도한다 (주입) - 됐으면 true, 또 실패하면 false
+export async function retryServerLogout(logout) {
+  try {
+    await logout()
+    return true
+  } catch {
+    return false
+  }
 }
 
 // 로그아웃 순서 (주입) - 서버 호출이 실패해도 이 브라우저에서는 끝내고, 서버에서 못 끝냈는지 알려 준다
