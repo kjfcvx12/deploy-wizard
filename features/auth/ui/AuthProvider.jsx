@@ -5,7 +5,7 @@ import {
 } from '@shared/ui/session.js'
 import { onUnauthorized } from '@shared/ui/api.js'
 import { authApi } from './api.js'
-import { CONFIG_OFF, normalizeConfig, runBoot } from './authLogic.js'
+import { CONFIG_OFF, normalizeConfig, runBoot, runSignOut } from './authLogic.js'
 import { clearUserScopedStorage, forgetSessionHint, hadSessionHint, rememberSessionHint } from './userData.js'
 
 // 갱신 호출을 세션에 한 번 등록한다 (화면보다 먼저 - 401 재시도가 이것을 쓴다)
@@ -102,16 +102,12 @@ export function AuthProvider({ children }) {
     return token?.user ?? null
   }, [])
 
-  // 로그아웃 - 서버 호출이 실패해도 이 브라우저에서는 끝낸다
-  const signOut = useCallback(async () => {
-    try {
-      await authApi.logout()
-    } catch {
-      // 연결이 안 돼도 이 브라우저의 세션은 지운다
-    }
-    clearSession('logout')
-    clearUserScopedStorage()
-  }, [])
+  // 로그아웃 - 서버 호출이 실패해도 이 브라우저에서는 끝내고, 서버에서 못 끝냈는지({ serverLoggedOut: false })를 돌려준다
+  const signOut = useCallback(() => runSignOut({
+    logout: () => authApi.logout(),
+    clearSession: () => clearSession('logout'),
+    clearStorage: () => clearUserScopedStorage(),
+  }), [])
 
   // 계정 삭제가 끝난 뒤 이 브라우저에 남은 것을 지운다
   const forgetAfterDelete = useCallback(() => {

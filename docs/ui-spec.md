@@ -11,6 +11,7 @@ React 19 + Vite + react-router. 화면 코드는 각 기능의 `ui/`에 있고, 
 | `/deploys/:d_id/settings` | 배포 설정 (S-14, 계획 E) | `features/deploys/ui/DeploySettingsPage.jsx` |
 | `/notifications` | 알림 목록 (S-12, 계획 E) | `features/notifications/ui/NotificationsPage.jsx` |
 | `/notification-settings` | 알림 설정 (S-15 알림 부분, 계획 E) | `features/notifications/ui/NotificationSettingsPage.jsx` |
+| `/me` | 내 정보 (S-15: 계정 정보·로그아웃·계정 삭제, 로그인 계획 Task 5) | `features/auth/ui/MePage.jsx`, `DeleteAccountCard.jsx` (상단 바 링크 `AuthNavLink.jsx`) |
 
 운영 화면 네 개(아래 "4. 운영 화면")는 계획 E 에서 더했다. 상단 바에는 `알림`(안 읽은 수 알약) 링크가 `계정 연결` 앞에 붙는다 (`features/notifications/ui/BellLink.jsx`).
 

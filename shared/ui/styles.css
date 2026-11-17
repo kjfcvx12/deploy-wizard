@@ -547,3 +547,21 @@ details.env-group > summary { font-size: 14px; }
   .login-card { padding: 20px 16px; }
   .login-actions button { flex: 1 1 100%; }
 }
+
+/* 내 정보 (S-15) */
+.me-who { display: flex; align-items: center; gap: 12px; min-width: 0; }
+.me-photo { width: 48px; height: 48px; border-radius: 50%; flex: none; object-fit: cover; background: var(--surface-2); }
+.me-id { min-width: 0; }
+.me-name { font-weight: 700; overflow-wrap: anywhere; }
+.me-email { overflow-wrap: anywhere; }
+.me-link { display: inline-flex; align-items: center; min-height: 40px; font-weight: 600; }
+.me-result p { overflow-wrap: anywhere; }
+.me-leftovers { list-style: none; margin: 8px 0; padding: 0; }
+.me-leftovers li { margin: 6px 0; min-width: 0; }
+.me-leftovers code { display: inline-block; max-width: 100%; padding: 4px 8px; border-radius: 6px; background: var(--surface-2); overflow-wrap: anywhere; user-select: text; }
+.delete-card { border-color: var(--err); }
+.delete-card h2 { color: var(--err); }
+.delete-card p { margin: 0 0 12px; overflow-wrap: anywhere; }
+.delete-card .notice { overflow-wrap: anywhere; }
+.delete-live { list-style: none; margin: 8px 0; padding: 0; }
+.delete-live a { display: flex; align-items: center; min-height: 40px; overflow-wrap: anywhere; }

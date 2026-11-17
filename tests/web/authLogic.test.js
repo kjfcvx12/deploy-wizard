@@ -2,7 +2,10 @@ import test, { beforeEach, afterEach } from 'node:test'
 import assert from 'node:assert/strict'
 import './useAlias.mjs'
 
-const { normalizeConfig, CONFIG_OFF, routeDecision, safeNext, loginErrorText } = await import('../../features/auth/ui/authLogic.js')
+const {
+  normalizeConfig, CONFIG_OFF, routeDecision, safeNext, loginErrorText,
+  parseLiveDeploys, deleteResultView, safePictureUrl, loginPathFor, authNavLinkView, meViewState, afterLogoutPath, runSignOut,
+} = await import('../../features/auth/ui/authLogic.js')
 const { clearUserScopedStorage, HAD_SESSION_KEY } = await import('../../features/auth/ui/userData.js')
 const { authApi } = await import('../../features/auth/ui/api.js')
 const { NETWORK_ERROR_TEXT } = await import('../../shared/ui/api.js')
@@ -194,4 +197,114 @@ test('authApi: a 401 from a public call does not trigger a refresh', async () =>
   await assert.rejects(authApi.loginGoogle('t'), (e) => e.status === 401)
   assert.equal(refreshCalls, 0)
   assert.equal(calls.length, 1)
+})
+
+const LIVE_TEXT = '먼저 멈추거나 삭제해야 하는 서비스가 있습니다: #3 my-app, #5 other'
+
+test('parseLiveDeploys: splits the server 409 sentence into message and items', () => {
+  const out = parseLiveDeploys(LIVE_TEXT)
+  assert.equal(out.message, '먼저 멈추거나 삭제해야 하는 서비스가 있습니다')
+  assert.deepEqual(out.items, [{ d_id: 3, label: 'my-app' }, { d_id: 5, label: 'other' }])
+})
+
+test('parseLiveDeploys: a repo url without spaces or commas is the label', () => {
+  const out = parseLiveDeploys('먼저 멈추거나 삭제해야 하는 서비스가 있습니다: #7 https://github.com/a/b')
+  assert.deepEqual(out.items, [{ d_id: 7, label: 'https://github.com/a/b' }])
+})
+
+test('parseLiveDeploys: unknown formats degrade to no items and the raw text', () => {
+  for (const raw of ['서비스가 있습니다', '먼저 멈추세요: my-app, other', '문구: #x name', '문구: #3', '문구: #3 a, b', '문구: #0 zero', '문구: #3 a,#5 b']) {
+    const out = parseLiveDeploys(raw)
+    assert.deepEqual(out.items, [], raw)
+    assert.equal(out.message, raw)
+  }
+})
+
+test('parseLiveDeploys: non-string input gives an empty message and no items', () => {
+  for (const raw of [undefined, null, 5, { a: 1 }, ['x']]) {
+    assert.deepEqual(parseLiveDeploys(raw), { message: '', items: [] })
+  }
+})
+
+test('deleteResultView: message as is and the repository list', () => {
+  const out = deleteResultView({ message: '계정을 삭제했습니다.', leftover_ecr_repositories: ['a', 'b'], deleted: { deploys: 1 } })
+  assert.deepEqual(out, { message: '계정을 삭제했습니다.', leftovers: ['a', 'b'] })
+})
+
+test('deleteResultView: no list, a non-array, junk entries and null all degrade safely', () => {
+  assert.deepEqual(deleteResultView({ message: 'm' }), { message: 'm', leftovers: [] })
+  assert.deepEqual(deleteResultView({ message: 'm', leftover_ecr_repositories: 'a' }), { message: 'm', leftovers: [] })
+  assert.deepEqual(deleteResultView({ message: 'm', leftover_ecr_repositories: ['a', '', 3, null, ' '] }), { message: 'm', leftovers: ['a'] })
+  assert.deepEqual(deleteResultView(null), { message: '계정을 삭제했습니다', leftovers: [] })
+  assert.deepEqual(deleteResultView(undefined), { message: '계정을 삭제했습니다', leftovers: [] })
+})
+
+test('safePictureUrl: only https urls are shown', () => {
+  assert.equal(safePictureUrl('https://lh3.googleusercontent.com/a/x=s96'), 'https://lh3.googleusercontent.com/a/x=s96')
+  for (const bad of ['http://x/y.png', 'javascript:alert(1)', 'data:image/png;base64,AA', '//x/y', '', null, undefined, 5]) {
+    assert.equal(safePictureUrl(bad), null, String(bad))
+  }
+})
+
+test('loginPathFor: the current path is encoded exactly once', () => {
+  assert.equal(loginPathFor('/me'), '/login?next=%2Fme')
+  assert.equal(loginPathFor('/deploys/3?tab=a&b=1#x'), '/login?next=' + encodeURIComponent('/deploys/3?tab=a&b=1#x'))
+  assert.equal(loginPathFor('/deploys/3?tab=a&b=1#x').includes('%25'), false)
+})
+
+test('authNavLinkView: signed in shows 내 정보, login link only when login is available, otherwise nothing', () => {
+  const on = { ...CONFIG_OFF, login_available: true }
+  assert.deepEqual(authNavLinkView({ config: on, status: 'signed_in', path: '/' }), { label: '내 정보', to: '/me' })
+  assert.deepEqual(authNavLinkView({ config: CONFIG_OFF, status: 'signed_in', path: '/' }), { label: '내 정보', to: '/me' })
+  assert.deepEqual(authNavLinkView({ config: on, status: 'signed_out', path: '/accounts?x=1' }), { label: '로그인', to: '/login?next=' + encodeURIComponent('/accounts?x=1') })
+  assert.equal(authNavLinkView({ config: CONFIG_OFF, status: 'signed_out', path: '/' }), null)
+  assert.equal(authNavLinkView({ config: null, status: 'signed_out', path: '/' }), null)
+  assert.equal(authNavLinkView({ config: on, status: 'unknown', path: '/' }), null)
+})
+
+test('meViewState: result screens first, then hold, error, loading, redirect, ready', () => {
+  const on = { ...CONFIG_OFF, auth_required: true, login_available: true }
+  const base = { config: on, configError: false, status: 'signed_in', ended: false, hold: false }
+  assert.deepEqual(meViewState(base), { kind: 'ready' })
+  // 결과 화면은 세션이 없어도, 연결 오류가 있어도 보인다
+  assert.deepEqual(meViewState({ ...base, status: 'signed_out', ended: true }), { kind: 'ended' })
+  assert.deepEqual(meViewState({ ...base, status: 'signed_out', configError: true, ended: true }), { kind: 'ended' })
+  assert.deepEqual(meViewState({ ...base, status: 'signed_out', hold: true }), { kind: 'hold' })
+  assert.deepEqual(meViewState({ ...base, configError: true }), { kind: 'error' })
+  assert.deepEqual(meViewState({ ...base, config: null }), { kind: 'loading' })
+  assert.deepEqual(meViewState({ ...base, status: 'unknown' }), { kind: 'loading' })
+  assert.deepEqual(meViewState({ ...base, status: 'signed_out' }), { kind: 'redirect', to: '/login?next=%2Fme' })
+})
+
+test('meViewState: signed out in off mode goes to login when possible, else home', () => {
+  const base = { configError: false, status: 'signed_out', ended: false, hold: false }
+  assert.deepEqual(meViewState({ ...base, config: { ...CONFIG_OFF, login_available: true } }), { kind: 'redirect', to: '/login?next=%2Fme' })
+  assert.deepEqual(meViewState({ ...base, config: CONFIG_OFF }), { kind: 'redirect', to: '/' })
+  // 로그인이 필요한 서버면 로그인을 못 해도 로그인 화면이 사정을 알려 준다
+  assert.deepEqual(meViewState({ ...base, config: { ...CONFIG_OFF, auth_required: true } }), { kind: 'redirect', to: '/login?next=%2Fme' })
+})
+
+test('afterLogoutPath: login screen when login is required, home in off mode', () => {
+  assert.equal(afterLogoutPath({ ...CONFIG_OFF, auth_required: true }), '/login')
+  assert.equal(afterLogoutPath({ ...CONFIG_OFF, login_available: true }), '/')
+  assert.equal(afterLogoutPath(CONFIG_OFF), '/')
+  assert.equal(afterLogoutPath(null), '/')
+})
+
+test('runSignOut: server logout ok reports true and clears both local things', async () => {
+  const seen = []
+  const out = await runSignOut({ logout: async () => seen.push('logout'), clearSession: () => seen.push('session'), clearStorage: () => seen.push('storage') })
+  assert.deepEqual(out, { serverLoggedOut: true })
+  assert.deepEqual(seen, ['logout', 'session', 'storage'])
+})
+
+test('runSignOut: a failing server logout is tolerated and reported, local sign-out still happens', async () => {
+  const seen = []
+  const out = await runSignOut({
+    logout: async () => { throw new Error('offline') },
+    clearSession: () => seen.push('session'),
+    clearStorage: () => seen.push('storage'),
+  })
+  assert.deepEqual(out, { serverLoggedOut: false })
+  assert.deepEqual(seen, ['session', 'storage'])
 })

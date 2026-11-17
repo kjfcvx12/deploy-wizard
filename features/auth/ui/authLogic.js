@@ -102,3 +102,82 @@ export async function runBoot({ getConfig, refresh, getStatus, markBooted, hasHi
   markBooted(getStatus())
   return { error: false }
 }
+
+const DELETE_DONE_TEXT = '계정을 삭제했습니다'
+const ME_PATH = '/me'
+
+// 서버 409 문구("먼저 …: #3 my-app, #5 other")를 문구와 서비스 목록으로 나눈다 - 형식이 다르면 항목 없이 원문 그대로
+export function parseLiveDeploys(detail) {
+  if (typeof detail !== 'string') return { message: '', items: [] }
+  const raw = { message: detail, items: [] }
+  const at = detail.indexOf(': #')
+  if (at < 0) return raw
+  const items = []
+  for (const piece of detail.slice(at + 2).split(', ')) {
+    // 서비스 이름·레포 주소에는 공백과 쉼표가 없다
+    const found = /^#(\d+) ([^\s,]+)$/.exec(piece)
+    const dId = found ? Number(found[1]) : 0
+    if (!found || !Number.isSafeInteger(dId) || dId < 1) return raw
+    items.push({ d_id: dId, label: found[2] })
+  }
+  return { message: detail.slice(0, at), items }
+}
+
+// 계정 삭제 응답을 결과 화면용으로 다듬는다 - 남은 ECR 저장소 이름은 문자열만
+export function deleteResultView(response) {
+  const message = typeof response?.message === 'string' && response.message.trim() ? response.message : DELETE_DONE_TEXT
+  const list = response?.leftover_ecr_repositories
+  const leftovers = Array.isArray(list) ? list.filter((name) => typeof name === 'string' && name.trim()).map((name) => name.trim()) : []
+  return { message, leftovers }
+}
+
+// 사진 주소는 https 만 그린다 (그 밖의 주소·스킴은 사진 없이)
+export function safePictureUrl(value) {
+  if (typeof value !== 'string' || !value) return null
+  try {
+    return new URL(value).protocol === 'https:' ? value : null
+  } catch {
+    return null
+  }
+}
+
+// 로그인 화면 주소 - 돌아올 경로는 한 번만 인코딩한다
+export function loginPathFor(path) {
+  return '/login?next=' + encodeURIComponent(path)
+}
+
+// 상단 바의 로그인·내 정보 링크 - 로그인했으면 내 정보, 로그인이 가능할 때만 로그인, 아니면 없음 (끔 모드 화면은 그대로)
+export function authNavLinkView({ config, status, path }) {
+  if (status === 'signed_in') return { label: '내 정보', to: ME_PATH }
+  if (status === 'signed_out' && config?.login_available) return { label: '로그인', to: loginPathFor(path) }
+  return null
+}
+
+// 내 정보 화면이 무엇을 보일지 - ended(끝난 뒤 결과 화면)는 세션이 없어도 보이고, hold 는 로그아웃 중 이동을 기다린다
+export function meViewState({ config, configError, status, ended, hold }) {
+  if (ended) return { kind: 'ended' }
+  if (hold) return { kind: 'hold' }
+  if (configError) return { kind: 'error' }
+  if (!config || status === 'unknown') return { kind: 'loading' }
+  if (status === 'signed_in') return { kind: 'ready' }
+  // 로그인할 수 없는 끄기 모드에서는 내 정보가 없으니 처음 화면으로
+  return { kind: 'redirect', to: config.auth_required || config.login_available ? loginPathFor(ME_PATH) : '/' }
+}
+
+// 로그아웃한 뒤 갈 곳 - 로그인이 필요한 서버는 로그인 화면, 끈 모드는 처음 화면
+export function afterLogoutPath(config) {
+  return config?.auth_required ? '/login' : '/'
+}
+
+// 로그아웃 순서 (주입) - 서버 호출이 실패해도 이 브라우저에서는 끝내고, 서버에서 못 끝냈는지 알려 준다
+export async function runSignOut({ logout, clearSession, clearStorage }) {
+  let serverLoggedOut = true
+  try {
+    await logout()
+  } catch {
+    serverLoggedOut = false
+  }
+  clearSession()
+  clearStorage()
+  return { serverLoggedOut }
+}
