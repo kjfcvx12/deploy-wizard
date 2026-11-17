@@ -53,6 +53,8 @@ async def test_deploy_create_and_get(client):
 # M6 - 생성 시 넘긴 계정 연결이 실제로 저장된다 (services_deploy_create가 Deploy_Create를 다시 만들면서 빠뜨리기 쉽다)
 @pytest.mark.asyncio
 async def test_deploy_create_persists_account_links(client):
+    await accounts_make(5, 9)
+
     response=await client.post("/api/deploys", json={
         "repo_url": "https://github.com/o/r", "aws_account_id": 5, "github_installation_id": 9,
     })
@@ -73,6 +75,33 @@ async def test_deploy_create_rejects_bad_url(client):
 
     assert response.status_code == 400
     assert client.started == []
+
+
+# 연결 계정 행을 바로 만든다 - 배포 본문의 id 는 있는 계정·설치여야 한다 (로그인 계획 Task 5, 없으면 404). 반환: (a_id, g_id)
+async def accounts_make(a_id:int, g_id:int) -> tuple[int, int]:
+    from shared.database import AsyncSessionLocal
+    from features.accounts.models import Aws_Account, Github_Installation
+
+    async with AsyncSessionLocal() as db:
+        db.add_all([Aws_Account(a_id=a_id, label="a", external_id_encrypted="x"),
+                    Github_Installation(g_id=g_id, installation_id=1000 + g_id, account_login="o")])
+        await db.commit()
+    return a_id, g_id
+
+
+# 없는 계정·설치를 넣으면 404 이고 배포가 생기지 않는다 (인증 끔 모드에서도 있는지는 본다)
+@pytest.mark.asyncio
+async def test_deploy_create_unknown_account_404(client, monkeypatch):
+    from shared.settings import settings
+
+    monkeypatch.setattr(settings, "auth_enabled", False)
+
+    for body in ({"aws_account_id": 5}, {"github_installation_id": 9}):
+        response=await client.post("/api/deploys", json={"repo_url": "https://github.com/o/r", **body})
+        assert response.status_code == 404
+
+    assert client.started == []
+    assert (await client.get("/api/deploys")).json() == []
 
 
 @pytest.mark.asyncio
@@ -135,6 +164,8 @@ async def test_deploy_get_remote_uses_github_token(client, monkeypatch):
 
     monkeypatch.setattr(deploys_services_module.Github_Service, "services_github_token_by_g_id", staticmethod(fake_token))
     monkeypatch.setattr(deploys_services_module.Repo_Service, "services_repo_remote", staticmethod(fake_remote))
+
+    await accounts_make(1, 3)
 
     response=await client.get("/api/deploys/remote", params={"repo_url": "https://github.com/o/r", "github_installation_id": 3})
     assert response.status_code == 200

@@ -320,3 +320,20 @@ def test_express_create_blank_env_is_silent(monkeypatch, caplog):
 
     assert "cpu" not in session.ecs.params and "memory" not in session.ecs.params
     assert not caplog.records
+
+
+# 로그인 토큰(dwr_·dwp_)과 암호문(gAAAAA…)도 가린다
+def test_mask_text_hides_auth_tokens():
+    refresh="dwr_" + "A1b2C3d4E5" * 4 + "xyz"
+    pat="dwp_" + "Z9y8X7w6V5" * 4 + "abc"
+    cipher="gAAAAA" + "Qw3rTy-_9" * 12
+    jwt="eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.abcdefghij1234567890"
+
+    for secret in (refresh, pat, cipher, jwt):
+        masked=mask_text(f"요청 실패 {secret} 끝")
+        assert secret not in masked
+        assert "****" in masked
+        assert masked.startswith("요청 실패 ") and masked.endswith(" 끝")
+
+    assert len(refresh) == 4 + 43
+    assert mask_text("배포가 끝났습니다. 주소는 곧 나옵니다.") == "배포가 끝났습니다. 주소는 곧 나옵니다."

@@ -17,6 +17,10 @@ MASK_PATTERNS=[
     re.compile(r"(?<=://)[^/\s:@]+:[^/\s@]+(?=@)"),
     # JWT
     re.compile(r"\beyJ[A-Za-z0-9_\-]{10,}\.[A-Za-z0-9_\-]{10,}\.[A-Za-z0-9_\-]{10,}\b"),
+    # 로그인 리프레시 토큰(dwr_)·개인 토큰(dwp_)
+    re.compile(r"dw[rp]_[A-Za-z0-9_\-]{20,}"),
+    # Fernet 암호문 (gAAAAA 로 시작하는 긴 base64url)
+    re.compile(r"gAAAAA[A-Za-z0-9_\-]{80,}={0,2}"),
 ]
 
 # KEY=value 형태 (secret, token, password, key 가 이름에 들어간 것)

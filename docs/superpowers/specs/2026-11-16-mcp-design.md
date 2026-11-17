@@ -113,6 +113,8 @@ tests/test_mcp.py
 
 ## 6. 이후 단계 (이번에 만들지 않음)
 
+> **상태 (2026-11-17)**: 2단계 로그인 백엔드와 6.1 암호화는 `feat/login-backend`에서 **구현됨** (기본 꺼짐, 실제 Google 로그인·실제 DB 이전은 미확인). MCP 는 개인 토큰(PAT)을 `WIZARD_API_TOKEN` 으로 보낸다 (`scripts/auth_token.py`). 현황은 `docs/architecture.md` "로그인과 소유권", `docs/api-spec.md` "인증 공통". 3단계(원격 MCP·OAuth 2.1)는 아직이다.
+
 **2단계: 로그인 백엔드** — 설계는 `docs/app-web/`(02 A-01~05, 04 인증)에 있다. 요점과 현재 코드의 차이:
 - 지금 코드에는 `get_current_user`가 없고 `u_id` 컬럼은 알림 테이블에만 있다. 배포·AWS 계정·연결·GitHub 설치·감시·인시던트 테이블에 `u_id`를 넣고(nullable → 마이그레이션 `ensure_columns`), 모든 조회·변경이 현재 사용자로 걸러지게 해야 한다. 기존 데이터(`u_id` null)를 첫 로그인 사용자에게 줄지 정해야 한다.
 - Google `id_token` 검증 → `users` → 액세스(짧음)·리프레시(회전, 재사용 시 계열 폐기) 토큰. 소유자가 할 일: Google Cloud OAuth 클라이언트 등록 (외부 계정 작업).

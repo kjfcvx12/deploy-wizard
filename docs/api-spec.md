@@ -1,6 +1,6 @@
 # API 스펙
 
-Base URL: `http://localhost:8081` · 전부 JSON · 인증 없음(로컬 전용) · 대화형 문서 `/docs`
+Base URL: `http://localhost:8081` · 전부 JSON · 인증은 `AUTH_ENABLED`에 따른다(기본 `false` = 지금처럼 인증 없음, 로컬 전용. 아래 "인증 공통") · 대화형 문서 `/docs`
 
 에러는 FastAPI 기본 형태다. `detail`은 한국어이며 화면에 그대로 보여 준다.
 
@@ -8,11 +8,103 @@ Base URL: `http://localhost:8081` · 전부 JSON · 인증 없음(로컬 전용)
 { "detail": "해당 id의 배포가 없습니다" }
 ```
 
+## 인증 공통 (로그인 계획 Task 4)
+
+- **`AUTH_ENABLED=false` (기본)**: 지금처럼 토큰 없이 모든 API 가 동작한다(소유권 필터 없음). 웹·앱·MCP stdio 서버가 로그인 화면 전까지 그대로 쓴다. 보내온 `Authorization` 헤더는 무시한다 — 단 `/api/me`·`/api/auth/tokens*`는 꺼진 모드에서도 로그인 사용자가 있어야 한다.
+- **`AUTH_ENABLED=true`**: 아래 공개 경로를 뺀 모든 `/api/*`에 `Authorization: Bearer <토큰>`이 필요하다. 토큰은 액세스 JWT(`POST /api/auth/google`·`/refresh`가 준 것) 또는 개인 토큰(`dwp_…`, MCP 용). 사용자가 없거나 `active`가 아니면 401. 개인 토큰은 사용자의 이메일이 `AUTH_ALLOWED_EMAILS`에 아직 있어야 한다.
+- `SECRET_KEY`·`BLIND_INDEX_KEY`는 **어느 모드에서나** `.env`에 있어야 한다(암호화 열·블라인드 인덱스를 늘 쓴다). 없으면 서버가 시작하지 않는다(`서버를 시작하려면 .env 에 … 가 필요합니다` + 생성 명령). 켤 때는 `AUTH_JWT_KEY`도 있어야 한다(`로그인을 켜려면 .env 에 AUTH_JWT_KEY 가 필요합니다`).
+- **공개 경로** (`features/auth/services.py`의 `PUBLIC_PATHS`): `/api/health`, `/api/watches/webhook`(서명 검증), `/api/accounts/github/callback`(서명된 `state`로 보호, 아래 Accounts), `/api/accounts/aws/template`(사용자 정보 없는 정적 파일), `/api/auth/google`, `/api/auth/refresh`, `/api/auth/logout`. 그 밖의 경로는 `tests/test_auth_current_user.py`가 모든 라우트를 훑어 인증 의존성이 걸려 있는지 확인한다 — 새 라우트도 빠지면 시험이 실패한다.
+- 401 응답에는 언제나 `WWW-Authenticate: Bearer` 헤더가 붙고 `detail`은 `로그인이 필요합니다`. 남의 자원은 403 이 아니라 **404**(존재를 숨긴다).
+
+### 소유권 (로그인 계획 Task 5)
+
+- 최상위 표(`deploys`·`aws_accounts`·`github_installations`·`connections`·`notifications`·`push_devices`·`notification_settings`)에 주인 `u_id`가 있다 (알림 쪽은 Task 7, 아래 Notifications). 자식 표(로그·이슈·릴리스·환경변수·헬스·인시던트·복구 시도)는 부모 배포를 따라간다.
+- `AUTH_ENABLED=true`: 목록은 내 것만, `d_id`·`i_id`를 받는 경로는 남의 것이면 없는 것과 같이 **404**. 배포 만들기·분석·브랜치 조회 본문의 `aws_account_id`·`github_installation_id`도 내 것이어야 한다 (남의 것·없는 것 404, 그 자격증명은 쓰이지 않는다). 새 배포의 주인은 만든 사용자.
+- `AUTH_ENABLED=false`: 주인을 보지 않는다 (주인 없는 옛 기록도 전부 보인다). 단 본문의 `aws_account_id`·`github_installation_id`는 있는 것이어야 한다 — 없는 id 는 배포 만들기(`POST /api/deploys`)·분석(advice)·브랜치 조회(remote) 모두 404.
+- 서버 안 백그라운드(파이프라인·헬스 점검·감시·자동 복구)는 주인과 상관없이 모든 배포를 다룬다.
+- 계정 라우터(`/api/accounts/*`, 로그인 계획 Task 6): `AUTH_ENABLED=true`면 AWS 계정·GitHub 설치·연결 블록 목록은 내 것만, `a_id`·`g_id`·`c_id`를 받는 경로는 남의 것이면 **404** — AWS(AssumeRole·S3·IAM)·GitHub 호출 전에 막는다. 블록에 잇는 계정·설치(`PATCH /connections/{c_id}` 본문)도 내 것이어야 한다. 새로 만든 계정·블록·설치의 주인은 만든 사용자. 공개로 남는 것은 `/aws/template`(정적 파일)과 `/github/callback`(서명된 `state`).
+- 연결 정보 암호화: `aws_accounts.role_arn`·`aws_accounts.aws_account_id`·`github_installations.account_login`은 DB 에 Fernet 암호문으로 저장된다(`Encrypted_Text`). API 응답은 지금처럼 주인에게만 평문으로 보인다(필드 변화 없음). `installation_id`는 평문(웹훅·콜백이 이 값으로 찾는다). 이전 전 평문이 남은 DB 를 읽으면 `암호화 전 값이 DB 에 남아 있습니다. 서버를 끄고 python scripts/migrate_login.py backup → encrypt --yes 를 실행하세요` 오류가 난다(값을 섞어 읽지 않는다).
+
+### 개인 토큰 (PAT, MCP 용)
+
+| Method | Endpoint | 설명 | 성공 |
+|--------|----------|------|------|
+| POST | `/api/auth/tokens` | 본문 `Api_Token_Create`. 원문 `token`은 이 응답에만 나간다. 로그인(액세스 토큰)으로만 — 개인 토큰으로 부르면 403 | 201 `Api_Token_Issued` |
+| GET | `/api/auth/tokens` | 내 토큰 중 폐기 전 것 (만료된 것 포함), 최근 것부터. 원문 없이 끝 4자리만 | 200 `list[Api_Token_Read]` |
+| DELETE | `/api/auth/tokens/{a_t_id}` | 폐기. 남의 것·없는 것·이미 폐기한 것은 404 | 200 `{"message": "개인 토큰을 폐기했습니다"}` |
+
+- `Api_Token_Create`: `{ "name": "mcp", "expires_in_days": 30 }` — `name` 앞뒤 공백 제거 후 1~50자(밖이면 422), `expires_in_days`는 생략하면 `AUTH_PAT_DEFAULT_DAYS`(30), 1 미만 422, `AUTH_PAT_MAX_DAYS`(90) 초과 400 `개인 토큰 기간은 최대 90일입니다`.
+- `Api_Token_Read`: `{ "a_t_id": 1, "name": "mcp", "last4": "AbCd", "expires_at": "…", "last_used_at": null, "created_at": "…" }` · `Api_Token_Issued` = `Api_Token_Read` + `"token": "dwp_…"`.
+- 서버는 SHA-256 해시와 끝 4자리만 저장한다. `last_used_at`은 1분에 한 번까지만 갱신한다. 폐기·만료된 토큰은 401.
+- 웹 로그인 화면 전에 MCP 토큰 받기: `python scripts/auth_token.py create --email <주소> --name mcp [--days 30]` (표준 출력에 원문 한 번) · `list --email <주소>` · `revoke --id <a_t_id>`. DB 는 `DB_URL`. 사용자는 먼저 Google 로그인으로 만들어져 있어야 한다. MCP 서버는 `.env`(또는 MCP 등록의 `-e WIZARD_API_TOKEN=…`)의 `WIZARD_API_TOKEN`에 이 토큰을 두면 Bearer 로 보낸다. 로그인이 켜진 서버가 401 을 내면 MCP 는 `배포 마법사 로그인 토큰이 없거나 만료되었습니다. python scripts/auth_token.py create --email <주소> --name mcp 로 만들어 WIZARD_API_TOKEN 에 넣으세요` 로 안내한다 (토큰 원문은 싣지 않는다). 로그인이 꺼진 서버는 토큰이 없어도 그대로 동작한다.
+
+## Auth (로그인 - 백엔드, 실제 Google 로그인 미확인)
+
+Google `id_token`으로 로그인해 액세스 토큰(JWT, 900초)과 리프레시 토큰(`dwr_…`, 30일, 회전)을 받는다. 로그인은 `AUTH_ALLOWED_EMAILS`(쉼표)에 있는 이메일만 된다. 다른 라우터의 인증은 위 "인증 공통"을 따른다.
+
+| Method | Endpoint | 설명 | 성공 |
+|--------|----------|------|------|
+| POST | `/api/auth/google` | 본문 `{id_token, platform}`. Google 서명·`aud`(그 플랫폼의 클라이언트 ID)·`iss`·`exp`·`email_verified` 검증 → 사용자를 찾거나(`google_sub`) 만들고 새 계열로 토큰 발급. 있는 사용자는 이메일·이름·사진을 갱신 | 200 `Auth_Token` |
+| POST | `/api/auth/refresh` | 본문 `{refresh_token}`(앱) 또는 쿠키 `dw_refresh`(웹, 본문 생략·`null`). 쓴 토큰은 폐기하고 같은 계열의 새 토큰 발급. **이미 폐기된 토큰이 다시 오면 그 계열 전체를 폐기하고 401.** 같은 토큰으로 동시에 두 번 오면 하나만 200 | 200 `Auth_Token` |
+| POST | `/api/auth/logout` | 그 토큰의 계열 폐기 + 쿠키 삭제. 토큰이 없거나 몰라도 200 | 200 `{"message": "로그아웃했습니다"}` |
+| GET | `/api/me` | 헤더 `Authorization: Bearer <액세스 토큰 또는 개인 토큰>` 필수 (`AUTH_ENABLED`와 무관) | 200 `User_Read` |
+| DELETE | `/api/me` | 계정 삭제 (A-04) - 본문 `{"confirm": true}` 필수. 로그인(액세스 토큰)으로만, 개인 토큰은 403. 아래 "DELETE /api/me" | 200 `Auth_Delete_Read` |
+
+- `platform`: `web` | `android`. 그 밖(`ios` 포함)은 422. 플랫폼마다 받는 `aud`가 다르다 — `web`은 `GOOGLE_CLIENT_ID_WEB`만, `android`는 `GOOGLE_CLIENT_ID_ANDROID`와 `GOOGLE_CLIENT_ID_WEB`(설정된 것만) 둘 다 받는다. Google 문서에 따르면 안드로이드 네이티브 로그인은 `id_token`의 `aud`를 서버(웹) 클라이언트 ID 로 발급하고 안드로이드 클라이언트 ID 는 `azp`에 싣는다 (이 값은 실제 로그인 때 구글 문서로 한 번 더 확인 필요). `azp`는 보지 않는다 — `aud`·서명·발급자·만료·`email_verified`로 충분하다. 받을 ID 가 하나도 설정되지 않았으면 503. 웹 로그인은 안드로이드 ID 를 `aud`로 받지 않는다(401). iOS 는 `features/auth/scheme.py`의 `LOGIN_PLATFORMS`에 한 줄 + `GOOGLE_CLIENT_ID_IOS` 설정 + 푸시 기기용 `SUPPORTED_PUSH_PLATFORMS`(`features/notifications/scheme.py`)로 더한다.
+- **웹 (`platform="web"` 또는 쿠키로 온 refresh)**: 리프레시는 본문에 싣지 않고(`refresh_token: null`) `Set-Cookie: dw_refresh=…; HttpOnly; SameSite=strict; Path=/api/auth; Max-Age=2592000`(`AUTH_COOKIE_SECURE=true`이면 `Secure`). **앱**: 본문 `refresh_token`에 싣고, 앱이 안전한 저장소에 둔다.
+- **쿠키로 온 refresh·logout 과 `platform="web"` 로그인은 `Origin` 헤더가 `CORS_ORIGINS`에 있어야 한다.** 없거나 밖이면 403 (Google 검증도 토큰 사용도 하지 않는다). `android` 로그인은 `Origin`을 보지 않는다. 본문에 `refresh_token`이 있으면 쿠키보다 본문을 쓰고(이때는 `Origin` 확인이 없고 쿠키 토큰도 회전하지 않는다), 응답도 본문으로 준다.
+- 같은 Google 계정의 첫 로그인이 동시에 오면 한쪽은 유일 키에 막히지만, 되돌린 뒤 다시 읽어 있는 사용자로 이어 가므로 둘 다 200 이다. `AUTH_JWT_KEY`가 없으면 로그인·refresh 는 커밋 전에 503 으로 끝나 사용자·토큰 회전이 남지 않는다 (옛 리프레시 토큰이 그대로 살아 있다).
+- 서버는 리프레시 토큰을 SHA-256 해시로만 저장한다. 원문은 발급 응답에 한 번만 나간다. 사용자 이메일·이름·사진·`google_sub`는 DB 에 암호화해 둔다.
+
+### DELETE `/api/me` (계정 삭제)
+
+본문 `{"confirm": true}` 만 받는다 (`true` 가 아닌 값·본문 없음·깨진 JSON 은 모두 400). **DB 기록만 지운다. AWS·GitHub 는 한 번도 부르지 않는다** (Hard rule 3) — CloudFormation 스택·IAM 역할·GitHub 앱 설치는 사용자가 직접 지운다.
+
+- **막는 경우 (409)**: 살아 있는 배포가 하나라도 있으면 아무것도 지우지 않는다. 살아 있는 배포 = 상태가 `queued`·`cloning`·`analyzing`·`generating`·`building`·`pushing`·`deploying`·`needs_input`·`running`·`deleting`, 또는 `failed` 인데 `service_arn` 이 남은 것 (MCP 의 "살아 있는" 정의와 같다). `detail` 문자열 끝에 `#<d_id> <서비스 이름>`이 쉼표로 나열된다 (서비스 이름이 없으면 레포 주소). 먼저 멈추거나(`POST /api/deploys/{d_id}/stop`) 삭제(`DELETE /api/deploys/{d_id}`)한 뒤 다시 부른다.
+- **지우는 것 (한 트랜잭션, 하나라도 실패하면 전부 되돌림)**: 남은 배포 기록(`stopped`·`deleted`·서비스 없는 `failed`)과 딸린 로그·이슈·릴리스·환경변수·헬스체크·인시던트·복구 기록, 연결 블록·AWS 계정·GitHub 설치 기록, 알림·푸시 기기·알림 설정. 지울 배포는 id 목록이 아니라 지우는 순간의 조건(내 것이고 살아 있지 않음)으로 고르고, 맨 처음에 쓰기 잠금을 잡은 뒤 살아 있는 배포를 확인하므로(그 사이 "다시 켜기" 같은 쓰기가 끼어들 수 없다) 확인 뒤에 살아난 배포는 지워지지 않는다. 삭제 뒤에도 살아 있는 배포가 보이면 409 로 전부 되돌린다.
+- **참조 정리**: 지우는 AWS 계정·GitHub 설치를 가리키던 다른 기록은 주인이 누구든(주인 없는 옛 배포, 다른 사용자의 배포·블록 포함) 그 참조만 `null` 로 떼고 남긴다. id 가 다시 쓰여도 남의 자격증명에 닿지 않게 하려는 것이다.
+- **남는 ECR 저장소**: `stopped`·서비스 없는 `failed` 배포가 남긴 ECR 저장소(`repository_name`, 없으면 `image_uri` 의 저장소 부분)는 지우지 않는다(자동 삭제 금지). 기록이 사라지면 목록을 잃으므로 지우기 전에 모아 응답 `leftover_ecr_repositories`(중복 없이 정렬)로 돌려준다. 이미 `deleted` 인 배포의 저장소는 뺀다. 이 목록이 비어 있지 않으면 `message` 에 안내가 붙는다. (저장소가 남은 멈춘 배포가 있을 때 막는 쪽으로 바꿀지는 소유자 결정 사항 - 지금은 막지 않는다.)
+- **사용자 행은 남기고 개인 정보를 지운다**: `status="deleted"`, `name`·`picture_url` 은 `null`, `google_sub`·`email` 은 상수 `"deleted"`(암호화 저장), 두 블라인드 인덱스는 `blind_index("deleted", u_id)` 로 바꾼다. 같은 Google 계정으로 다시 로그인하면 **새 사용자**(새 `u_id`, 이전 기록 없음)가 된다.
+- 리프레시 토큰·개인 토큰은 모두 폐기된다. 이미 받은 액세스 토큰은 만료 전이어도 다음 요청부터 401 이다 (`status != active`).
+- 응답: `{"message": "계정을 삭제했습니다. AWS CloudFormation 스택과 GitHub 앱 설치는 직접 지워 주세요. 남아 있는 ECR 이미지 저장소(a, b)도 AWS 콘솔에서 직접 지워 주세요", "deleted": {"deploys": n, "accounts": n, "notifications": n}, "leftover_ecr_repositories": ["a", "b"]}` (`accounts` 는 연결 블록 + AWS 계정 + GitHub 설치 기록 수, `notifications` 는 알림 + 기기 + 설정 줄 수. 남는 저장소가 없으면 목록은 `[]` 이고 `message` 는 앞 문장만).
+
+### `Auth_Token`
+```json
+{ "access_token": "eyJ…", "expires_in": 900, "refresh_token": "dwr_…", "user": { "u_id": 1, "email": "me@example.com", "name": "홍길동", "picture_url": "https://…" } }
+```
+웹 응답은 `refresh_token: null` (쿠키로 간다). 액세스 토큰: HS256(`AUTH_JWT_KEY`), 클레임 `sub`(u_id 문자열)·`typ="access"`·`iss="deploy-wizard"`·`aud="deploy-wizard-api"`·`iat`·`exp`.
+
+### `User_Read`
+```json
+{ "u_id": 1, "email": "me@example.com", "name": "홍길동", "picture_url": "https://…" }
+```
+`name`·`picture_url`은 `null`일 수 있다.
+
+### 상태 코드와 `detail`
+
+| 코드 | 언제 | `detail` |
+|------|------|----------|
+| 401 | Google `id_token`이 틀림·만료·`aud`/`iss` 불일치·이메일 미확인 | `Google 로그인 정보를 확인할 수 없습니다. 다시 로그인해 주세요` |
+| 403 | 허용 목록 밖의 이메일 또는 탈퇴한 사용자 | `로그인이 허용된 계정이 아닙니다` |
+| 422 | `platform`이 `web`·`android`가 아님, 본문 타입이 틀림 (`/api/auth/*` 전체) | FastAPI 검증 오류 목록 - 단, 보낸 값을 되돌려 주는 `input` 항목은 뺀다 (`id_token`·리프레시 토큰이 응답에 실리지 않게) |
+| 503 | Google 공개키를 못 받음 / 그 플랫폼의 클라이언트 ID 미설정 / `AUTH_JWT_KEY` 없음 | `Google 로그인 서버에 연결할 수 없습니다. 잠시 뒤 다시 시도해 주세요` / `Google 로그인이 아직 설정되지 않았습니다 (GOOGLE_CLIENT_ID_* 확인)` / `로그인 설정이 완료되지 않았습니다 (AUTH_JWT_KEY 확인)` |
+| 401 | refresh: 토큰 없음·모름·만료·폐기됨(재사용 → 계열 폐기)·동시 요청에서 짐·탈퇴한 사용자 | `로그인이 만료되었습니다. 다시 로그인해 주세요` |
+| 403 | 쿠키로 온 refresh·logout, 또는 `platform="web"` 로그인의 `Origin`이 없거나 허용 목록 밖 | `허용되지 않은 출처입니다` |
+| 401 | 보호 경로(`AUTH_ENABLED=true`)·`/api/me`·`/api/auth/tokens*`: 토큰 없음·틀림·만료·다른 용도(`typ`)·폐기된 개인 토큰·없는/탈퇴한 사용자 (응답 헤더 `WWW-Authenticate: Bearer`) | `로그인이 필요합니다` |
+| 403 | `/api/auth/tokens*`를 개인 토큰으로 부름 | `개인 토큰으로는 개인 토큰을 관리할 수 없습니다. 로그인해서 관리해 주세요` |
+| 403 | `DELETE /api/me`를 개인 토큰으로 부름 | `개인 토큰으로는 계정을 삭제할 수 없습니다. 로그인한 앱이나 웹에서 삭제해 주세요` |
+| 400 | `DELETE /api/me`: 본문이 `{"confirm": true}` 가 아님 | `계정을 삭제하려면 confirm 에 true 를 보내야 합니다` |
+| 409 | `DELETE /api/me`: 살아 있는 배포가 있음 | `먼저 멈추거나 삭제해야 하는 서비스가 있습니다: #3 my-app, #5 other` |
+| 503 | `DELETE /api/me`: 다른 작업이 DB 쓰기 잠금을 쥐고 있음 (`database is locked`, 아무것도 지워지지 않음 - 잠시 뒤 다시 시도) | `지금 다른 작업이 DB를 쓰고 있습니다. 잠시 뒤 다시 시도해 주세요` |
+| 500 | `DELETE /api/me`: 삭제 중 실패 (전부 되돌려 아무것도 지워지지 않음) | `계정 삭제 실패 :…` |
+| 400 | `POST /api/auth/tokens`: `expires_in_days`가 상한 초과 | `개인 토큰 기간은 최대 90일입니다` |
+| 404 | `DELETE /api/auth/tokens/{a_t_id}`: 남의 것·없음·이미 폐기 | `개인 토큰을 찾을 수 없습니다` |
+
 ## Deploy
 
 | Method | Endpoint | 설명 | 성공 |
 |--------|----------|------|------|
-| GET | `/api/deploys` | 전 배포 조회 (삭제된 것 제외, 최신순) | 200 `Deploy_Read[]` |
+| GET | `/api/deploys` | 전 배포 조회 (삭제된 것 제외, 최신순). 인증 켬이면 내 것만 | 200 `Deploy_Read[]` |
 | GET | `/api/deploys/remote?repo_url=&github_installation_id=` | 레포의 브랜치 목록과 기본 브랜치 (`git ls-remote`). `github_installation_id`(M6, 선택) 주면 그 설치 토큰으로 private 레포도 조회 | 200 `Repo_Remote` |
 | POST | `/api/deploys` | 배포 생성 → 파이프라인 시작 | 201 `Deploy_Read` |
 | GET | `/api/deploys/{d_id}` | 특정 배포 조회 | 200 `Deploy_Read` |
@@ -31,7 +123,7 @@ Base URL: `http://localhost:8081` · 전부 JSON · 인증 없음(로컬 전용)
 | 상태 코드 | 언제 |
 |-----------|------|
 | 400 | 레포 주소·브랜치 형식이 틀림, 레포 조회 실패, 설정 변경 본문이 비어 있음 |
-| 404 | 없는 `d_id`, 이미 삭제된 배포 |
+| 404 | 없는 `d_id`, 이미 삭제된 배포, **남의 배포**(인증 켬) / 본문·쿼리의 `aws_account_id`·`github_installation_id`가 없거나 남의 것 (`해당 id의 AWS 계정이 없습니다` / `해당 id의 GitHub 설치가 없습니다`) |
 | 409 | 진행 중인 배포에 다시 배포·삭제 요청 |
 | 500 | AWS 삭제 실패 등 |
 | 501 | 시크릿 종류 환경변수에 값을 보냄 (저장 미지원 - 아래 "Env") |
@@ -194,6 +286,8 @@ Base URL: `http://localhost:8081` · 전부 JSON · 인증 없음(로컬 전용)
 | DELETE | `/api/deploys/{d_id}/env/{name}/value` | 저장된 값만 지운다. 변수 행은 남는다 | 200 `Env_Read` |
 | POST | `/api/deploys/{d_id}/env/continue` | 이어서 배포 (위 Deploy 표). 값이 빈 필수 변수가 남았으면 409 | 200 `Deploy_Read` |
 
+남의 배포(인증 켬)의 환경변수 경로는 모두 404 `해당 id의 배포가 없습니다` — 이름 형식 검사(400)보다 먼저 본다.
+
 ### PUT `/api/deploys/{d_id}/env/{name}` 본문 `Env_Update`
 
 ```json
@@ -262,7 +356,7 @@ Base URL: `http://localhost:8081` · 전부 JSON · 인증 없음(로컬 전용)
 { "repo_url": "https://github.com/kjfcvx12/private-test", "branch": "main", "github_installation_id": 1 }
 ```
 
-본문은 `POST /api/deploys`와 같다 (`repo_url` 필수, `branch`·`aws_account_id`·`github_installation_id` 선택). `github_installation_id`를 주면 그 설치의 토큰으로 private 레포도 읽는다. `aws_account_id`는 받기만 하고 쓰지 않는다 (AWS 호출이 없다).
+본문은 `POST /api/deploys`와 같다 (`repo_url` 필수, `branch`·`aws_account_id`·`github_installation_id` 선택). `github_installation_id`를 주면 그 설치의 토큰으로 private 레포도 읽는다. `aws_account_id`는 받기만 하고 쓰지 않는다 (AWS 호출이 없다). 둘 다 내 것이어야 한다 — 없거나 남의 것이면 404 (레포를 읽지 않는다).
 
 ### `Deploy_Advice`
 
@@ -311,6 +405,7 @@ Base URL: `http://localhost:8081` · 전부 JSON · 인증 없음(로컬 전용)
 | 400 | 브랜치 형식이 틀림 | `브랜치 이름이 올바르지 않습니다.` |
 | 400 | 커밋 조회 실패 | `레포를 조회할 수 없습니다 :<마스킹된 사유>` |
 | 400 | 클론 실패 | `레포를 가져올 수 없습니다 :<마스킹된 사유>` |
+| 404 | `aws_account_id`·`github_installation_id`가 없거나 남의 것 | `해당 id의 AWS 계정이 없습니다` / `해당 id의 GitHub 설치가 없습니다` |
 | 400 | 지원하는 프로젝트가 아님 | `매니페스트 파일을 찾지 못했습니다. 지원하는 형식의 프로젝트가 아닙니다.` |
 | 500 | 그 밖의 분석 실패 | `분석 실패 :<마스킹된 사유>` |
 
@@ -318,7 +413,7 @@ Base URL: `http://localhost:8081` · 전부 JSON · 인증 없음(로컬 전용)
 
 ## Pricing (비용 확인 - 백엔드)
 
-AWS 공개 가격 파일(인증 없음)에서 Fargate·ALB 시간당 단가를 읽어 추정한다. 단가는 서버 파일 캐시(`PRICING_CACHE_HOURS`, 기본 24시간)에 두고, 읽기에 실패하면 낡은 캐시를 쓴다. 리전은 서버 설정(`AWS_REGION`)을 따른다. AWS 호출·DB 쓰기는 없다. 금액은 전부 USD 온디맨드 **추정치**다.
+AWS 공개 가격 파일(인증 없음)에서 Fargate·ALB 시간당 단가를 읽어 추정한다. 단가는 서버 파일 캐시(`PRICING_CACHE_HOURS`, 기본 24시간)에 두고, 읽기에 실패하면 낡은 캐시를 쓴다. 리전은 서버 설정(`AWS_REGION`)을 따른다. AWS 호출·DB 쓰기는 없다. 금액은 전부 USD 온디맨드 **추정치**다. 사용자 데이터가 없어 소유권 필터는 없고, 인증 켬이면 로그인만 필요하다.
 
 | Method | Endpoint | 설명 | 응답 |
 |--------|----------|------|------|
@@ -401,8 +496,8 @@ AWS 공개 가격 파일(인증 없음)에서 Fargate·ALB 시간당 단가를 �
 | GET | `/api/accounts/aws/{a_id}/template-status` | 사용자 계정 스택의 템플릿 버전(위임 역할의 `template-version` 태그)과 최신 버전 비교. 역할 미등록·조회 실패 400 | 200 `Aws_Account_Template_Status` |
 | DELETE | `/api/accounts/aws/{a_id}/template-files` | 사용자 계정 S3(`cf-templates-*`)에 남은 `deploy_wizard_role.yaml`만 삭제. 역할 미등록 400, 역할에 권한 없음(옛 템플릿 스택) 403 | 200 `{message, deleted}` |
 | DELETE | `/api/accounts/aws/{a_id}` | 연결 삭제 (쓰던 배포는 연결만 해제) | 200 `dict` |
-| GET | `/api/accounts/github/install-url` | GitHub App 설치 화면 주소. `?c_id=`를 주면 주소에 `state=<c_id>`가 붙고, 콜백이 그 블록에 설치를 잇는다. 운영자가 앱을 등록하지 않았으면(`GITHUB_APP_SLUG` 없음) 503 | 200 `{"url": str}` |
-| GET | `/api/accounts/github/callback` | GitHub 설치 콜백 (`installation_id` 쿼리) - 설치 정보 저장 후 리다이렉트 | 302 → `/accounts?connected=github` |
+| GET | `/api/accounts/github/install-url` | GitHub App 설치 화면 주소. 주소에 언제나 서명된 `state`(HS256 JWT, `typ="gh_state"`, `u`=현재 사용자(끔 모드 `null`), `c`=`?c_id=`(없으면 `null`), 15분)가 붙고, 콜백이 그 사용자에게 설치를 주고 그 블록에 잇는다. 서명 키는 `AUTH_JWT_KEY`, 없으면(끔 모드) `SECRET_KEY`에서 HMAC-SHA256(용도 이름 `deploy-wizard:github-install-state`)으로 파생한 키 — 새 환경변수 없이 동작. 둘 다 없으면 503. 남의 `c_id` 404. 운영자가 앱을 등록하지 않았으면(`GITHUB_APP_SLUG` 없음) 503 | 200 `{"url": str}` |
+| GET | `/api/accounts/github/callback` | GitHub 설치 콜백 (공개, `installation_id`·`state` 쿼리) - `state` 서명·만료·종류를 확인해 설치를 `u`에게 저장하고 `c`가 그 사용자 블록이면 잇는다. 서명 불량·만료·옛 숫자 형식 `state` → 저장 없이 `/accounts?connected=github_error`. 이미 다른 사용자(또는 주인 없는 옛 설치)의 `installation_id`면 바꾸지 않고 `/accounts?connected=github_taken`(GitHub 조회 전). 같은 새 `installation_id`를 두 콜백이 동시에 처음 저장하려 해도 500 이 아니다 - 진 쪽은 유일 제약에 걸리면 되돌리고 다시 읽어, 같은 사용자면 `github`, 다른 사용자면 `github_taken`. `state` 없음은 끔 모드에서만 받는다(GitHub 쪽에서 설치를 바꾸고 돌아온 경우, 블록 없이 저장); 켬 모드는 `github_error` - 단 `setup_action=update`(GitHub 가 설치 변경 뒤 돌려보낸 요청)면 오류 없이 아무것도 저장하지 않고 `/accounts` 로 보낸다. GitHub 연결에는 `AUTH_ENABLED=false` 에서도 `SECRET_KEY` 또는 `AUTH_JWT_KEY` 가 필요하다(없으면 install-url 이 503). 리다이렉트 주소에 `state`·토큰을 싣지 않는다 | 302 → `/accounts?connected=github` |
 | GET | `/api/accounts/github/{g_id}/check` | 연결 확인 - 설치 토큰을 실제로 받아 접근 가능한 레포 수·이름(앞 5개). 끊겼으면 400 | 200 `Github_Installation_Check` |
 | GET | `/api/accounts/github/{g_id}/repositories` | 설치가 읽을 수 있는 레포 전부 (`full_name`, `html_url`, `private`, `default_branch`) - 새 배포 폼의 주소 목록. 100개씩 최대 1000개. 끊겼으면 400 | 200 `Github_Repository_Read[]` |
 | GET | `/api/accounts/github` | 전 GitHub 설치 조회 | 200 `Github_Installation_Read[]` |
@@ -485,6 +580,7 @@ AWS 공개 가격 파일(인증 없음)에서 Fargate·ALB 시간당 단가를 �
 
 - `status`는 `open` `recovering` `resolved` `needs_action` 중 하나 (그 밖의 값은 400). `d_id`는 선택 필터. `after`는 `i_id` 커서(1 이상, 아니면 422) - 그보다 오래된(`i_id`가 작은) 것부터 최신순으로 100건.
 - `/api/deploys/{d_id}/incidents` 는 인시던트 라우터(`features/incidents/router.py`)가 받는다. 없는 배포(삭제된 배포 포함)는 404 `해당 id의 배포가 없습니다`. 없는 `i_id`는 404 `해당 id의 인시던트가 없습니다`.
+- 인증 켬: 목록은 내 배포의 인시던트만 (`incidents`에는 주인 열이 없고 `deploys.u_id`로 거른다). 남의 배포의 `d_id`·`i_id`는 404 (`d_id` 필터는 빈 목록).
 
 ### 인시던트가 열리고 닫히는 때
 
@@ -543,7 +639,15 @@ Hard rule 3 의 자동 조치는 두 가지뿐이다. **재시작**(서비스를
 
 ## Notifications · Devices (D1 - 알림, 앱 안·메일·Expo 푸시)
 
-설계는 `docs/app-web/04-api-spec.md` §4·5·7. 로그인 전(1~2단계)에는 모든 줄의 `u_id` 가 null 이고 사용자 필터가 없다.
+설계는 `docs/app-web/04-api-spec.md` §4·5·7.
+
+소유권 (로그인 계획 Task 7):
+- `AUTH_ENABLED=true`: 알림 목록·읽지 않은 수·읽음·모두 읽음은 내 것만 (`notifications.u_id` = 대상 배포의 주인). 남의 `n_id`·`p_d_id`는 404. 설정은 사용자마다 한 줄 (처음 읽을 때 기본값으로 만든다; 같은 사용자의 첫 읽기가 동시에 와도 500 없이 먼저 만든 줄을 읽는다).
+- 모드를 바꿔도 알림 대상은 배포에 저장된 주인(`deploys.u_id`)을 따른다: 로그인을 켠 동안 만든 배포는 `AUTH_ENABLED=false` 로 되돌려도 주인을 그대로 가지므로, 그 배포의 알림은 계속 그 주인의 설정·기기·이메일로 간다 (끔 모드의 id=1 설정·`MAIL_TO`·전체 기기는 주인 없는 배포에만 쓰인다). 주인 없는 배포의 알림은 켬 모드에서 주인 없는 기기에만 간다.
+- 계정 삭제(`DELETE /api/me`)는 지우는 배포·인시던트를 가리키는 알림을 주인이 누구든(주인 없음 포함) 함께 지운다.
+- `POST /api/devices`는 기기의 주인을 현재 사용자로 저장한다. 같은 토큰을 다른 사용자가 등록하면 그 사용자 기기로 옮긴다 (행은 하나). 토큰은 DB 에 Fernet 암호문(`Encrypted_Text`)으로, 찾기는 `expo_token_bidx`(블라인드 인덱스)로만 한다. 응답은 그대로 (끝 6자리만).
+- 발송: 배포·인시던트 알림은 그 배포 주인의 설정·기기·이메일(로그인한 Google 이메일)로만 간다. 주인 없는 배포(옛 기록·인증 끔)는 `id=1` 설정과 `MAIL_TO`. 푸시는 인증 끔이면 지금처럼 전체 기기, 인증 켬이면 주인 없는(`u_id` null) 기기에만 간다 (사용자 기기에는 가지 않는다). 이메일 주소는 알림 줄·오류 문장·로그에 남지 않는다.
+- `AUTH_ENABLED=false`: 사용자 필터 없이 지금과 같다 (설정은 `id=1` 줄).
 
 | Method | Endpoint | 설명 | 성공 |
 |--------|----------|------|------|
@@ -557,8 +661,8 @@ Hard rule 3 의 자동 조치는 두 가지뿐이다. **재시작**(서비스를
 | DELETE | `/api/devices/{p_d_id}` | 기기 등록 해제 | 200 `{ "message": "…" }` |
 
 - `after` 는 `n_id` 커서(1 이상, 아니면 422) - 그보다 오래된 것부터 최신순 100건. `unread=true` 면 읽지 않은 것만. 없는 `n_id`(또는 앱 안 알림이 아닌 줄)는 404 `해당 id의 알림이 없습니다`.
-- `expo_token` 은 `^(Exponent|Expo)PushToken\[.+\]$` 형식, `platform` 은 `android` 만 (아니면 422. 허용 값은 `features/notifications/scheme.py` 의 `SUPPORTED_PUSH_PLATFORMS`, iOS 는 2026-11-16 에 뺐다). 없는 `p_d_id` 는 404 `해당 id의 기기가 없습니다`.
-- 설정은 한 줄뿐이고 처음 읽을 때 기본값(메일 켬, 푸시 켬, 일곱 종류 모두)으로 만든다. PATCH 본문에 모르는 항목이나 모르는 `kinds` 값이 있으면 422.
+- `expo_token` 은 `^(Exponent|Expo)PushToken\[.+\]$` 형식, `platform` 은 `android` 만 (아니면 422. 허용 값은 `features/notifications/scheme.py` 의 `SUPPORTED_PUSH_PLATFORMS`, iOS 는 2026-11-16 에 뺐다). 없는(또는 남의) `p_d_id` 는 404 `해당 id의 기기가 없습니다`.
+- 설정은 사용자마다(인증 끔이면 `id=1`) 한 줄이고 처음 읽을 때 기본값(메일 켬, 푸시 켬, 일곱 종류 모두)으로 만든다. PATCH 본문에 모르는 항목이나 모르는 `kinds` 값이 있으면 422.
 
 ### `Notification_Read`
 ```json

@@ -14,6 +14,7 @@ from pathlib import Path
 from shared.settings import settings
 from shared.masking import mask_text
 from shared.database import async_engine, AsyncSessionLocal, bootstrap_schema
+from shared.migrate import migrate_check_startup
 
 # 모델을 import 해야 create_all 이 테이블을 안다
 from features.deploys import models as deploy_models
@@ -22,8 +23,10 @@ from features.envvars import models as envvar_models
 from features.health import models as health_models
 from features.incidents import models as incident_models
 from features.notifications import models as notification_models
+from features.auth import models as auth_models
 
 from features.advice import router as advice
+from features.auth import router as auth
 from features.deploys import router as deploys
 from features.envvars import router as envvars
 from features.deploys.pipeline import Deploy_Pipeline
@@ -37,6 +40,7 @@ from features.incidents.services import Incident_Service
 from features.incidents.recovery import Recovery_Service
 from features.watches.services import Watch_Service
 from features.health.services import Health_Service
+from features.auth.services import Auth_Service
 
 
 DIST_DIR=Path(__file__).parent / "dist"
@@ -46,8 +50,19 @@ logger=logging.getLogger(__name__)
 
 @asynccontextmanager
 async def lifespan(app:FastAPI):
+    # 로그인을 켰는데 키가 빠졌으면 여기서 멈춘다 (로그인 계획 Task 4)
+    Auth_Service.services_auth_startup_check()
+
+    # 암호화 전 값이 남은 옛 DB 는 표·열을 더하기 전에 먼저 거른다 - 거절한 DB 의 모양을 바꾸지 않게 (없는 표·열은 건너뛴다)
+    async with async_engine.connect() as conn:
+        await conn.run_sync(migrate_check_startup)
+
     # 표를 만들고, 이미 있는 표에는 새 열이 안 생기므로 모자란 열만 더한다
     await bootstrap_schema()
+
+    # 암호화 전 값(이전 전 옛 DB)이 남아 있으면 여기서 멈춘다 - 평문과 암호문이 섞여 저장되지 않게 (로그인 계획 Task 8)
+    async with async_engine.connect() as conn:
+        await conn.run_sync(migrate_check_startup)
 
     # 서버가 꺼지면서 끊긴 배포를 실패로 돌려놓는다
     await Deploy_Pipeline.pipeline_recover()
@@ -96,6 +111,7 @@ app.add_middleware(
 async def root():
     return {"message": "ok"}
 
+app.include_router(auth.router)
 app.include_router(advice.router)
 app.include_router(deploys.router)
 app.include_router(envvars.router)

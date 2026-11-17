@@ -1,18 +1,23 @@
 import asyncio
 import json
 import logging
+import re
 from datetime import datetime, timezone
 
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from fastapi import HTTPException, status
 
 from shared.settings import settings
 from shared.database import AsyncSessionLocal
+from shared.crypto_types import Encrypted_Text
+from shared.masking import MASK
 
 from features.notifications.crud import Notification_Crud
 from features.notifications.models import Notification_Setting, NOTIFICATION_KINDS, NOTIFICATION_KINDS_VERSION
 from features.notifications.compose import Composed, compose_incident, compose_deploy, compose_service_name
-from features.notifications.dispatch import dispatch_scrub, dispatch_oneline, dispatch_mail_send, dispatch_mail_configured, dispatch_push_send
+from features.notifications.dispatch import dispatch_scrub, dispatch_oneline, dispatch_mail_send, dispatch_mail_configured, dispatch_push_send, Push_Target
+from features.auth.services import Auth_Service
 
 # 알림 보내기 - 앱 안 알림(항상) -> 메일 -> 푸시 순서로, 채널마다 한 줄씩 남긴다 (docs/app-web/05-flowcharts.md 8장)
 # 한 채널이 실패해도 다른 채널과 호출한 쪽(인시던트 처리·파이프라인·폴링)은 멈추지 않는다
@@ -34,11 +39,16 @@ class Notification_Service:
         return datetime.now(timezone.utc).replace(tzinfo=None)
 
 
-    # 알림 설정 가져오기 - 한 줄뿐인 표라 처음이면 기본값으로 만들어 저장한다. 옛 설정(kinds_version 없음)은 한 번 보정한다
+    # 알림 설정 가져오기 - u_id 의 줄(None 이면 id=1 줄), 처음이면 기본값으로 만들어 저장한다. 옛 설정(kinds_version 없음)은 한 번 보정한다
+    # 같은 사용자의 첫 읽기가 동시에 둘 오면 하나는 유일 제약(u_id·id=1)에 걸린다 - 되돌리고 한 번 다시 읽는다 (먼저 만든 쪽이 저장해 둔 줄을 얻는다)
     @staticmethod
-    async def services_notification_setting_get(db:AsyncSession) -> Notification_Setting:
+    async def services_notification_setting_get(db:AsyncSession, u_id:int|None=None) -> Notification_Setting:
         try:
-            db_setting=await Notification_Crud.crud_notification_setting_get(db)
+            try:
+                db_setting=await Notification_Crud.crud_notification_setting_get(db, u_id)
+            except IntegrityError:
+                await db.rollback()
+                db_setting=await Notification_Crud.crud_notification_setting_get(db, u_id)
 
             if db_setting.kinds_version is None:
                 Notification_Service.services_notification_kinds_migrate(db_setting)
@@ -92,7 +102,7 @@ class Notification_Service:
             service=compose_service_name(deploy)
             composed=compose_incident(kind, service, detail)
 
-            await Notification_Service.services_notification_fan_out(db, kind, composed, service, incident.d_id, incident.i_id, True, mailer, pusher)
+            await Notification_Service.services_notification_fan_out(db, kind, composed, service, incident.d_id, incident.i_id, True, mailer, pusher, u_id=deploy.u_id)
 
         except HTTPException:
             raise
@@ -111,7 +121,7 @@ class Notification_Service:
             composed=compose_deploy(kind, service, deploy, event)
 
             # 완료·실패는 시도할 때마다 새 사건이라 중복을 막지 않는다. 새 커밋은 제목(커밋 sha)이 같으면 한 번만
-            await Notification_Service.services_notification_fan_out(db, kind, composed, service, deploy.d_id, None, kind == 'new_commit', mailer, pusher)
+            await Notification_Service.services_notification_fan_out(db, kind, composed, service, deploy.d_id, None, kind == 'new_commit', mailer, pusher, u_id=deploy.u_id)
 
         except HTTPException:
             raise
@@ -123,15 +133,16 @@ class Notification_Service:
 
 
     # 채널별로 내보내기 - 설정(종류·메일·푸시)을 지키고, 같은 알림이 이미 있는 채널은 건너뛴다
+    # u_id(대상 배포의 주인)가 있으면 그 사용자의 설정·이메일·기기로, None(주인 없는 배포·인증 끔)이면 id=1 설정·MAIL_TO·전체 기기로
     @staticmethod
     async def services_notification_fan_out(db:AsyncSession, kind:str, composed:Composed, service:str, d_id:int, i_id:int|None,
-                                            dedupe:bool, mailer=None, pusher=None) -> None:
-        db_setting=await Notification_Service.services_notification_setting_get(db)
+                                            dedupe:bool, mailer=None, pusher=None, u_id:int|None=None) -> None:
+        db_setting=await Notification_Service.services_notification_setting_get(db, u_id)
 
         if kind not in Notification_Service.services_notification_kinds(db_setting):
             return
 
-        base=dict(d_id=d_id, i_id=i_id, kind=kind, title=composed.title, body=composed.body)
+        base=dict(u_id=u_id, d_id=d_id, i_id=i_id, kind=kind, title=composed.title, body=composed.body)
 
         async def already(channel:str) -> bool:
             if not dedupe:
@@ -143,30 +154,63 @@ class Notification_Service:
             await Notification_Crud.crud_notification_create(db, dict(base, channel='inapp', status='sent', sent_at=Notification_Service.services_notification_now()))
             await db.commit()
 
-        # 2. 메일 - 켜져 있고 SMTP 설정이 있을 때만 (설정이 없으면 줄도 남기지 않는다)
-        if db_setting.notify_email and dispatch_mail_configured() and not await already('email'):
-            await Notification_Service.services_notification_send_mail(db, base, dispatch_oneline(f"[배포 마법사] {service} {composed.title}"), mailer)
+        # 2. 메일 - 켜져 있고 SMTP 설정과 받는 사람이 있을 때만 (없으면 줄도 남기지 않는다). 주인이 있는데 이메일을 모르면 보내지 않는다
+        if db_setting.notify_email and settings.mail_host and not await already('email'):
+            to=await Notification_Service.services_notification_recipient(db, u_id) if u_id is not None else None
+            if (u_id is None or to) and dispatch_mail_configured(to):
+                await Notification_Service.services_notification_send_mail(db, base, dispatch_oneline(f"[배포 마법사] {service} {composed.title}"), mailer, to)
 
         # 3. 푸시 - 켜져 있고 등록된 기기가 있을 때만
         if db_setting.notify_push and not await already('push'):
-            devices=await Notification_Crud.crud_notification_device_list(db)
+            devices=await Notification_Service.services_notification_devices(db, u_id)
             if devices:
                 await Notification_Service.services_notification_send_push(db, base, devices, composed, pusher)
 
 
-    # 메일 한 통 - queued 로 남기고 보낸 뒤 sent|failed 로 바꾼다. 실패는 줄에 적고 올리지 않는다
+    # 메일 받는 사람 - 사용자의 이메일 (auth 서비스로만). 읽지 못하면 마스킹한 경고만 남기고 None (주소는 로그에 싣지 않는다)
     @staticmethod
-    async def services_notification_send_mail(db:AsyncSession, base:dict, subject:str, mailer=None) -> None:
+    async def services_notification_recipient(db:AsyncSession, u_id:int) -> str | None:
+        try:
+            return await Auth_Service.services_auth_user_email(db, u_id)
+        except Exception as e:
+            logger.warning("알림 메일 받는 사람 확인 실패 u_id=%s : %s", u_id, type(e).__name__)
+            return None
+
+
+    # 푸시 대상 기기 - 저장된 토큰을 한 줄씩 복호화한다. 읽을 수 없는 줄(이전 전 평문 등)은 마스킹한 경고만 남기고 건너뛴다
+    # 주인 없는 배포(u_id None)는 인증 끔이면 전체 기기, 인증 켬이면 주인 없는 기기에만 (볼 수 없는 배포의 알림이 사용자 폰에 가지 않게)
+    @staticmethod
+    async def services_notification_devices(db:AsyncSession, u_id:int|None) -> list[Push_Target]:
+        decoder=Encrypted_Text()
+        devices=[]
+
+        for p_d_id, raw in await Notification_Crud.crud_notification_device_list_raw(db, u_id, unowned_only=settings.auth_enabled):
+            try:
+                devices.append(Push_Target(p_d_id=p_d_id, expo_token=decoder.process_result_value(raw, None)))
+            except Exception as e:
+                logger.warning("푸시 기기 건너뜀 p_d_id=%s : %s", p_d_id, dispatch_scrub(str(e))[:200])
+
+        return devices
+
+
+    # 메일 한 통 - queued 로 남기고 보낸 뒤 sent|failed 로 바꾼다. 실패는 줄에 적고 올리지 않는다
+    # to 는 배포 주인의 이메일 (None 이면 MAIL_TO). 주소는 줄에 남기지 않고, 실패 문장에서도 가린다
+    @staticmethod
+    async def services_notification_send_mail(db:AsyncSession, base:dict, subject:str, mailer=None, to:str|None=None) -> None:
         row=await Notification_Crud.crud_notification_create(db, dict(base, channel='email', status='queued'))
         await db.commit()
 
         state, error, sent_at='sent', None, Notification_Service.services_notification_now()
         try:
             send=mailer or dispatch_mail_send
-            await asyncio.wait_for(send(dispatch_scrub(subject), base["body"]), timeout=settings.mail_timeout_seconds * 2)
+            extra={"to": to} if to else {}
+            await asyncio.wait_for(send(dispatch_scrub(subject), base["body"], **extra), timeout=settings.mail_timeout_seconds * 2)
 
         except Exception as e:
-            state, error, sent_at='failed', dispatch_scrub(f"{type(e).__name__}: {e}")[:ERROR_MAX], None
+            message=f"{type(e).__name__}: {e}"
+            if to:
+                message=re.sub(re.escape(to), MASK, message, flags=re.IGNORECASE)
+            state, error, sent_at='failed', dispatch_scrub(message)[:ERROR_MAX], None
 
         await Notification_Crud.crud_notification_update_status(db, row, state, error, sent_at)
         await db.commit()
@@ -194,8 +238,15 @@ class Notification_Service:
             error=dispatch_scrub(f"{type(e).__name__}: {e}")[:ERROR_MAX]
 
         await Notification_Crud.crud_notification_update_status(db, row, state, error, sent_at)
-        await Notification_Crud.crud_notification_device_delete_by_tokens(db, invalid_tokens)
         await db.commit()
+
+        # 쓸 수 없는 토큰 정리는 따로 - 실패해도 위에서 남긴 발송 상태는 그대로 둔다 (예외 종류만 경고)
+        try:
+            await Notification_Crud.crud_notification_device_delete_by_tokens(db, invalid_tokens)
+            await db.commit()
+        except Exception as e:
+            await db.rollback()
+            logger.warning("푸시 무효 토큰 정리 실패 : %s", type(e).__name__)
 
 
     # 배포 알림을 백그라운드로 띄운다 - 파이프라인·폴링은 기다리지 않는다 (느린 SMTP·Expo 가 흐름을 붙잡지 않게)
@@ -242,3 +293,16 @@ class Notification_Service:
         for task in tasks:
             task.cancel()
         await asyncio.gather(*tasks, return_exceptions=True)
+
+
+    # 사용자의 알림·기기·설정 삭제 - 계정 삭제가 부른다 (flush 까지, 커밋은 부른 쪽). 반환: 지운 수
+    @staticmethod
+    async def services_notification_forget_user(db:AsyncSession, u_id:int) -> int:
+        return await Notification_Crud.crud_notification_delete_by_u_id(db, u_id)
+
+
+    # 지울 배포·인시던트를 가리키는 알림 삭제 - 주인이 누구든(주인 없음 포함) 계정 삭제 때 함께 지운다 (flush 까지, 커밋은 부른 쪽)
+    # d_ids·i_ids 는 지우는 순간의 조건을 담은 하위 쿼리다 - 인시던트를 지우기 전에 불러야 i_ids 가 비지 않는다. 반환: 지운 수
+    @staticmethod
+    async def services_notification_forget_deploys(db:AsyncSession, d_ids, i_ids) -> int:
+        return await Notification_Crud.crud_notification_delete_by_d_ids(db, d_ids, i_ids)

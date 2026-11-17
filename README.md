@@ -37,6 +37,7 @@ GitHub 주소 → 클론 → 언어 판별(규칙) → Dockerfile(템플릿+LLM)
 │   ├── express/           ← ECS Express Mode 호출
 │   ├── explains/          ← 한국어 에러 해설 + 화면(ui/)
 │   ├── accounts/          ← (M6, 진행 중) 사용자 AWS·GitHub 계정 연결 + 화면(ui/)
+│   ├── auth/              ← (로그인 백엔드, 기본 꺼짐) Google 로그인·토큰·개인 토큰·계정 삭제
 │   └── mcp/               ← 로컬 MCP 서버 (Claude에서 배포 마법사 쓰기, REST 클라이언트)
 ├── shared/                ← 공용 (설정, DB, AWS 세션, LLM, 마스킹, ui/)
 ├── scripts/               ← M1 배포, 역할 생성, 정리, CLI
@@ -74,12 +75,42 @@ python scripts/cleanup.py --yes                               # 완전히 정리
 
 > ⚠️ **비용** — Express Mode가 만드는 로드밸런서는 떠 있는 동안 계속 과금된다. 작업을 끝낼 때 `cleanup.py`를 실행한다. AWS Budgets 예산 알림을 먼저 걸어 둘 것.
 
+> ⚠️ **작업 종료 전에 이전을 먼저 하세요** — 로그인 이전(아래 "로그인 이전") 전의 옛 `data/wizard.db`에서는 연결한 AWS 계정 정보를 읽지 못한다. 그러면 `session_end.py`·`cleanup.py`는 개발 계정 것만 처리하고, 끝에 경고와 함께 0 이 아닌 값(2)으로 끝난다 — 연결 계정 쪽 서비스는 계속 요금이 나갈 수 있다. 경고가 나오면 이전부터 하고 다시 실행한다.
+
+### 로그인 이전 (옛 `data/wizard.db` 옮기기)
+
+로그인 기능이 들어가며 사용자 관련 열(연결 계정의 `role_arn`·계정 ID, GitHub 로그인 이름, 푸시 기기 토큰)을 DB 에 암호화해 두고, 모든 표에 주인(`u_id`)을 붙인다. 옛 DB 는 `scripts/migrate_login.py`로 한 번 옮긴다. 평문이 남은 DB 로는 서버가 시작하지 않는다(한국어 오류로 이 절차를 안내한다). 키 준비는 아래 M6 절의 "암호화 키" 항목을 따른다.
+
+모든 명령은 **기본이 보기만**이고 `--yes`일 때만 쓴다. 쓰기 전에는 언제나 검사한(`integrity_check`) 백업 `data/backups/wizard-YYYYmmdd-HHMMSS.db`를 먼저 만든다. 출력에는 값 원문·토큰·이메일을 싣지 않는다(개수만).
+
+```bash
+# 1. 서버를 끈다 (:8081 에 서버가 떠 있으면 encrypt·rotate-keys --yes·restore 는 거절한다 - 아래 "쓰기 전 확인" 참고)
+python scripts/migrate_login.py backup                 # 2. 백업 (경로를 알려 준다)
+python scripts/migrate_login.py status                 # 3. 열마다 평문 수, 주인 없는 행 수 (읽기 전용)
+python scripts/migrate_login.py encrypt --yes          # 4. 열·인덱스 보정 → 기기 토큰 인덱스 채우기·중복 정리 → 평문 암호화 → 옛 값 지우기 (두 번 실행해도 안전)
+uvicorn main:app --port=8081                           # 5. 서버를 켜고, 주인이 될 Google 계정으로 한 번 로그인한다 (지금은 로그인 화면이 없다 - 아래 "Google 로그인, 지금은")
+python scripts/migrate_login.py assign-owner --email <그 이메일> --yes   # 6. 주인 없는 행만 그 사용자로 (이미 주인 있는 행은 그대로)
+#                                                        7. AUTH_ENABLED=true 로 켜기 전에 assign-owner 를 한 번 더 실행하세요 (멱등, 그 사이 만들어진 주인 없는 행을 채웁니다)
+#                                                           .env 에 AUTH_ENABLED=true 를 넣고 서버를 다시 켠다
+```
+
+- **쓰기 전 확인**: `:8081` 검사는 IPv4 `127.0.0.1:8081` 에 접속해 보는 것뿐이다. 다른 포트의 서버, `deploy_cli.py`, `session_end.py` 처럼 DB 에 쓰는 다른 프로그램은 검사하지 못하니 직접 멈춘 뒤 실행한다(쓰는 중이면 "다른 프로그램이 DB 에 쓰는 중" 오류로 멈춘다).
+- **실패했을 때**: 값 변경(암호화·키 회전·주인 지정)은 한 번에 되돌려진다. 열·인덱스 더하기(표 만들기·`ADD COLUMN`·`CREATE INDEX`)는 바로 반영되지만 여러 번 해도 안전하니 같은 명령을 다시 실행하면 된다. `encrypt --yes`는 지금 키로 못 읽는 값이 있으면(키가 틀렸거나 옛 키를 잃은 것) 아무것도 쓰지 않고 거절한다 — `status`의 "지금 키로 못 읽는 값"이 0건이 되도록 `SECRET_KEY`·`SECRET_KEYS_OLD`부터 맞춘다. **못 읽는 값이 남아 거절될 때**(암호문 모양인데 지금 키로 풀리지 않음 = 키가 틀렸거나 잃음): ① 이 DB 를 암호화한 올바른 키를 `.env`에 되돌린다(예전 키는 `SECRET_KEYS_OLD`에 쉼표로 이어 둔다). ② 옛 키를 정말 잃었다면 먼저 `backup`을 한 뒤, `status`가 보여 주는 열 이름으로 해당 행의 값을 직접 `NULL`로 만들거나 행을 지우고(그 값은 되살릴 수 없다 - 연결 계정은 화면에서 다시 연결) `encrypt --yes`를 다시 실행한다. 암호화는 끝났는데 "옛 값 지우기(VACUUM)에 실패했습니다"가 나오면 변경은 저장된 상태이고 옛 값이 파일 빈 공간에 남아 있을 수 있다 — 원인을 해결하고 같은 `encrypt --yes`를 다시 실행하면 바꿀 것이 없어도 지우기만 다시 한다. `rotate-keys --yes`에서 같은 문구가 나오면 사정이 다르다 — 다시 실행하면 옛 키 암호문을 모두 새로 암호화하고 백업도 하나 더 만든다(값이 이미 새 키로 바뀌었어도 그렇다).
+- **되돌리기**: 서버를 끄고 `python scripts/migrate_login.py restore --from data/backups/wizard-….db --yes`. 지금 파일도 먼저 백업한 뒤 되돌린다.
+- ⚠️ **한 방향 문**: `encrypt --yes` 뒤에는 이 브랜치 이전 코드(`main`이나 아직 떠 있는 옛 서버 프로세스)가 연결 계정·푸시 기기를 읽지 못한다. 옛 코드로 돌아가는 길은 서버를 끄고 `restore --from <백업>` 뿐이다.
+- **Google 로그인, 지금은**: 위 5단계의 Google 로그인은 아직 화면에서 할 수 없다 (로그인 화면은 별도 계획). 그때까지는 진짜 Google `id_token`으로 `POST /api/auth/google`을 직접 불러야 한다 — 웹이면 허용된 `Origin` 헤더와 `platform=web`, 앱이면 `platform=android`, 그리고 `.env`에 `GOOGLE_CLIENT_ID_WEB`(과 필요하면 `GOOGLE_CLIENT_ID_ANDROID`)가 있어야 한다. 그래서 `assign-owner`와 `AUTH_ENABLED=true`는 로그인 화면 계획이 끝날 때까지 막혀 있다.
+- **작업 종료 전에**: 이 브랜치에서 다음 "작업 종료"를 하기 전에 위 이전(`encrypt --yes`)을 먼저 실행한다 — 안 하면 `session_end.py`가 연결 계정 쪽 서비스를 멈추지 못하고 경고와 함께 2로 끝난다.
+- **키 회전**: 새 키를 `SECRET_KEY`에, 예전 키를 `SECRET_KEYS_OLD`에 넣고 `rotate-keys --yes`. 되돌리는 명령은 없다 — 되돌리려면 `restore --from`과 예전 `.env` 키로. `status`로 못 읽는 값이 0건인지 본 뒤 `SECRET_KEYS_OLD`를 지운다.
+- ⚠️ **키 백업**: `SECRET_KEY`(와 `SECRET_KEYS_OLD`)·`BLIND_INDEX_KEY`를 잃으면 암호화된 값은 되살릴 수 없다. `.env`를 DB 백업과 따로, 안전한 곳에 함께 보관한다. 백업 파일에는 암호화 전 값이 그대로 있으니 이전을 확인한 뒤 안전한 곳에 두거나 지운다.
+
 ### M6 — 사용자 계정 연결 (진행 중)
 
 `/accounts` 화면에서 AWS·GitHub 계정을 연결하면, 개발자 자신의 계정이 아닌 곳에 배포할 수 있다. 둘 다 아래 값들을 한 번 수동으로 준비해야 한다(`setup_roles.py`와 같은 성격의 1회성 단계).
 
 - **AWS**: 화면에서 "새 AWS 계정 연결" → `.env`에 `SECRET_KEY` 필요(생성: `python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"`) → 나머지는 화면이 안내한다.
-- **GitHub App**: [github.com/settings/apps/new](https://github.com/settings/apps/new)에서 한 번 등록. 권한은 최소로 — Repository permissions의 **Contents: Read-only**, **Metadata: Read-only**만. 등록하면 발급되는 값들을 `.env`에:
+- **암호화 키(항상 필요)**: `SECRET_KEY`(위 명령)와 `BLIND_INDEX_KEY`(생성: `python -c "import secrets; print(secrets.token_urlsafe(48))"`)는 로그인을 끈 모드에서도 있어야 서버가 뜬다(푸시 토큰 등 암호화 열·블라인드 인덱스를 늘 쓴다). 두 키를 잃으면 이미 암호화된 값을 되살릴 수 없으니 따로 보관한다.
+- **로그인 키**(`AUTH_ENABLED=true` 로 켤 때): 위 두 키에 더해 `AUTH_JWT_KEY`를 만든다(같은 명령으로 따로 한 번). `SECRET_KEY`를 바꿀 때는 예전 키를 `SECRET_KEYS_OLD`(쉼표)에 남겨 둬야 이미 저장된 값을 읽는다.
+- **GitHub App**: (로그인을 꺼 둔 모드에서도 GitHub 연결에는 `SECRET_KEY` 또는 `AUTH_JWT_KEY`가 필요하다 - 설치 콜백의 `state`를 그 키로 서명한다.) [github.com/settings/apps/new](https://github.com/settings/apps/new)에서 한 번 등록. 권한은 최소로 — Repository permissions의 **Contents: Read-only**, **Metadata: Read-only**만. 등록하면 발급되는 값들을 `.env`에:
   ```
   GITHUB_APP_ID=...
   GITHUB_APP_SLUG=...                              # 앱 URL의 마지막 부분
@@ -101,7 +132,13 @@ Claude Code·Claude Desktop 같은 MCP 클라이언트에서 말로 분석·배�
 claude mcp add deploy-wizard -e PYTHONPATH=<프로젝트 경로> -- <프로젝트 경로>/.venv/Scripts/python.exe -m features.mcp
 ```
 
-Claude Desktop 은 설정 JSON 의 `mcpServers` 에 같은 내용을 넣는다. 작업 폴더가 프로젝트가 아닐 수 있으니 `PYTHONPATH` 를 프로젝트 경로로 주고, 환경변수는 `env` 에 직접 적는다.
+로그인이 켜진 서버(`AUTH_ENABLED=true`)에 붙일 때만 개인 토큰을 같이 등록한다 — 토큰은 채팅에 붙여넣지 말고 환경변수로만 준다:
+
+```bash
+claude mcp add deploy-wizard -e PYTHONPATH=<프로젝트 경로> -e WIZARD_API_TOKEN=<dwp_ 로 시작하는 토큰> -- <프로젝트 경로>/.venv/Scripts/python.exe -m features.mcp
+```
+
+Claude Desktop 은 설정 JSON 의 `mcpServers` 에 같은 내용을 넣는다 (로그인이 켜진 서버라면 `env`에 `WIZARD_API_TOKEN`도). 작업 폴더가 프로젝트가 아닐 수 있으니 `PYTHONPATH` 를 프로젝트 경로로 주고, 환경변수는 `env` 에 직접 적는다.
 
 ```json
 {
@@ -137,9 +174,11 @@ Claude Desktop 은 설정 JSON 의 `mcpServers` 에 같은 내용을 넣는다. 
 | 환경변수 | 기본값 | 뜻 |
 |----------|--------|----|
 | `WIZARD_API_URL` | `http://localhost:8081` | 부를 REST API 주소 |
-| `WIZARD_API_TOKEN` | (없음) | 로그인이 생기면(2단계) 쓰는 토큰 |
+| `WIZARD_API_TOKEN` | (없음) | 로그인이 켜진 서버(`AUTH_ENABLED=true`)에 보내는 개인 토큰. 만들기: `python scripts/auth_token.py create --email <주소> --name mcp` (아래 "로그인 토큰"). 로그인이 꺼진 서버에는 필요 없다 |
 | `MCP_MAX_LIVE_DEPLOYS` | `3` | 살아 있는 배포 한도 |
 | `MCP_CONFIRM_TTL_SECONDS` | `300` | 확인 토큰 유효 시간(초) |
+
+**로그인 토큰**: 서버가 401 을 내면 MCP 가 "배포 마법사 로그인 토큰이 없거나 만료되었습니다. python scripts/auth_token.py create --email <주소> --name mcp 로 만들어 WIZARD_API_TOKEN 에 넣으세요" 라고 알려 준다. 토큰(`dwp_…`)은 만들 때 한 번만 출력되고(기본 30일, 최대 90일), `list --email <주소>`·`revoke --id <번호>`로 보고 폐기한다. 사용자는 먼저 Google 로그인으로 만들어져 있어야 한다. 토큰 원문은 로그·오류·채팅에 싣지 않는다.
 
 설계: [`docs/superpowers/specs/2026-11-16-mcp-design.md`](./docs/superpowers/specs/2026-11-16-mcp-design.md). 2026-11-16 Claude Code(2.1.325)에서 `claude mcp add` 등록 → `✔ Connected` → 읽기 도구 실제 호출까지 확인했고, 행동 도구(`deploy`)를 허용하지 않으면 호스트가 호출을 막는 것도 확인했다. 확인 창이 사람에게 보이는 모습과 MCP 를 통한 실제 배포 한 바퀴는 아직 확인 전이다.
 

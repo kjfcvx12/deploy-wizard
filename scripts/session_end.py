@@ -8,6 +8,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from shared.database import AsyncSessionLocal, bootstrap_schema
 from shared.masking import mask_text
 from shared.settings import settings
+from shared.secrets import Secret_Error
+from shared.migrate import migrate_db_path, migrate_plaintext_count_file, MESSAGE_ACCOUNTS_UNMIGRATED
 
 # 모델을 import 해야 create_all 이 표를 안다
 from features.deploys import models as deploy_models
@@ -16,6 +18,7 @@ from features.envvars import models as envvar_models
 from features.health import models as health_models
 from features.incidents import models as incident_models
 from features.notifications import models as notification_models
+from features.auth import models as auth_models
 
 from features.deploys.services import Deploy_Service
 from features.accounts.services import Aws_Account_Service
@@ -40,12 +43,29 @@ LABELS={
 }
 
 
+# 이전(암호화) 전 값이 남은 연결 계정 수 - DB 를 읽기 전용으로 열어 센다. 못 세면 None
+def accounts_plaintext_count() -> int | None:
+    try:
+        counts=migrate_plaintext_count_file(migrate_db_path(settings.db_url))
+    except Exception:
+        return None
+    return sum(count for key, count in counts.items() if key.startswith("aws_accounts."))
+
+
 # 연결된 계정마다 - 올렸던 템플릿 파일을 지우고, 우리 태그가 붙은 채 남은 것이 있는지 본다
-async def sweep_accounts(db, dry_run:bool) -> list[str]:
+# 반환: (줄들, 연결 계정을 못 읽었는지). 이전 전 DB 라 계정을 못 읽어도 개발 계정은 그대로 점검한다
+async def sweep_accounts(db, dry_run:bool) -> tuple[list[str], bool]:
     lines=[]
     targets=[(None, "개발 계정")]
-    targets+=[(account.a_id, f"연결 '{account.label}'") for account in await Aws_Account_Service.services_aws_account_get_all(db)
-              if account.status == 'verified']
+    unreadable=False
+
+    try:
+        accounts=await Aws_Account_Service.services_aws_account_get_all(db)
+        targets+=[(account.a_id, f"연결 '{account.label}'") for account in accounts if account.status == 'verified']
+    except Secret_Error:
+        await db.rollback()
+        unreadable=True
+        lines.append("  확인 못 함  연결한 AWS 계정 전체 - 이전(암호화) 전 값이라 읽지 못했습니다 (아래 안내)")
 
     for a_id, name in targets:
         try:
@@ -65,16 +85,21 @@ async def sweep_accounts(db, dry_run:bool) -> list[str]:
         except Exception as e:
             lines.append(f"  확인 못 함  {name} :{mask_text(str(e))[:160]}")
 
-    return lines
+    return lines, unreadable
 
 
 async def run(dry_run:bool, keep_images:bool) -> int:
     # 옛 DB 에는 새 열이 없을 수 있다 - 서버 시작과 같은 보정을 먼저 한다 (없으면 "no such column" 으로 죽는다)
     await bootstrap_schema()
 
+    # 이전(암호화) 전 DB 면 연결 계정을 읽지 못한다 - 할 수 있는 것은 하고, 끝에서 크게 알린다 (요금이 계속 나갈 수 있다)
+    plaintext_accounts=accounts_plaintext_count()
+
     async with AsyncSessionLocal() as db:
         report=await Deploy_Service.services_deploy_session_end(db, keep_images=keep_images, dry_run=dry_run)
-        sweep=await sweep_accounts(db, dry_run)
+        sweep, accounts_unreadable=await sweep_accounts(db, dry_run)
+
+    unmigrated=accounts_unreadable or bool(plaintext_accounts)
 
     print("작업 종료 점검" + (" (보기만 - 실제로 멈추려면 --yes)" if dry_run else ""))
     print(f"리전 {settings.aws_region}\n")
@@ -86,7 +111,7 @@ async def run(dry_run:bool, keep_images:bool) -> int:
             print(f"  {label}{' 예정' if dry_run and key in ('stopped', 'purged') else ''}  {item}")
 
     if not touched:
-        print("  멈출 배포가 없습니다. 떠 있는 서비스도, 올려 둔 이미지도 없습니다.")
+        print("  멈출 배포가 없습니다. 떠 있는 서비스도, 올려 둔 이미지도 없습니다." + (" (단, 연결 계정은 확인하지 못했습니다 - 아래 안내)" if unmigrated else ""))
 
     if sweep:
         print("\n계정 점검")
@@ -101,6 +126,11 @@ async def run(dry_run:bool, keep_images:bool) -> int:
 
     print("\n남겨 둔 것(무료): CloudFormation 스택·IAM 역할, GitHub 앱 설치, 배포 기록(data/wizard.db), .env")
     print("이어서 하려면: aws login -> 서버 실행 -> 화면에서 멈춘 배포의 [다시 켜기]")
+
+    # 끝난 것으로 착각하지 않게 맨 끝에 두고 0 이 아닌 값으로 끝낸다
+    if unmigrated:
+        print("\n주의 - " + MESSAGE_ACCOUNTS_UNMIGRATED)
+        return 2
 
     return 1 if report["failed"] else 0
 

@@ -18,6 +18,7 @@
 | `health` | 떠 있는 배포를 1분마다 점검해 이력을 남기는 감시 루프, 이력 정리(7일) | models · scheme · crud · services | D1 (코드 완료, 실제 AWS 미검증) |
 | `incidents` | 연속 실패로 인시던트 열고 닫기, 규칙 표 원인 설명, 자동 복구(재시작·이전 정상 이미지로 되돌리기), 한도, 서버 재시작 때 정리, 조회 API | models · scheme · crud · services · recovery · router · ui | D1 (코드 완료, 실제 AWS 미검증), 화면은 계획 E |
 | `notifications` | 앱 안·메일·Expo 푸시 알림, 기기 등록, 알림 설정, 알림 조회 API | models · scheme · crud · services · compose · dispatch · inbox · router · ui | D1 (코드 완료, 실제 SMTP·Expo 미검증), 화면은 계획 E |
+| `auth` | Google 로그인(`id_token` 검증)·액세스/리프레시 토큰 회전·`current_user` 의존성(`AUTH_ENABLED`)·개인 토큰(MCP)·내 정보·계정 삭제(DB 기록만). 허용 플랫폼은 `LOGIN_PLATFORMS` 한 곳 | models · scheme · crud · google · services · router (UI 없음) | 로그인 백엔드 (코드 완료, 실제 Google 로그인 미확인, 기본 꺼짐) |
 | `mcp` | 로컬 MCP 서버 — Claude 에서 분석·배포·로그·멈춤·삭제 (REST 클라이언트, 확인 흐름, 살아 있는 배포 한도, 출력 마스킹) | client · guard · scheme · services · server | 로컬 MCP (코드 완료, 실제 Claude 연결·배포 검증 전) |
 
 ## 기능 사이의 흐름
@@ -118,7 +119,7 @@
   - `notifications/ui/`: `api.js`(기기 등록 없음) · `constants.js` · `logic.js`(이동 경로·설정 값·배지 글) · `useUnreadCount.js` · `NotificationsPage` `NotificationSettingsPage` `NotificationItem` `BellLink`
   - `deploys/ui/` 추가: `DeploySettingsPage`(자동 재배포·자동 복구 스위치) · `HealthDot` · `StopDialog`(상세와 인시던트 상세가 공유)
   - `shared/ui/` 추가: `time.js`(UTC `Z` 없는 서버 시각) · `polling.js` · `usePolling.js` · `SettingSwitch.jsx`
-- 알림은 `u_id` 없이 한 사람 기준이다. 로그인이 생기면 사용자별로 나눈다.
+- 알림은 사용자별이다 (로그인 계획 Task 7): 알림·기기·설정에 `u_id`가 있고, 로그인을 끈 모드와 주인 없는 배포는 옛 한 줄(`id=1`)·`MAIL_TO`를 쓴다. 규칙은 [`architecture.md`](./architecture.md) "로그인과 소유권".
 - 알려진 한계(미뤄 둠): 같은 커밋 재배포 시 복구 막힘 유지, 설정 첫 읽기 경쟁, 알림 표 정리 없음, 검증 점검이 헬스 행으로 남지 않음 등. 목록은 `docs/worklog/2026-11-10.md`.
 
 ## 앞으로 생길 기능

@@ -1,30 +1,32 @@
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
-from sqlalchemy import update
+from sqlalchemy import update, delete
+
+from shared.ownership import owner_where
 
 from features.accounts.models import Aws_Account, Github_Installation, Connection
 
 
 class Aws_Account_Crud:
 
-    # 전 AWS 계정 조회 (최신순)
+    # 전 AWS 계정 조회 (최신순) - u_id 를 주면 그 사용자 것만
     @staticmethod
-    async def crud_aws_account_get_all(db:AsyncSession) -> list[Aws_Account]:
-        result=await db.execute(select(Aws_Account).order_by(Aws_Account.a_id.desc()))
+    async def crud_aws_account_get_all(db:AsyncSession, u_id:int|None=None) -> list[Aws_Account]:
+        result=await db.execute(owner_where(select(Aws_Account), Aws_Account.u_id, u_id).order_by(Aws_Account.a_id.desc()))
         return result.scalars().all()
 
 
-    # AWS 계정 a_id 찾기
+    # AWS 계정 a_id 찾기 - u_id 를 주면 그 사용자 것일 때만
     @staticmethod
-    async def crud_aws_account_get_by_id(db:AsyncSession, a_id:int) -> Aws_Account | None:
-        result=await db.execute(select(Aws_Account).filter(Aws_Account.a_id == a_id))
+    async def crud_aws_account_get_by_id(db:AsyncSession, a_id:int, u_id:int|None=None) -> Aws_Account | None:
+        result=await db.execute(owner_where(select(Aws_Account).filter(Aws_Account.a_id == a_id), Aws_Account.u_id, u_id))
         return result.scalars().first()
 
 
-    # AWS 계정 생성 - role_arn 은 아직 없는 pending 상태로
+    # AWS 계정 생성 - role_arn 은 아직 없는 pending 상태로. u_id 는 만든 사용자 (인증 끔이면 None)
     @staticmethod
-    async def crud_aws_account_create(db:AsyncSession, label:str, region:str|None, external_id_encrypted:str) -> Aws_Account:
-        db_account=Aws_Account(label=label, region=region, external_id_encrypted=external_id_encrypted, status='pending')
+    async def crud_aws_account_create(db:AsyncSession, label:str, region:str|None, external_id_encrypted:str, u_id:int|None=None) -> Aws_Account:
+        db_account=Aws_Account(label=label, region=region, external_id_encrypted=external_id_encrypted, status='pending', u_id=u_id)
         db.add(db_account)
         await db.flush()
         return db_account
@@ -56,19 +58,33 @@ class Aws_Account_Crud:
         return None
 
 
+    # 사용자의 AWS 계정 a_id 를 고르는 하위 쿼리 - 계정 삭제가 참조를 뗄 때 쓴다
+    @staticmethod
+    def crud_aws_account_ids_by_u_id(u_id:int):
+        return select(Aws_Account.a_id).where(Aws_Account.u_id == u_id)
+
+
+    # 사용자의 AWS 계정 기록 전부 삭제 - 계정 삭제용 (AWS 쪽 스택은 건드리지 않는다). 반환: 지운 수
+    @staticmethod
+    async def crud_aws_account_delete_by_u_id(db:AsyncSession, u_id:int) -> int:
+        result=await db.execute(delete(Aws_Account).where(Aws_Account.u_id == u_id).execution_options(synchronize_session=False))
+        await db.flush()
+        return result.rowcount
+
+
 class Github_Installation_Crud:
 
-    # 전 GitHub 설치 조회 (최신순)
+    # 전 GitHub 설치 조회 (최신순) - u_id 를 주면 그 사용자 것만
     @staticmethod
-    async def crud_github_installation_get_all(db:AsyncSession) -> list[Github_Installation]:
-        result=await db.execute(select(Github_Installation).order_by(Github_Installation.g_id.desc()))
+    async def crud_github_installation_get_all(db:AsyncSession, u_id:int|None=None) -> list[Github_Installation]:
+        result=await db.execute(owner_where(select(Github_Installation), Github_Installation.u_id, u_id).order_by(Github_Installation.g_id.desc()))
         return result.scalars().all()
 
 
-    # GitHub 설치 g_id 찾기
+    # GitHub 설치 g_id 찾기 - u_id 를 주면 그 사용자 것일 때만
     @staticmethod
-    async def crud_github_installation_get_by_id(db:AsyncSession, g_id:int) -> Github_Installation | None:
-        result=await db.execute(select(Github_Installation).filter(Github_Installation.g_id == g_id))
+    async def crud_github_installation_get_by_id(db:AsyncSession, g_id:int, u_id:int|None=None) -> Github_Installation | None:
+        result=await db.execute(owner_where(select(Github_Installation).filter(Github_Installation.g_id == g_id), Github_Installation.u_id, u_id))
         return result.scalars().first()
 
 
@@ -79,10 +95,10 @@ class Github_Installation_Crud:
         return result.scalars().first()
 
 
-    # 설치 정보 upsert - 이미 있으면 계정 정보만 갱신
+    # 설치 정보 upsert - 이미 있으면 계정 정보만 갱신(주인은 그대로), 새로 만들 때만 u_id 를 주인으로
     @staticmethod
     async def crud_github_installation_upsert(db:AsyncSession, installation_id:int, account_login:str,
-                                              account_type:str|None, repository_selection:str|None) -> Github_Installation:
+                                              account_type:str|None, repository_selection:str|None, u_id:int|None=None) -> Github_Installation:
         db_installation=await Github_Installation_Crud.crud_github_installation_get_by_installation_id(db, installation_id)
 
         if db_installation:
@@ -93,7 +109,7 @@ class Github_Installation_Crud:
             db_installation.suspended_at=None
         else:
             db_installation=Github_Installation(installation_id=installation_id, account_login=account_login,
-                                                account_type=account_type, repository_selection=repository_selection)
+                                                account_type=account_type, repository_selection=repository_selection, u_id=u_id)
             db.add(db_installation)
 
         await db.flush()
@@ -123,26 +139,40 @@ class Github_Installation_Crud:
         return None
 
 
+    # 사용자의 GitHub 설치 g_id 를 고르는 하위 쿼리 - 계정 삭제가 참조를 뗄 때 쓴다
+    @staticmethod
+    def crud_github_installation_ids_by_u_id(u_id:int):
+        return select(Github_Installation.g_id).where(Github_Installation.u_id == u_id)
+
+
+    # 사용자의 GitHub 설치 기록 전부 삭제 - 계정 삭제용 (GitHub 앱 설치 자체는 건드리지 않는다). 반환: 지운 수
+    @staticmethod
+    async def crud_github_installation_delete_by_u_id(db:AsyncSession, u_id:int) -> int:
+        result=await db.execute(delete(Github_Installation).where(Github_Installation.u_id == u_id).execution_options(synchronize_session=False))
+        await db.flush()
+        return result.rowcount
+
+
 class Connection_Crud:
 
-    # 전 연결 블록 조회 (만든 순)
+    # 전 연결 블록 조회 (만든 순) - u_id 를 주면 그 사용자 것만
     @staticmethod
-    async def crud_connection_get_all(db:AsyncSession) -> list[Connection]:
-        result=await db.execute(select(Connection).order_by(Connection.c_id))
+    async def crud_connection_get_all(db:AsyncSession, u_id:int|None=None) -> list[Connection]:
+        result=await db.execute(owner_where(select(Connection), Connection.u_id, u_id).order_by(Connection.c_id))
         return result.scalars().all()
 
 
-    # 연결 블록 c_id 찾기
+    # 연결 블록 c_id 찾기 - u_id 를 주면 그 사용자 것일 때만
     @staticmethod
-    async def crud_connection_get_by_id(db:AsyncSession, c_id:int) -> Connection | None:
-        result=await db.execute(select(Connection).filter(Connection.c_id == c_id))
+    async def crud_connection_get_by_id(db:AsyncSession, c_id:int, u_id:int|None=None) -> Connection | None:
+        result=await db.execute(owner_where(select(Connection).filter(Connection.c_id == c_id), Connection.u_id, u_id))
         return result.scalars().first()
 
 
-    # 연결 블록 생성 - 보통 빈 블록으로 만들고, 블록 도입 전 AWS 계정을 옮길 때만 aws_account_id 를 준다
+    # 연결 블록 생성 - 보통 빈 블록으로 만들고, 블록 도입 전 AWS 계정을 옮길 때만 aws_account_id 를 준다. u_id 는 주인
     @staticmethod
-    async def crud_connection_create(db:AsyncSession, label:str, aws_account_id:int|None=None) -> Connection:
-        db_connection=Connection(label=label, aws_account_id=aws_account_id)
+    async def crud_connection_create(db:AsyncSession, label:str, aws_account_id:int|None=None, u_id:int|None=None) -> Connection:
+        db_connection=Connection(label=label, aws_account_id=aws_account_id, u_id=u_id)
         db.add(db_connection)
         await db.flush()
         return db_connection
@@ -172,6 +202,28 @@ class Connection_Crud:
             await db.flush()
             return db_connection
         return None
+
+
+    # AWS 계정들(하위 쿼리 가능)을 가리키던 블록은 주인이 누구든 거기서 뗀다 - 계정 삭제용
+    @staticmethod
+    async def crud_connection_unlink_aws_accounts(db:AsyncSession, a_ids) -> int:
+        result=await db.execute(update(Connection).where(Connection.aws_account_id.in_(a_ids)).values(aws_account_id=None).execution_options(synchronize_session=False))
+        return result.rowcount
+
+
+    # GitHub 설치들(하위 쿼리 가능)을 가리키던 블록은 주인이 누구든 거기서 뗀다 - 계정 삭제용
+    @staticmethod
+    async def crud_connection_unlink_github_installations(db:AsyncSession, g_ids) -> int:
+        result=await db.execute(update(Connection).where(Connection.github_installation_id.in_(g_ids)).values(github_installation_id=None).execution_options(synchronize_session=False))
+        return result.rowcount
+
+
+    # 사용자의 연결 블록 전부 삭제 - 계정 삭제용. 반환: 지운 수
+    @staticmethod
+    async def crud_connection_delete_by_u_id(db:AsyncSession, u_id:int) -> int:
+        result=await db.execute(delete(Connection).where(Connection.u_id == u_id).execution_options(synchronize_session=False))
+        await db.flush()
+        return result.rowcount
 
 
     # AWS 계정이 지워질 때 - 그 계정을 가리키던 블록에서 뗀다

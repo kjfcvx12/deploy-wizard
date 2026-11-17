@@ -40,6 +40,29 @@ class Settings(BaseSettings):
 
     # M6 - shared/secrets.py 암호화 키 (Fernet)
     secret_key:str|None=Field(None, alias="SECRET_KEY")
+    # 로그인 - 키 회전용 옛 SECRET_KEY 목록(쉼표). 새 키는 SECRET_KEY, 옛 키는 여기에 둔다
+    secret_keys_old:str|None=Field(None, alias="SECRET_KEYS_OLD")
+    # 로그인 - 블라인드 인덱스(HMAC) 키. SECRET_KEY 와 따로 둔다
+    blind_index_key:str|None=Field(None, alias="BLIND_INDEX_KEY")
+
+    # 로그인 - AUTH_ENABLED=false(기본)이면 지금처럼 인증 없이 동작한다
+    auth_enabled:bool=Field(False, alias="AUTH_ENABLED")
+    # 로그인 - 액세스 토큰(JWT HS256) 서명 키. SECRET_KEY 와 따로 둔다
+    auth_jwt_key:str|None=Field(None, alias="AUTH_JWT_KEY")
+    auth_access_seconds:int=Field(900, alias="AUTH_ACCESS_SECONDS")
+    auth_refresh_days:int=Field(30, alias="AUTH_REFRESH_DAYS")
+    auth_pat_default_days:int=Field(30, alias="AUTH_PAT_DEFAULT_DAYS")
+    auth_pat_max_days:int=Field(90, alias="AUTH_PAT_MAX_DAYS")
+    # 로그인 - 로그인을 허용할 이메일 목록(쉼표)
+    auth_allowed_emails:str=Field("", alias="AUTH_ALLOWED_EMAILS")
+    # 로그인 - 리프레시 쿠키에 Secure 속성을 붙일지 (HTTPS 에서 true)
+    auth_cookie_secure:bool=Field(False, alias="AUTH_COOKIE_SECURE")
+    # 로그인 - Google 클라이언트 ID (웹·안드로이드)
+    google_client_id_web:str|None=Field(None, alias="GOOGLE_CLIENT_ID_WEB")
+    google_client_id_android:str|None=Field(None, alias="GOOGLE_CLIENT_ID_ANDROID")
+    google_jwks_cache_seconds:int=Field(3600, alias="GOOGLE_JWKS_CACHE_SECONDS")
+    # 로그인 - 모르는 kid 때문에 JWKS 를 다시 받는 최소 간격 (초)
+    google_jwks_refetch_cooldown_seconds:int=Field(60, alias="GOOGLE_JWKS_REFETCH_COOLDOWN_SECONDS")
 
     # M6 - GitHub App (github.com/settings/apps/new 에서 한 번 수동 등록)
     github_app_id:str|None=Field(None, alias="GITHUB_APP_ID")
@@ -127,6 +150,11 @@ class Settings(BaseSettings):
     @property
     def cors_origin_list(self) -> list[str]:
         return [origin.strip() for origin in self.cors_origins.split(",") if origin.strip()]
+
+    # 로그인 허용 이메일 모음 (소문자)
+    @property
+    def auth_allowed_email_set(self) -> set[str]:
+        return {email.strip().lower() for email in self.auth_allowed_emails.split(",") if email.strip()}
 
     # GitHub App 개인키 파일 내용 - JWT 서명에 쓴다
     @property

@@ -469,29 +469,29 @@ class Incident_Service:
                                 detail=f"인시던트 종료 실패 :{mask_text(str(e))}")
 
 
-    # 인시던트 목록 - 최신 100건, after(i_id)보다 오래된 것부터
+    # 인시던트 목록 - 최신 100건, after(i_id)보다 오래된 것부터. u_id 를 주면 그 사용자 배포의 것만
     @staticmethod
-    async def services_incident_get_all(db:AsyncSession, status_filter:str|None=None, d_id:int|None=None, after:int|None=None) -> list[Incident]:
+    async def services_incident_get_all(db:AsyncSession, status_filter:str|None=None, d_id:int|None=None, after:int|None=None, u_id:int|None=None) -> list[Incident]:
         if status_filter is not None and status_filter not in INCIDENT_STATUSES:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST,
                                 detail='상태는 open, recovering, resolved, needs_action 중 하나여야 합니다')
 
-        return await Incident_Crud.crud_incident_list(db, status_filter, d_id, after, 100)
+        return await Incident_Crud.crud_incident_list(db, status_filter, d_id, after, 100, u_id)
 
 
-    # 한 배포의 인시던트 목록 - 없는 배포는 404
+    # 한 배포의 인시던트 목록 - 없거나 남의 배포는 404
     @staticmethod
-    async def services_incident_get_by_deploy(db:AsyncSession, d_id:int, after:int|None=None) -> list[Incident]:
+    async def services_incident_get_by_deploy(db:AsyncSession, d_id:int, after:int|None=None, u_id:int|None=None) -> list[Incident]:
         from features.deploys.services import Deploy_Service
 
-        await Deploy_Service.services_deploy_get_d_id(db, d_id)
+        await Deploy_Service.services_deploy_get_owned(db, d_id, u_id)
         return await Incident_Crud.crud_incident_list(db, None, d_id, after, 100)
 
 
-    # 인시던트 한 건과 복구 시도 이력 - 시작 시각순
+    # 인시던트 한 건과 복구 시도 이력 - 시작 시각순. 남의 배포의 것은 404
     @staticmethod
-    async def services_incident_get_detail(db:AsyncSession, i_id:int) -> Incident_Detail:
-        incident=await Incident_Crud.crud_incident_get_by_i_id(db, i_id)
+    async def services_incident_get_detail(db:AsyncSession, i_id:int, u_id:int|None=None) -> Incident_Detail:
+        incident=await Incident_Crud.crud_incident_get_by_i_id(db, i_id, u_id)
 
         if incident is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND,
@@ -502,3 +502,15 @@ class Incident_Service:
         detail=Incident_Detail.model_validate(incident)
         detail.actions=[Recovery_Action_Read.model_validate(action) for action in actions]
         return detail
+
+
+    # 배포들의 인시던트 id 하위 쿼리 - 계정 삭제가 인시던트를 가리키는 기록(알림)을 먼저 지울 때 쓴다 (조회만, 인시던트를 지우기 전에 부른다)
+    @staticmethod
+    def services_incident_ids_by_d_ids(d_ids):
+        return Incident_Crud.crud_incident_ids_by_d_ids(d_ids)
+
+
+    # 배포들의 인시던트·복구 기록 삭제 - 계정 삭제가 부른다 (flush 까지, 커밋은 부른 쪽)
+    @staticmethod
+    async def services_incident_forget_deploys(db:AsyncSession, d_ids) -> int:
+        return await Incident_Crud.crud_incident_delete_by_d_ids(db, d_ids)
