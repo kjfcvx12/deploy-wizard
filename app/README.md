@@ -24,6 +24,8 @@ cp .env.example .env     # 서버 주소를 환경에 맞게 고친다
 값은 빌드할 때 코드에 박힌다. 바꾼 뒤에는 `npx expo start --clear` 로 다시 켠다.
 서버는 인증이 없는 로컬 전용이다 (1단계). 밖에 열지 않는다. 로그인·토큰 코드는 아직 없다.
 
+**Google 로그인은 개발 빌드(EAS)에서만 된다. Expo Go 는 네이티브 모듈이 없어 지원하지 않는다** (앱은 `개발 빌드에서만 Google 로그인을 할 수 있습니다 ...` 안내를 보인다). 안드로이드는 `@react-native-google-signin/google-signin` 17.0.0 의 무료(Original) API 를 쓰고, 이 판은 안드로이드에서 옛 Google Sign-In SDK 를 쓴다 (라이브러리 README: `It uses the legacy Google Sign-In SDK on Android`, 현대 구현은 유료 판). 지원 종료 시점은 라이브러리 문서로 따로 확인해야 한다 (verify against the library docs). 라이브러리 호출은 `src/auth/google.js` 한 파일에만 있고, 웹 번들은 `google.web.js`(GIS)·`GoogleWebButton.web.js` 를 쓴다. 앱은 웹 클라이언트 ID 만 `configure` 에 넘기고 (서버가 안드로이드 로그인의 `aud` 로 웹 클라이언트 ID 를 받는다), `app.json` 의 플러그인에는 옵션이 없다 (`iosUrlScheme` 은 iOS 전용이라 넣지 않았다).
+
 `.env` 는 커밋하지 않는다 (`app/.env` 는 `.gitignore` 에 있다). Windows PowerShell 에서는 `cp` 대신 `Copy-Item .env.example .env` 를 쓴다.
 
 웹으로 띄운 앱(`npx expo start --web --port 8082`)이 실제 서버를 부르면 서버의 CORS 가 막는다. 서버는 기본으로 `http://localhost:5173`, `http://127.0.0.1:5173` 에서 온 요청만 받기 때문이다 (`CORS_ORIGINS`). 웹에서 실제 서버로 붙여 보려면 서버 `.env` 의 `CORS_ORIGINS` 에 `http://localhost:8082` 를 더한다. 안드로이드는 브라우저가 아니라서 CORS 가 걸리지 않는다. 모의 API 로 확인한 방법은 아래 "확인한 것과 못 한 것"에 있다.

@@ -30,3 +30,20 @@ jest.mock('expo-secure-store', () => {
     __items: () => items,
   }
 })
+
+// Google 로그인 라이브러리(17.0.0)는 네이티브 모듈이 없으면 가져오는 순간 던지므로, jest 에서는 목으로 바꾼다 (이름·모양은 설치한 버전의 GoogleSignin·statusCodes 그대로). 각 테스트가 signIn 등을 mockResolvedValue 로 덮어쓴다
+jest.mock('@react-native-google-signin/google-signin', () => ({
+  GoogleSignin: {
+    configure: jest.fn(),
+    hasPlayServices: jest.fn(async () => true),
+    signIn: jest.fn(async () => ({ type: 'success', data: { idToken: 'jest-mock-id-token' } })),
+    signOut: jest.fn(async () => null),
+  },
+  statusCodes: {
+    SIGN_IN_CANCELLED: '12501',
+    IN_PROGRESS: 'ASYNC_OP_IN_PROGRESS',
+    PLAY_SERVICES_NOT_AVAILABLE: 'PLAY_SERVICES_NOT_AVAILABLE',
+    SIGN_IN_REQUIRED: '4',
+    NULL_PRESENTER: 'NULL_PRESENTER',
+  },
+}))
