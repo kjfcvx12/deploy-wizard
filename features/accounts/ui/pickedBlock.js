@@ -1,6 +1,6 @@
 // 고른 연결 블록 - 계정 연결 화면에서 [선택]한 블록을 새 배포 폼(AccountPicker)이 미리 골라 둔다
 // 이 브라우저에만 기억한다 (서버에는 저장하지 않는다)
-const PICKED_BLOCK_KEY = 'dw-picked-block'
+export const PICKED_BLOCK_KEY = 'dw-picked-block'
 
 export const readPickedBlock = () => {
   try {
