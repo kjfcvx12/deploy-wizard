@@ -101,10 +101,11 @@ const ensureChannel = async () => {
   }
 }
 
-// 실제 등록 - 권한(필요하면 OS 창) → 토큰 → 서버 등록 → p_d_id 저장
-async function register() {
+// 실제 등록 - 권한(필요하면 OS 창) → 토큰 → 서버 등록 → p_d_id 저장. allowPrompt 가 false 면 권한 창을 절대 띄우지 않는다
+async function register(allowPrompt = true) {
   const before = await getPushState()
   if (before === 'unsupported' || before === 'no_project') return before
+  if (!allowPrompt && before !== 'granted') return before
   await ensureChannel()
   let state = before
   try {
@@ -151,6 +152,19 @@ let inflight = null
 export function requestAndRegister() {
   if (!inflight) inflight = register().finally(() => { inflight = null })
   return inflight
+}
+
+// 로그인 뒤 다시 등록 - 이 기기가 등록된 적 있고(저장된 번호) 권한이 이미 허용일 때만 같은 등록을 한다 (권한 창은 절대 띄우지 않는다). 서버는 같은 토큰을 지금 사용자로 옮긴다
+export async function reRegisterIfGranted() {
+  if (!(await readPushDevice())) return 'skipped'
+  if ((await getPushState()) !== 'granted') return 'skipped'
+  if (!inflight) inflight = register(false).finally(() => { inflight = null })
+  return (await inflight) === 'granted' ? 'granted' : 'skipped'
+}
+
+// 저장된 기기 번호만 지운다 - 서버를 부르지 않는다 (계정 삭제 뒤처럼 서버가 이미 기기 행을 지웠을 때). 던지지 않는다
+export async function forgetPushDevice() {
+  await clearPushDevice()
 }
 
 // 알림 끄기 - 저장된 번호로 서버 등록을 지우고 저장소를 비운다. 404·오프라인이어도 던지지 않는다 (서버의 notify_push 는 따로 끈다)

@@ -4,7 +4,7 @@ import * as Notifications from 'expo-notifications'
 import { deviceApi } from '../api'
 import {
   getPushState, requestAndRegister, unregister, routeFromNotificationResponse,
-  readPushDevice, readCardDismissed, writeCardDismissed,
+  readPushDevice, readCardDismissed, writeCardDismissed, reRegisterIfGranted, forgetPushDevice,
 } from '../ops/push'
 
 const mockConstants = { expoConfig: { extra: { eas: { projectId: 'proj-1' } } } }
@@ -234,6 +234,77 @@ describe('unregister', () => {
     await unregister()
     expect(deviceApi.remove).not.toHaveBeenCalled()
     expect(await AsyncStorage.getItem('dw-push-device')).toBeNull()
+  })
+})
+
+describe('reRegisterIfGranted (로그인 뒤 다시 등록)', () => {
+  test('저장된 기기 번호가 없으면 skipped - 권한도 서버도 건드리지 않는다', async () => {
+    expect(await reRegisterIfGranted()).toBe('skipped')
+    expect(deviceApi.register).not.toHaveBeenCalled()
+    expect(Notifications.requestPermissionsAsync).not.toHaveBeenCalled()
+    expect(Notifications.getExpoPushTokenAsync).not.toHaveBeenCalled()
+  })
+
+  test.each([
+    ['아직 묻지 않음', UNDETERMINED],
+    ['거부', DENIED],
+  ])('권한이 %s 이면 skipped - 권한 창을 띄우지 않는다', async (_name, permission) => {
+    await AsyncStorage.setItem('dw-push-device', '5')
+    Notifications.getPermissionsAsync.mockResolvedValue(permission)
+    expect(await reRegisterIfGranted()).toBe('skipped')
+    expect(Notifications.requestPermissionsAsync).not.toHaveBeenCalled()
+    expect(deviceApi.register).not.toHaveBeenCalled()
+    expect(await readPushDevice()).toBe(5)
+  })
+
+  test('웹은 skipped', async () => {
+    jest.replaceProperty(Platform, 'OS', 'web')
+    await AsyncStorage.setItem('dw-push-device', '5')
+    expect(await reRegisterIfGranted()).toBe('skipped')
+    expect(deviceApi.register).not.toHaveBeenCalled()
+  })
+
+  test('저장 번호 + 허용됨 -> 같은 등록 한 번, 권한 창 없음', async () => {
+    await AsyncStorage.setItem('dw-push-device', '5')
+    expect(await reRegisterIfGranted()).toBe('granted')
+    expect(deviceApi.register).toHaveBeenCalledTimes(1)
+    expect(deviceApi.register).toHaveBeenCalledWith({ expo_token: TOKEN, platform: 'android' })
+    expect(Notifications.requestPermissionsAsync).not.toHaveBeenCalled()
+    expect(deviceApi.remove).not.toHaveBeenCalled()
+    expect(await readPushDevice()).toBe(5)
+  })
+
+  test('읽은 뒤 권한이 바뀌어도(undetermined) 권한 창을 띄우지 않는다', async () => {
+    await AsyncStorage.setItem('dw-push-device', '5')
+    Notifications.getPermissionsAsync.mockResolvedValueOnce(GRANTED).mockResolvedValue(UNDETERMINED)
+    expect(await reRegisterIfGranted()).toBe('skipped')
+    expect(Notifications.requestPermissionsAsync).not.toHaveBeenCalled()
+    expect(deviceApi.register).not.toHaveBeenCalled()
+  })
+
+  test('서버 등록 실패는 던진다 (토큰은 문장에 없다)', async () => {
+    await AsyncStorage.setItem('dw-push-device', '5')
+    deviceApi.register.mockRejectedValue(Object.assign(new Error(`bad ${TOKEN}`), { status: 500 }))
+    const error = await reRegisterIfGranted().catch((e) => e)
+    expect(error).toBeInstanceOf(Error)
+    expect(error.message).not.toContain('SECRET')
+  })
+})
+
+describe('forgetPushDevice', () => {
+  test('저장된 기기 번호만 지우고 서버는 부르지 않는다', async () => {
+    await AsyncStorage.setItem('dw-push-device', '5')
+    await AsyncStorage.setItem('dw-push-card-dismissed', '1')
+    await expect(forgetPushDevice()).resolves.toBeUndefined()
+    expect(await readPushDevice()).toBeNull()
+    expect(await AsyncStorage.getItem('dw-push-card-dismissed')).toBe('1')
+    expect(deviceApi.remove).not.toHaveBeenCalled()
+    expect(deviceApi.register).not.toHaveBeenCalled()
+  })
+
+  test('저장소가 막혀도 던지지 않는다', async () => {
+    AsyncStorage.removeItem.mockRejectedValueOnce(new Error('x'))
+    await expect(forgetPushDevice()).resolves.toBeUndefined()
   })
 })
 

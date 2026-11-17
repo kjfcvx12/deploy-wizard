@@ -1,7 +1,7 @@
 import AsyncStorage from '@react-native-async-storage/async-storage'
 
 // 고른 연결 블록 - 계정 연결 화면에서 [선택]한 블록을 새 배포 화면이 미리 골라 둔다 (이 기기에만 기억, c_id 숫자만 저장)
-const PICKED_BLOCK_KEY = 'dw-picked-block'
+export const PICKED_BLOCK_KEY ='dw-picked-block'
 
 // 저장된 블록 번호 읽기 - 없거나 이상한 값이거나 저장소가 막혔으면 null
 export const readPickedBlock = async () => {
