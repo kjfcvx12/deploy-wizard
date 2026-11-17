@@ -4,6 +4,7 @@ import { Text } from '../src/components/Text'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import { Stack, useFocusEffect, useRouter } from 'expo-router'
 import { deployApi } from '../src/api'
+import { useAuth } from '../src/auth/AuthProvider'
 import BellButton from '../src/components/ops/BellButton'
 import HealthDot from '../src/components/ops/HealthDot'
 import ProblemBanner from '../src/components/ops/ProblemBanner'
@@ -100,6 +101,7 @@ export default function DeployListScreen() {
   const [pulling, setPulling] = useState(false)
   const { data, error, loading, refresh } = usePolling(() => deployApi.getAll(), listDelay, [])
   const { count: unread, refresh: refreshUnread } = useUnreadCount()
+  const { config, status } = useAuth()
 
   // 열린 인시던트가 있는 배포 - 목록 위에 배너로 알린다
   const problems = data ? data.filter((d) => d.open_incident_id) : []
@@ -108,6 +110,11 @@ export default function DeployListScreen() {
   const goAccounts = () => router.push('/accounts')
   const goNotifications = () => router.push('/notifications')
   const goNotificationSettings = () => router.push('/notification-settings')
+
+  // 보조 줄 - 로그인했으면 내 정보, 로그인하지 않았고 서버가 로그인을 열어 두었을 때만 로그인, 둘 다 아니면 없음 (로그인을 쓰지 않는 서버의 화면은 그대로)
+  const quickLinks = [{ label: '계정 연결', onPress: goAccounts }, { label: '알림 설정', onPress: goNotificationSettings }]
+  if (status === 'signed_in') quickLinks.push({ label: '내 정보', onPress: () => router.push('/me') })
+  else if (status === 'signed_out' && config?.login_available) quickLinks.push({ label: '로그인', onPress: () => router.push('/login') })
 
   // 다른 화면에서 돌아오면 목록과 안 읽은 알림 수를 다시 받는다 (계정 연결·새 배포·상세·알림 화면에서 바뀐 것이 낡게 남지 않게). 처음 열 때는 usePolling 이 이미 받는다
   const focusedOnce = useRef(false)
@@ -153,7 +160,7 @@ export default function DeployListScreen() {
           </View>
         ),
       }} />
-      <QuickLinks links={[{ label: '계정 연결', onPress: goAccounts }, { label: '알림 설정', onPress: goNotificationSettings }]} />
+      <QuickLinks links={quickLinks} />
       <FlatList
         testID="deploy-list"
         data={data || []}

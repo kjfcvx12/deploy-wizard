@@ -51,6 +51,8 @@ export function AuthProvider({ children }) {
   const configSeq = useRef(0)
   // 진행 중인 로그인 하나 - 연타해도 Google 창과 서버 호출은 한 번
   const signingIn = useRef(null)
+  // 경로 보호가 그대로 두는 화면 - 계정 삭제 결과·로그아웃 실패 안내처럼 세션이 지워진 뒤에도 보여야 하는 화면 하나
+  const [holdSegment, setHoldSegment] = useState(null)
   // 콜백 안에서 쓰는 최신 값
   const latest = useRef({})
   latest.current = { config, router, segments }
@@ -144,8 +146,15 @@ export function AuthProvider({ children }) {
     return signingIn.current
   }, [runSignIn])
 
+  // 이 경로 화면을 경로 보호에서 빼 둔다(세션이 없어도 그 화면에 머문다) - 해제 함수를 돌려준다. 그 화면이 사라질 때 꼭 부른다
+  const holdRoute = useCallback((segment) => {
+    setHoldSegment(segment)
+    return () => setHoldSegment((current) => (current === segment ? null : current))
+  }, [])
+
   // 로그아웃 - 기기 해제(토큰이 살아 있을 때) → 서버 로그아웃 → 세션 → 사용자 저장값 → Google → 로그인(끔 모드는 처음) 화면. { serverLoggedOut }
-  const signOut = useCallback(async () => {
+  // navigate:false 면 화면 이동은 부른 화면이 한다 (서버 로그아웃 실패 안내를 보인 뒤에 보내려고)
+  const signOut = useCallback(async ({ navigate = true } = {}) => {
     const result = await runSignOut({
       unregisterPush: unregister,
       // 세션을 지우기 전에 읽는다 (clearSession 은 메모리의 원문도 바로 지운다)
@@ -155,6 +164,7 @@ export function AuthProvider({ children }) {
       clearUserData: clearUserScopedData,
       googleSignOut,
     })
+    if (!navigate) return result
     const { config: current, router: nav, segments: here } = latest.current
     const target = afterLogoutPath(current)
     // 경로 보호가 이미 로그인 화면으로 보냈으면 한 번 더 보내지 않는다
@@ -178,8 +188,8 @@ export function AuthProvider({ children }) {
   }, [])
 
   const value = useMemo(() => ({
-    config, configError, status, user, retryConfig: boot, signIn, signOut, forgetAfterDelete,
-  }), [config, configError, status, user, boot, signIn, signOut, forgetAfterDelete])
+    config, configError, status, user, holdSegment, retryConfig: boot, signIn, signOut, forgetAfterDelete, holdRoute,
+  }), [config, configError, status, user, holdSegment, boot, signIn, signOut, forgetAfterDelete, holdRoute])
 
   return createElement(AuthContext.Provider, { value }, children)
 }

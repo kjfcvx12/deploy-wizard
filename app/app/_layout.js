@@ -23,10 +23,11 @@ function RootNavigator() {
   const colors = useColors()
   const router = useRouter()
   const segments = useSegments()
-  const { config, configError, status, retryConfig } = useAuth()
-  const decision = authRoute({ config, configError, status, segments })
+  const { config, configError, status, holdSegment, retryConfig } = useAuth()
+  // holdSegment: 계정 삭제 결과처럼 세션이 지워진 뒤에도 보여야 하는 화면 하나는 경로 보호가 건드리지 않는다
+  const decision = authRoute({ config, configError, status, segments, holdSegment })
   // 알림 탭 이동은 정말 들어온 뒤에만 (로그인 필요 서버의 로그인 화면에서는 기다렸다가 로그인 뒤 한 번 이동)
-  useNotificationRouting(notificationRouteAllowed({ config, configError, status, segments }))
+  useNotificationRouting(notificationRouteAllowed({ config, configError, status, segments, holdSegment }))
   // 덮개 뒤 화면의 바깥 틀 (웹 번들에서 inert 를 거는 DOM 노드)
   const behindRef = useRef(null)
 

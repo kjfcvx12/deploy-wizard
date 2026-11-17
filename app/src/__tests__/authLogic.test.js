@@ -1,6 +1,7 @@
 import {
   CONFIG_OFF, normalizeConfig, loginErrorText, parseLiveDeploys, deleteResultView, authRoute, runBoot,
   shouldTryRefresh, loginViewState, notificationRouteAllowed, afterLogoutPath, runSignOut, UNSUPPORTED_PLATFORM_TEXT,
+  safePictureUrl, meViewState,
 } from '../auth/logic'
 import { Google_Sign_In_Error, GENERIC_SIGN_IN_TEXT } from '../auth/googleError'
 
@@ -343,5 +344,44 @@ describe('afterLogoutPath · runSignOut', () => {
     })
     expect(result).toEqual({ serverLoggedOut: false })
     expect(order).toEqual(['clear'])
+  })
+})
+
+describe('authRoute holdSegment (계정 삭제 결과·로그아웃 실패 안내)', () => {
+  const base = { config: ON, configError: false, status: 'signed_out' }
+  test('붙들어 둔 화면만 세션이 없어도 allow, 다른 경로는 그대로', () => {
+    expect(authRoute({ ...base, segments: ['delete-account'] })).toBe('to_login')
+    expect(authRoute({ ...base, segments: ['delete-account'], holdSegment: 'delete-account' })).toBe('allow')
+    expect(authRoute({ ...base, segments: ['me'], holdSegment: 'delete-account' })).toBe('to_login')
+    expect(authRoute({ ...base, segments: [], holdSegment: 'delete-account' })).toBe('to_login')
+    expect(authRoute({ ...base, segments: ['delete-account'], holdSegment: null })).toBe('to_login')
+  })
+
+  test('붙들어 둔 동안 알림 탭 이동은 로그인이 필요한 서버에서 여전히 막힌다', () => {
+    expect(notificationRouteAllowed({ ...base, segments: ['delete-account'], holdSegment: 'delete-account' })).toBe(false)
+  })
+})
+
+describe('safePictureUrl', () => {
+  test('https 만 받는다', () => {
+    expect(safePictureUrl('https://lh3.example.com/p.png')).toBe('https://lh3.example.com/p.png')
+    for (const bad of ['http://x.example.com/p.png', 'javascript:alert(1)', 'data:image/png;base64,AA', '//x.example.com/p', 'not a url', '', null, undefined, 5]) {
+      expect(safePictureUrl(bad)).toBeNull()
+    }
+  })
+})
+
+describe('meViewState', () => {
+  const signedIn = { config: ON, configError: false, status: 'signed_in', ended: false, hold: false }
+  test('끝난 뒤 결과 > 로그인 상태·로그아웃 중 > 대기 > 이동', () => {
+    expect(meViewState({ ...signedIn, status: 'signed_out', ended: true })).toEqual({ kind: 'ended' })
+    expect(meViewState(signedIn)).toEqual({ kind: 'ready' })
+    expect(meViewState({ ...signedIn, status: 'signed_out', hold: true })).toEqual({ kind: 'ready' })
+    expect(meViewState({ ...signedIn, config: null, status: 'unknown' })).toEqual({ kind: 'wait' })
+    expect(meViewState({ ...signedIn, status: 'signed_out', configError: true })).toEqual({ kind: 'wait' })
+    // 로그인이 필요한 서버에서 세션이 없으면 경로 보호가 로그인 화면으로 보낸다
+    expect(meViewState({ ...signedIn, status: 'signed_out' })).toEqual({ kind: 'wait' })
+    // 로그인이 필요 없는 서버에서 로그인 없이 열렸으면 처음 화면으로
+    expect(meViewState({ ...signedIn, config: OFF, status: 'signed_out' })).toEqual({ kind: 'redirect', to: '/' })
   })
 })

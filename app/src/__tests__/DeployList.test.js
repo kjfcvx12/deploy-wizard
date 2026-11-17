@@ -23,6 +23,9 @@ jest.mock('expo-router', () => {
   }
 })
 jest.mock('../api', () => ({ deployApi: { getAll: jest.fn() }, notificationApi: { getUnreadCount: jest.fn() } }))
+// 로그인 상태 - 칩 줄의 내 정보·로그인 (기본은 로그인을 쓰지 않는 서버)
+const mockAuth = { status: 'signed_out', config: { login_available: false } }
+jest.mock('../auth/AuthProvider', () => ({ useAuth: () => mockAuth }))
 
 const deploys = [
   { d_id: 7, repo_url: 'https://github.com/acme/api', branch: 'main', language: 'Node.js', status: 'running', endpoint: 'https://abc.example.com', env_pending: 0 },
@@ -33,6 +36,8 @@ const deploys = [
 beforeEach(() => {
   jest.useFakeTimers()
   mockPush.mockClear()
+  mockAuth.status = 'signed_out'
+  mockAuth.config = { login_available: false }
   mockHeader.show = false
   mockFocus.effect = null
   deployApi.getAll.mockReset()
@@ -163,6 +168,48 @@ describe('배포 목록 화면 - 계정 연결과 포커스 새로고침', () =>
     await screen.findByText('acme/api')
     await fireEvent.press(screen.getByRole('button', { name: '알림 설정' }))
     expect(mockPush).toHaveBeenCalledWith('/notification-settings')
+  })
+
+  test('로그인한 상태면 칩 줄에 내 정보가 있고 누르면 내 정보 화면으로 간다 (로그인 칩은 없다)', async () => {
+    mockAuth.status = 'signed_in'
+    mockAuth.config = { login_available: true }
+    deployApi.getAll.mockResolvedValue(deploys)
+    await render(<DeployList />)
+    await screen.findByText('acme/api')
+    expect(screen.queryByRole('button', { name: '로그인' })).toBeNull()
+    const chip = screen.getByRole('button', { name: '내 정보' })
+    expect(StyleSheet.flatten(chip.props.style).minHeight).toBeGreaterThanOrEqual(44)
+    await fireEvent.press(chip)
+    expect(mockPush).toHaveBeenCalledWith('/me')
+  })
+
+  test('로그인하지 않았고 서버가 로그인을 열어 두었으면 로그인 칩이 있고 누르면 로그인 화면으로 간다', async () => {
+    mockAuth.config = { login_available: true }
+    deployApi.getAll.mockResolvedValue(deploys)
+    await render(<DeployList />)
+    await screen.findByText('acme/api')
+    expect(screen.queryByRole('button', { name: '내 정보' })).toBeNull()
+    await fireEvent.press(screen.getByRole('button', { name: '로그인' }))
+    expect(mockPush).toHaveBeenCalledWith('/login')
+  })
+
+  test('로그인을 쓰지 않는 서버이면 내 정보도 로그인도 없다 (머리 밑 줄은 그대로)', async () => {
+    deployApi.getAll.mockResolvedValue(deploys)
+    await render(<DeployList />)
+    await screen.findByText('acme/api')
+    expect(screen.queryByRole('button', { name: '내 정보' })).toBeNull()
+    expect(screen.queryByRole('button', { name: '로그인' })).toBeNull()
+    expect(screen.getAllByRole('button', { name: /계정 연결|알림 설정/ })).toHaveLength(2)
+  })
+
+  test('로그인 확인 중(unknown)에는 칩이 없다', async () => {
+    mockAuth.status = 'unknown'
+    mockAuth.config = { login_available: true }
+    deployApi.getAll.mockResolvedValue(deploys)
+    await render(<DeployList />)
+    await screen.findByText('acme/api')
+    expect(screen.queryByRole('button', { name: '내 정보' })).toBeNull()
+    expect(screen.queryByRole('button', { name: '로그인' })).toBeNull()
   })
 
   test('계정 연결은 헤더에 없다', async () => {

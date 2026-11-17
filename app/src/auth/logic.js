@@ -47,7 +47,9 @@ export function loginErrorText(error) {
 }
 
 // 지금 경로를 보여줄지 정한다 - loading | error | allow | to_login | leave_login (웹 routeDecision 과 같은 표 + 로그인한 사람은 로그인 화면을 떠난다)
-export function authRoute({ config, configError, status, segments }) {
+// holdSegment: 그 화면이 스스로 끝난 뒤의 결과(계정 삭제 결과·로그아웃 실패 안내)를 보이는 동안은 세션이 없어도 그 경로를 그대로 둔다 (그 화면만)
+export function authRoute({ config, configError, status, segments, holdSegment = null }) {
+  if (holdSegment && Array.isArray(segments) && segments[0] === holdSegment) return 'allow'
   const onLogin = Array.isArray(segments) && segments[0] === LOGIN_SEGMENT
   if (onLogin) return status === 'signed_in' ? 'leave_login' : 'allow'
   if (configError) return 'error'
@@ -58,8 +60,8 @@ export function authRoute({ config, configError, status, segments }) {
 
 // 알림 탭으로 화면을 옮겨도 되는지 - 지금 경로를 보여도 되고(allow), 정말 들어온 상태(로그인했거나 로그인이 필요 없는 서버)일 때만
 // 로그인이 필요한 서버의 로그인 화면은 allow 지만 아직 들어온 것이 아니다 - 그동안 누른 알림은 로그인 뒤에 한 번 옮긴다
-export function notificationRouteAllowed({ config, configError, status, segments }) {
-  if (authRoute({ config, configError, status, segments }) !== 'allow') return false
+export function notificationRouteAllowed({ config, configError, status, segments, holdSegment = null }) {
+  if (authRoute({ config, configError, status, segments, holdSegment }) !== 'allow') return false
   if (status === 'signed_in') return true
   return Boolean(config) && !config.auth_required
 }
@@ -125,6 +127,25 @@ export function loginViewState({ config, configError, status }) {
 // 로그아웃한 뒤 갈 곳 - 로그인이 필요한 서버는 로그인 화면, 끈 모드는 처음 화면
 export function afterLogoutPath(config) {
   return config?.auth_required ? '/login' : '/'
+}
+
+// 프로필 사진 주소 - https 만 받고 그 밖(http·javascript·빈 값)은 null
+export function safePictureUrl(value) {
+  if (typeof value !== 'string' || !value) return null
+  try {
+    return new URL(value).protocol === 'https:' ? value : null
+  } catch {
+    return null
+  }
+}
+
+// 내 정보 화면이 무엇을 보일지 - ended(끝난 뒤 결과) | ready | wait(경로 보호가 덮개·이동을 맡는다) | redirect(로그인이 필요 없는 서버에서 로그인 없이 열렸다 -> 처음 화면)
+// hold 는 로그아웃 중 - 세션이 지워져도 화면을 그대로 두고 이동은 로그아웃이 끝난 뒤 한 번만
+export function meViewState({ config, configError, status, ended, hold }) {
+  if (ended) return { kind: 'ended' }
+  if (hold || status === 'signed_in') return { kind: 'ready' }
+  if (configError || !config || status === 'unknown') return { kind: 'wait' }
+  return config.auth_required ? { kind: 'wait' } : { kind: 'redirect', to: '/' }
 }
 
 // 실패해도 다음 단계로 가게 감싼다 - 성공하면 true
