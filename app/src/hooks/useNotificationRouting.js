@@ -10,10 +10,27 @@ const foregroundBehavior = () => ({ shouldShowBanner: true, shouldShowList: true
 
 // 알림 처리 연결 (루트 레이아웃에서 한 번) - 앞에서 받은 알림의 표시 방식, 알림을 눌렀을 때의 이동(켜져 있을 때·꺼져 있다가 눌러 켠 첫 실행)
 // 이동은 routeFromNotificationResponse 가 허용한 경로 두 가지뿐이고 그 밖의 알림은 모두 무시한다. 웹에서는 아무것도 하지 않는다. 권한은 절대 묻지 않는다
-export function useNotificationRouting() {
+// allowed 가 false 인 동안(로그인 확인 전·로그인 필요)은 이동하지 않고 마지막 하나만 기억했다가, true 가 되면 한 번 이동한다
+export function useNotificationRouting(allowed = true) {
   const router = useRouter()
   const routerRef = useRef(router)
   routerRef.current = router
+  const allowedRef = useRef(allowed)
+  allowedRef.current = allowed
+  // 허용되기 전에 누른 알림의 갈 곳
+  const pendingRef = useRef(null)
+
+  // 허용되면 기다리던 이동을 한 번 한다
+  useEffect(() => {
+    if (!allowed || !pendingRef.current) return
+    const route = pendingRef.current
+    pendingRef.current = null
+    try {
+      routerRef.current.push(route)
+    } catch {
+      // 아직 화면 이동을 받을 수 없는 순간 - 이 알림은 건너뛴다
+    }
+  }, [allowed])
 
   useEffect(() => {
     if (Platform.OS === 'web') return undefined
@@ -25,6 +42,10 @@ export function useNotificationRouting() {
       if (response?.actionIdentifier !== Notifications.DEFAULT_ACTION_IDENTIFIER) return
       const target = routeFromNotificationResponse(response)
       if (!target) return
+      if (!allowedRef.current) {
+        pendingRef.current = target.route
+        return
+      }
       try {
         routerRef.current.push(target.route)
       } catch {

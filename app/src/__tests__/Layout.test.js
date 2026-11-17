@@ -11,10 +11,16 @@ jest.mock('expo-router', () => {
     DefaultTheme: { colors: {} },
     ThemeProvider: ({ children }) => children,
     Stack: () => <View testID="stack" />,
-    useRouter: () => ({ push: mockPush }),
+    useRouter: () => ({ push: mockPush, replace: jest.fn() }),
+    useSegments: () => [],
   }
 })
 jest.mock('expo-status-bar', () => ({ StatusBar: () => null }))
+// 로그인 확인: 옛 서버(설정 404)처럼 "로그인 끔" - 저장된 세션이 없으니 갱신 없이 지금처럼 화면을 보인다
+jest.mock('../api', () => ({
+  ...jest.requireActual('../api'),
+  authApi: { getConfig: jest.fn(async () => { throw Object.assign(new Error('Not Found'), { status: 404 }) }), refresh: jest.fn(), logout: jest.fn(), loginGoogle: jest.fn() },
+}))
 
 const DEFAULT_ACTION = 'expo.modules.notifications.actions.DEFAULT'
 const response = (link, id = 'n-1', actionIdentifier = DEFAULT_ACTION) => ({ actionIdentifier, notification: { request: { identifier: id, content: { data: { link } } } } })
