@@ -1,4 +1,5 @@
 import { NETWORK_ERROR_TEXT } from '@shared/ui/api.js'
+import { toMs } from '@shared/ui/time.js'
 
 const DEFAULT_PAT_DAYS = 30
 const DEFAULT_PAT_MAX_DAYS = 90
@@ -180,4 +181,46 @@ export async function runSignOut({ logout, clearSession, clearStorage }) {
   clearSession()
   clearStorage()
   return { serverLoggedOut }
+}
+
+const TOKEN_NAME_ERROR = '이름은 1~50자로 적어 주세요'
+const DAY_MS = 86400000
+
+// 개인 토큰 만들기 폼 검사 - 이름은 앞뒤 공백을 뗀 1~50자, 기간은 비우면 서버 기본이고 아니면 1~최대 정수
+export function validateTokenForm({ name, days }, config) {
+  const trimmed = typeof name === 'string' ? name.trim() : ''
+  const length = [...trimmed].length
+  if (length < 1 || length > 50) return { body: null, error: TOKEN_NAME_ERROR }
+  const max = positiveInt(config?.pat_max_days, DEFAULT_PAT_MAX_DAYS)
+  const raw = typeof days === 'string' ? days.trim() : ''
+  if (!raw) return { body: { name: trimmed }, error: null }
+  const value = /^\d{1,6}$/.test(raw) ? Number(raw) : NaN
+  if (!(value >= 1 && value <= max)) return { body: null, error: `기간은 1~${max}일입니다` }
+  return { body: { name: trimmed, expires_in_days: value }, error: null }
+}
+
+// 만료 문구 - 남은 날은 올림(1초라도 남으면 1일), 지났거나 같으면 만료됨, 없으면 만료 없음. 날짜는 브라우저의 현지 날짜
+export function tokenExpiryText(expiresAt, now = Date.now()) {
+  if (expiresAt === null || expiresAt === undefined) return '만료 없음'
+  const at = toMs(expiresAt)
+  if (Number.isNaN(at)) return '만료일을 읽을 수 없습니다'
+  const current = now instanceof Date ? now.getTime() : now
+  if (at <= current) return '만료됨'
+  const left = Math.ceil((at - current) / DAY_MS)
+  const d = new Date(at)
+  return `${d.getFullYear()}년 ${d.getMonth() + 1}월 ${d.getDate()}일까지 (${left}일 남음)`
+}
+
+// MCP 등록에 붙여 넣을 환경변수 한 줄 (원문이 들어 있으니 로그에 남기지 않는다)
+export const mcpEnvLine = (token) => `WIZARD_API_TOKEN=${token}`
+
+// 클립보드에 복사 - 됐으면 true, 클립보드가 없거나 거절하면 false (이유와 텍스트는 밖으로 내보내지 않는다)
+export async function copyText(text, clipboard) {
+  if (typeof clipboard?.writeText !== 'function') return false
+  try {
+    await clipboard.writeText(text)
+    return true
+  } catch {
+    return false
+  }
 }

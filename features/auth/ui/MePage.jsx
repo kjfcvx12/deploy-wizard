@@ -3,6 +3,7 @@ import { Link, Navigate, useNavigate } from 'react-router-dom'
 
 import { useAuth } from './AuthProvider.jsx'
 import DeleteAccountCard from './DeleteAccountCard.jsx'
+import TokensCard from './TokensCard.jsx'
 import { afterLogoutPath, deleteResultView, meViewState, safePictureUrl } from './authLogic.js'
 
 const LOGOUT_FAILED_TEXT = '서버에서 로그아웃하지 못했습니다. 연결되면 다시 로그아웃해 주세요.'
@@ -104,7 +105,7 @@ export default function MePage() {
         <Link className="me-link" to="/notification-settings">알림 설정</Link>
       </section>
 
-      {/* 개인 토큰 영역 (Task 6 이 여기에 채운다) */}
+      <TokensCard />
 
       <section className="card">
         <h2>로그아웃</h2>

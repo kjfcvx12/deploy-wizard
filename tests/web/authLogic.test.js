@@ -5,6 +5,7 @@ import './useAlias.mjs'
 const {
   normalizeConfig, CONFIG_OFF, routeDecision, safeNext, loginErrorText,
   parseLiveDeploys, deleteResultView, safePictureUrl, loginPathFor, authNavLinkView, meViewState, afterLogoutPath, runSignOut,
+  validateTokenForm, tokenExpiryText, mcpEnvLine, copyText,
 } = await import('../../features/auth/ui/authLogic.js')
 const { clearUserScopedStorage, HAD_SESSION_KEY } = await import('../../features/auth/ui/userData.js')
 const { authApi } = await import('../../features/auth/ui/api.js')
@@ -307,4 +308,76 @@ test('runSignOut: a failing server logout is tolerated and reported, local sign-
   })
   assert.deepEqual(out, { serverLoggedOut: false })
   assert.deepEqual(seen, ['session', 'storage'])
+})
+
+const PAT_CFG = { pat_default_days: 30, pat_max_days: 90 }
+
+test('validateTokenForm: trims the name, blank days means the server default (no expires_in_days)', () => {
+  assert.deepEqual(validateTokenForm({ name: ' mcp ', days: '' }, PAT_CFG), { body: { name: 'mcp' }, error: null })
+  assert.deepEqual(validateTokenForm({ name: 'mcp', days: '   ' }, PAT_CFG), { body: { name: 'mcp' }, error: null })
+  assert.equal('expires_in_days' in validateTokenForm({ name: 'mcp', days: '' }, PAT_CFG).body, false)
+})
+
+test('validateTokenForm: name must be 1-50 characters after trimming', () => {
+  const NAME_ERROR = '이름은 1~50자로 적어 주세요'
+  assert.deepEqual(validateTokenForm({ name: '', days: '' }, PAT_CFG), { body: null, error: NAME_ERROR })
+  assert.deepEqual(validateTokenForm({ name: '   ', days: '' }, PAT_CFG), { body: null, error: NAME_ERROR })
+  assert.deepEqual(validateTokenForm({ name: 'a'.repeat(51), days: '' }, PAT_CFG), { body: null, error: NAME_ERROR })
+  assert.equal(validateTokenForm({ name: 'a'.repeat(50), days: '' }, PAT_CFG).error, null)
+  assert.equal(validateTokenForm({ name: ` ${'가'.repeat(50)} `, days: '' }, PAT_CFG).error, null)
+  assert.equal(validateTokenForm({ name: '가'.repeat(51), days: '' }, PAT_CFG).error, NAME_ERROR)
+  assert.equal(validateTokenForm({ name: undefined, days: '' }, PAT_CFG).error, NAME_ERROR)
+})
+
+test('validateTokenForm: days must be an integer from 1 to pat_max_days', () => {
+  const DAYS_ERROR = '기간은 1~90일입니다'
+  for (const bad of ['0', '91', '1.5', 'abc', '-3', '1e1', '+5', '０', '9'.repeat(30)]) {
+    assert.deepEqual(validateTokenForm({ name: 'mcp', days: bad }, PAT_CFG), { body: null, error: DAYS_ERROR }, bad)
+  }
+  assert.deepEqual(validateTokenForm({ name: 'mcp', days: '90' }, PAT_CFG), { body: { name: 'mcp', expires_in_days: 90 }, error: null })
+  assert.deepEqual(validateTokenForm({ name: 'mcp', days: ' 1 ' }, PAT_CFG), { body: { name: 'mcp', expires_in_days: 1 }, error: null })
+  assert.equal(validateTokenForm({ name: 'mcp', days: '31' }, { pat_default_days: 7, pat_max_days: 30 }).error, '기간은 1~30일입니다')
+})
+
+test('validateTokenForm: a missing config falls back to the default max of 90 days', () => {
+  assert.equal(validateTokenForm({ name: 'mcp', days: '91' }, undefined).error, '기간은 1~90일입니다')
+  assert.equal(validateTokenForm({ name: 'mcp', days: '90' }, {}).error, null)
+})
+
+test('tokenExpiryText: remaining days (rounded up), expired, never', () => {
+  const now = Date.parse('2026-11-17T12:00:00Z')
+  // 서버는 UTC 를 Z 없이 보낸다
+  assert.equal(tokenExpiryText('2026-12-17T12:00:00', now), '2026년 12월 17일까지 (30일 남음)')
+  assert.equal(tokenExpiryText('2026-12-17T12:00:00Z', now), '2026년 12월 17일까지 (30일 남음)')
+  assert.equal(tokenExpiryText('2026-12-17T11:59:59.123456', now), '2026년 12월 17일까지 (30일 남음)')
+  // 1초라도 남았으면 1일 (올림)
+  assert.equal(tokenExpiryText('2026-11-17T12:00:01', now), '2026년 11월 17일까지 (1일 남음)')
+  assert.equal(tokenExpiryText('2026-11-18T12:00:01', now), '2026년 11월 18일까지 (2일 남음)')
+  assert.equal(tokenExpiryText('2026-11-18T12:00:00', now), '2026년 11월 18일까지 (1일 남음)')
+  // Date 로 넘겨도 같다
+  assert.equal(tokenExpiryText('2026-12-17T12:00:00', new Date(now)), '2026년 12월 17일까지 (30일 남음)')
+})
+
+test('tokenExpiryText: past or equal is expired, null is never, unreadable is explained', () => {
+  const now = Date.parse('2026-11-17T12:00:00Z')
+  assert.equal(tokenExpiryText('2026-11-17T12:00:00', now), '만료됨')
+  assert.equal(tokenExpiryText('2026-11-17T11:59:59', now), '만료됨')
+  assert.equal(tokenExpiryText('2020-01-01T00:00:00', now), '만료됨')
+  assert.equal(tokenExpiryText(null, now), '만료 없음')
+  assert.equal(tokenExpiryText(undefined, now), '만료 없음')
+  assert.equal(tokenExpiryText('not a date', now), '만료일을 읽을 수 없습니다')
+})
+
+test('mcpEnvLine: WIZARD_API_TOKEN=<token>', () => {
+  assert.equal(mcpEnvLine('dwp_abc123'), 'WIZARD_API_TOKEN=dwp_abc123')
+})
+
+test('copyText: true when the clipboard accepts the text, false when missing or rejecting', async () => {
+  const seen = []
+  assert.equal(await copyText('hello', { writeText: async (t) => { seen.push(t) } }), true)
+  assert.deepEqual(seen, ['hello'])
+  assert.equal(await copyText('hello', { writeText: async () => { throw new Error('denied') } }), false)
+  assert.equal(await copyText('hello', { writeText: () => { throw new Error('sync') } }), false)
+  assert.equal(await copyText('hello', undefined), false)
+  assert.equal(await copyText('hello', {}), false)
 })
