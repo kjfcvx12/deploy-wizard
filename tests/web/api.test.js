@@ -2,7 +2,8 @@ import test, { beforeEach, afterEach } from 'node:test'
 import assert from 'node:assert/strict'
 import './useAlias.mjs'
 
-const { request, NETWORK_ERROR_TEXT } = await import('../../shared/ui/api.js')
+const { request, NETWORK_ERROR_TEXT, AUTH_NO_RETRY_PATHS } = await import('../../shared/ui/api.js')
+const session = await import('../../shared/ui/session.js')
 const { deployApi } = await import('../../features/deploys/ui/api.js')
 const { incidentApi } = await import('../../features/incidents/ui/api.js')
 const { notificationApi } = await import('../../features/notifications/ui/api.js')
@@ -21,6 +22,7 @@ beforeEach(() => {
   calls = []
   reply = answer(200, {})
   globalThis.fetch = async (url, options) => { calls.push({ url, options }); return reply }
+  session.resetSessionForTest()
 })
 afterEach(() => { globalThis.fetch = realFetch })
 
@@ -64,6 +66,143 @@ test('request: 5xx JSON body without detail falls back to status text', async ()
 test('request: 204 gives null', async () => {
   reply = answer(204, undefined)
   assert.equal(await request('/x'), null)
+})
+
+const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
+
+// 호출 순서대로 다른 응답을 준다 (마지막 응답은 계속 반복)
+const replies = (...list) => {
+  globalThis.fetch = async (url, options) => {
+    calls.push({ url, options })
+    return list.length > 1 ? list.shift() : list[0]
+  }
+}
+
+// 토큰에 따라 401/200 을 고르는 가짜 서버
+const serverAccepting = (good) => {
+  globalThis.fetch = async (url, options) => {
+    calls.push({ url, options })
+    return options.headers.Authorization === `Bearer ${good}` ? answer(200, { ok: url }) : answer(401, { detail: '로그인이 필요합니다' })
+  }
+}
+
+test('request: no token no Authorization header', async () => {
+  await request('/api/deploys')
+  await request('/api/deploys', { method: 'POST', body: { a: 1 } })
+  assert.deepEqual(calls[0].options.headers, { 'Content-Type': 'application/json' })
+  assert.deepEqual(calls[1].options.headers, { 'Content-Type': 'application/json' })
+  assert.equal('auth' in calls[1].options, false)
+})
+
+test('request: no token 401 without refresher throws original', async () => {
+  reply = answer(401, { detail: '로그인이 필요합니다' })
+  await assert.rejects(request('/api/deploys'), (e) => e.status === 401 && e.message === '로그인이 필요합니다')
+  assert.equal(calls.length, 1)
+})
+
+test('request: bearer attached and headers merged', async () => {
+  session.setSession({ access_token: 'A1', user: { u_id: 1 }, expires_in: 900 })
+  await request('/api/deploys', { method: 'POST', body: { a: 1 }, headers: { 'X-Test': 'y' } })
+  assert.deepEqual(calls[0].options.headers, {
+    'Content-Type': 'application/json', Authorization: 'Bearer A1', 'X-Test': 'y',
+  })
+  assert.equal(calls[0].options.method, 'POST')
+  assert.equal(calls[0].options.body, JSON.stringify({ a: 1 }))
+})
+
+test('request: auth false sends no Authorization', async () => {
+  session.setSession({ access_token: 'A1', user: { u_id: 1 }, expires_in: 900 })
+  let refreshes = 0
+  session.setRefresher(async () => { refreshes += 1; return { access_token: 'A2', user: {}, expires_in: 900 } })
+  reply = answer(401, { detail: 'x' })
+  await assert.rejects(request('/api/anything', { auth: false }), (e) => e.status === 401)
+  assert.equal(calls[0].options.headers.Authorization, undefined)
+  assert.equal('auth' in calls[0].options, false)
+  assert.equal(refreshes, 0)
+})
+
+test('request: 401 refreshes then retries once', async () => {
+  session.setSession({ access_token: 'A1', user: { u_id: 1 }, expires_in: 900 })
+  let refreshes = 0
+  session.setRefresher(async () => { refreshes += 1; return { access_token: 'A2', user: { u_id: 1 }, expires_in: 900 } })
+  replies(answer(401, { detail: '만료' }), answer(200, { v: 1 }))
+  assert.deepEqual(await request('/api/deploys'), { v: 1 })
+  assert.equal(calls.length, 2)
+  assert.equal(refreshes, 1)
+  assert.equal(calls[0].options.headers.Authorization, 'Bearer A1')
+  assert.equal(calls[1].options.headers.Authorization, 'Bearer A2')
+})
+
+test('request: 401 after retry is thrown', async () => {
+  session.setSession({ access_token: 'A1', user: { u_id: 1 }, expires_in: 900 })
+  let refreshes = 0
+  session.setRefresher(async () => { refreshes += 1; return { access_token: 'A2', user: { u_id: 1 }, expires_in: 900 } })
+  reply = answer(401, { detail: '권한 없음' })
+  await assert.rejects(request('/api/deploys'), (e) => e.status === 401 && e.message === '권한 없음')
+  assert.equal(calls.length, 2)
+  assert.equal(refreshes, 1)
+})
+
+test('request: failed refresh throws original 401 and signs out', async () => {
+  session.setSession({ access_token: 'A1', user: { u_id: 1 }, expires_in: 900 })
+  session.setRefresher(async () => { throw Object.assign(new Error('refresh 거절'), { status: 401 }) })
+  reply = answer(401, { detail: '원래 오류' })
+  await assert.rejects(request('/api/deploys'), (e) => e.status === 401 && e.message === '원래 오류')
+  assert.equal(calls.length, 1)
+  assert.equal(session.getSessionStatus(), 'signed_out')
+})
+
+test('request: offline refresh keeps session', async () => {
+  session.setSession({ access_token: 'A1', user: { u_id: 1 }, expires_in: 900 })
+  session.setRefresher(async () => { throw Object.assign(new Error(NETWORK_ERROR_TEXT), { status: 0 }) })
+  reply = answer(401, { detail: '만료' })
+  await assert.rejects(request('/api/deploys'), (e) => e.status === 0)
+  assert.equal(session.getAccessToken(), 'A1')
+  assert.equal(session.getSessionStatus(), 'signed_in')
+})
+
+test('request: auth paths never refresh', async () => {
+  assert.deepEqual([...AUTH_NO_RETRY_PATHS].sort(), ['/api/auth/config', '/api/auth/google', '/api/auth/logout', '/api/auth/refresh'])
+  session.setSession({ access_token: 'A1', user: { u_id: 1 }, expires_in: 900 })
+  let refreshes = 0
+  session.setRefresher(async () => { refreshes += 1; return { access_token: 'A2', user: {}, expires_in: 900 } })
+  reply = answer(401, { detail: '거절' })
+  for (const path of AUTH_NO_RETRY_PATHS) {
+    await assert.rejects(request(path, { method: 'POST' }), (e) => e.status === 401)
+    await assert.rejects(request(`${path}?x=1`), (e) => e.status === 401)
+  }
+  assert.equal(refreshes, 0)
+  assert.equal(calls.length, AUTH_NO_RETRY_PATHS.length * 2)
+})
+
+test('request: five concurrent 401 share one refresh', async () => {
+  session.setSession({ access_token: 'A1', user: { u_id: 1 }, expires_in: 900 })
+  let refreshes = 0
+  session.setRefresher(async () => { refreshes += 1; await wait(30); return { access_token: 'A2', user: { u_id: 1 }, expires_in: 900 } })
+  serverAccepting('A2')
+  const paths = ['/a', '/b', '/c', '/d', '/e']
+  const results = await Promise.all(paths.map((p) => request(p)))
+  assert.deepEqual(results, paths.map((p) => ({ ok: p })))
+  assert.equal(refreshes, 1)
+  assert.equal(calls.length, 10)
+})
+
+test('request: stale 401 after another refresh retries without refreshing again', async () => {
+  session.setSession({ access_token: 'A1', user: { u_id: 1 }, expires_in: 900 })
+  let refreshes = 0
+  session.setRefresher(async () => { refreshes += 1; return { access_token: 'A2', user: { u_id: 1 }, expires_in: 900 } })
+  let release
+  const gate = new Promise((resolve) => { release = resolve })
+  globalThis.fetch = async (url, options) => {
+    calls.push({ url, options })
+    if (url === '/slow' && options.headers.Authorization === 'Bearer A1') await gate
+    return options.headers.Authorization === 'Bearer A2' ? answer(200, { ok: url }) : answer(401, { detail: '만료' })
+  }
+  const slow = request('/slow')
+  assert.deepEqual(await request('/fast'), { ok: '/fast' })
+  release()
+  assert.deepEqual(await slow, { ok: '/slow' })
+  assert.equal(refreshes, 1)
 })
 
 test('deployApi settings and health history', async () => {

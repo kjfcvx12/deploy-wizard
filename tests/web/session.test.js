@@ -1,0 +1,216 @@
+import test, { beforeEach } from 'node:test'
+import assert from 'node:assert/strict'
+
+const { createTabSync } = await import('../../shared/ui/tabSync.js')
+const session = await import('../../shared/ui/session.js')
+const { createSession, resetSessionForTest } = session
+
+// 이름별 Promise 사슬로 navigator.locks 를 흉내 낸다
+const fakeLocks = () => {
+  const tails = new Map()
+  return {
+    request(name, fn) {
+      const prev = tails.get(name) || Promise.resolve()
+      const run = prev.then(() => fn({ name }))
+      tails.set(name, run.catch(() => {}))
+      return run
+    },
+  }
+}
+
+// 두 인스턴스를 잇는 메모리 버스 - 보낸 쪽에는 돌아오지 않는다 (BroadcastChannel 과 같다)
+const fakeBus = () => {
+  const members = []
+  const sent = []
+  const make = () => {
+    const listeners = new Set()
+    const channel = {
+      postMessage(data) {
+        sent.push(data)
+        for (const other of members) if (other !== channel) other.deliver(data)
+      },
+      addEventListener(type, fn) { if (type === 'message') listeners.add(fn) },
+      removeEventListener(type, fn) { if (type === 'message') listeners.delete(fn) },
+      deliver(data) { for (const fn of listeners) fn({ data }) },
+    }
+    members.push(channel)
+    return channel
+  }
+  return { make, sent }
+}
+
+const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
+
+// 갱신기가 실패할 때 쓰는 오류
+const failure = (status) => Object.assign(new Error(`실패 ${status}`), { status })
+
+beforeEach(() => { resetSessionForTest() })
+
+test('refresh single flight', async () => {
+  let calls = 0
+  session.setSession({ access_token: 'A1', user: { u_id: 1 }, expires_in: 900 })
+  session.setRefresher(async () => { calls += 1; await wait(50); return { access_token: 'A2', user: { u_id: 1 }, expires_in: 900 } })
+  const results = await Promise.all([1, 2, 3, 4, 5].map(() => session.refreshSession()))
+  assert.equal(calls, 1)
+  assert.deepEqual(results, [true, true, true, true, true])
+  assert.equal(session.getAccessToken(), 'A2')
+  assert.equal(session.getSessionStatus(), 'signed_in')
+})
+
+test('refresh 401 clears session', async () => {
+  session.setSession({ access_token: 'A1', user: { u_id: 1 }, expires_in: 900 })
+  const seen = []
+  session.subscribeSession((state) => seen.push(state))
+  session.setRefresher(async () => { throw failure(401) })
+  assert.equal(await session.refreshSession(), false)
+  assert.equal(session.getSessionStatus(), 'signed_out')
+  assert.equal(session.getAccessToken(), null)
+  assert.equal(session.getSessionUser(), null)
+  assert.equal(seen.at(-1).status, 'signed_out')
+  assert.equal(seen.at(-1).reason, 'expired')
+})
+
+test('refresh 403 clears session too', async () => {
+  session.setSession({ access_token: 'A1', user: { u_id: 1 }, expires_in: 900 })
+  session.setRefresher(async () => { throw failure(403) })
+  assert.equal(await session.refreshSession(), false)
+  assert.equal(session.getSessionStatus(), 'signed_out')
+})
+
+test('refresh offline keeps session', async () => {
+  session.setSession({ access_token: 'A1', user: { u_id: 1 }, expires_in: 900 })
+  session.setRefresher(async () => { throw failure(0) })
+  await assert.rejects(session.refreshSession(), (e) => e.status === 0)
+  assert.equal(session.getAccessToken(), 'A1')
+  assert.equal(session.getSessionStatus(), 'signed_in')
+  session.setRefresher(async () => { throw failure(503) })
+  await assert.rejects(session.refreshSession(), (e) => e.status === 503)
+  assert.equal(session.getAccessToken(), 'A1')
+})
+
+test('refresh without refresher is false and keeps state', async () => {
+  session.setSession({ access_token: 'A1', user: { u_id: 1 }, expires_in: 900 })
+  assert.equal(await session.refreshSession(), false)
+  assert.equal(session.getAccessToken(), 'A1')
+})
+
+test('two tabs refresh once', async () => {
+  const locks = fakeLocks()
+  const bus = fakeBus()
+  const tabA = createSession({ tabSync: createTabSync({ locks, channel: bus.make() }) })
+  const tabB = createSession({ tabSync: createTabSync({ locks, channel: bus.make() }) })
+  let calls = 0
+  let n = 1
+  const refresher = async () => { calls += 1; await wait(30); n += 1; return { access_token: `A${n}`, user: { u_id: 1 }, expires_in: 900 } }
+  tabA.setRefresher(refresher)
+  tabB.setRefresher(refresher)
+  const [a, b] = await Promise.all([tabA.refreshSession(), tabB.refreshSession()])
+  assert.equal(calls, 1)
+  assert.equal(a, true)
+  assert.equal(b, true)
+  assert.equal(tabA.getAccessToken(), 'A2')
+  assert.equal(tabB.getAccessToken(), 'A2')
+  assert.equal(tabB.getSessionStatus(), 'signed_in')
+})
+
+test('signed_out broadcast', () => {
+  const locks = fakeLocks()
+  const bus = fakeBus()
+  const tabA = createSession({ tabSync: createTabSync({ locks, channel: bus.make() }) })
+  const tabB = createSession({ tabSync: createTabSync({ locks, channel: bus.make() }) })
+  tabA.markBooted('signed_out')
+  tabB.markBooted('signed_out')
+  const seen = []
+  tabB.subscribeSession((state) => seen.push(state))
+  bus.sent.length = 0
+  tabA.clearSession('logout')
+  assert.equal(tabB.getSessionStatus(), 'signed_out')
+  assert.equal(seen.at(-1).reason, 'logout')
+  assert.equal(bus.sent.length, 1)
+  assert.deepEqual(bus.sent[0], { type: 'signed_out', reason: 'logout' })
+})
+
+test('session broadcast reaches other tab without echo', () => {
+  const locks = fakeLocks()
+  const bus = fakeBus()
+  const tabA = createSession({ tabSync: createTabSync({ locks, channel: bus.make() }) })
+  const tabB = createSession({ tabSync: createTabSync({ locks, channel: bus.make() }) })
+  tabA.setSession({ access_token: 'A9', user: { u_id: 3 }, expires_in: 900 })
+  assert.equal(tabB.getAccessToken(), 'A9')
+  assert.deepEqual(tabB.getSessionUser(), { u_id: 3 })
+  assert.equal(bus.sent.length, 1)
+  assert.equal(bus.sent[0].type, 'session')
+})
+
+test('setSession ignores refresh_token', () => {
+  const locks = fakeLocks()
+  const bus = fakeBus()
+  const tabA = createSession({ tabSync: createTabSync({ locks, channel: bus.make() }) })
+  const tabB = createSession({ tabSync: createTabSync({ locks, channel: bus.make() }) })
+  const seen = []
+  tabA.subscribeSession((state) => seen.push(state))
+  tabB.subscribeSession((state) => seen.push(state))
+  tabA.setSession({ access_token: 'A1', refresh_token: 'dwr_x', token_type: 'bearer', user: { u_id: 1 }, expires_in: 900 })
+  const dump = JSON.stringify([
+    tabA.getAccessToken(), tabA.getSessionUser(), tabA.getSessionStatus(),
+    tabB.getAccessToken(), tabB.getSessionUser(), tabB.getSessionStatus(),
+    seen, bus.sent,
+  ])
+  assert.doesNotMatch(dump, /dwr_x/)
+  assert.equal(bus.sent.length, 1)
+  assert.equal('refresh_token' in bus.sent[0], false)
+})
+
+test('subscribers never get the access token', () => {
+  const seen = []
+  session.subscribeSession((state) => seen.push(state))
+  session.setSession({ access_token: 'secretA', user: { u_id: 1 }, expires_in: 900 })
+  session.clearSession('logout')
+  assert.doesNotMatch(JSON.stringify(seen), /secretA/)
+  assert.deepEqual(seen.map((s) => s.status), ['signed_in', 'signed_out'])
+})
+
+test('markBooted ends unknown only once', () => {
+  assert.equal(session.getSessionStatus(), 'unknown')
+  session.markBooted('signed_out')
+  assert.equal(session.getSessionStatus(), 'signed_out')
+  session.setSession({ access_token: 'A1', user: { u_id: 1 }, expires_in: 900 })
+  session.markBooted('signed_out')
+  assert.equal(session.getSessionStatus(), 'signed_in')
+})
+
+test('unsubscribe stops notifications', () => {
+  const seen = []
+  const off = session.subscribeSession((state) => seen.push(state))
+  off()
+  session.setSession({ access_token: 'A1', user: { u_id: 1 }, expires_in: 900 })
+  assert.equal(seen.length, 0)
+})
+
+test('tabSync without locks/channel', async () => {
+  const sync = createTabSync({ locks: undefined, channel: undefined })
+  assert.equal(await sync.runExclusive('x', async () => 42), 42)
+  assert.doesNotThrow(() => sync.post({ type: 'session' }))
+  const off = sync.onMessage(() => {})
+  assert.equal(typeof off, 'function')
+  assert.doesNotThrow(() => off())
+})
+
+test('tabSync uses locks and channel', async () => {
+  const locks = fakeLocks()
+  const bus = fakeBus()
+  const a = createTabSync({ locks, channel: bus.make() })
+  const b = createTabSync({ locks, channel: bus.make() })
+  const got = []
+  const off = b.onMessage((m) => got.push(m))
+  a.post({ type: 'ping' })
+  off()
+  a.post({ type: 'ping2' })
+  assert.deepEqual(got, [{ type: 'ping' }])
+  const order = []
+  await Promise.all([
+    a.runExclusive('n', async () => { order.push('a1'); await wait(20); order.push('a2') }),
+    b.runExclusive('n', async () => { order.push('b1') }),
+  ])
+  assert.deepEqual(order, ['a1', 'a2', 'b1'])
+})
