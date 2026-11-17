@@ -63,7 +63,11 @@ export default function DeleteAccountScreen() {
     setError(null)
     try {
       const response = await authApi.deleteMe()
-      if (!alive.current) return
+      // 요청 중에 화면을 떠났어도 서버는 이미 지웠다 - 이 기기의 정리는 끝까지 한다 (화면이 없으니 붙들 것도, 상태를 바꿀 것도 없고 경로 보호가 로그인 화면으로 보낸다)
+      if (!alive.current) {
+        forgetAfterDelete().catch(() => {})
+        return
+      }
       // 세션이 지워져도 이 화면에 머물도록 먼저 붙들어 둔다 (정리는 결과가 그려진 뒤)
       release.current = holdRoute(SEGMENT)
       setEnded(deleteResultView(response))
@@ -74,7 +78,7 @@ export default function DeleteAccountScreen() {
       setError(e?.status === 409 ? parseLiveDeploys(text) : { message: text, items: [] })
       setBusy(false)
     }
-  }, [holdRoute])
+  }, [holdRoute, forgetAfterDelete])
 
   // 계정 삭제 버튼 - 확인 창을 거치지 않는 삭제 경로는 없다
   const askDelete = () => {

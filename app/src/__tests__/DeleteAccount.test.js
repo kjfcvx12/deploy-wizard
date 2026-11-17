@@ -279,6 +279,69 @@ describe('계정 삭제 화면', () => {
     expect(mockReplace).toHaveBeenCalledWith('/')
   })
 
+  // 삭제 요청 중에 다른 화면으로 간다 (뒤로 가기 흉내) - 계정 삭제 화면이 사라진다
+  async function leaveScreen() {
+    await act(async () => {
+      mockSegments = []
+      for (const fn of [...mockSegmentListeners]) fn()
+    })
+    expect(screen.queryByTestId('delete-account-screen')).toBeNull()
+  }
+
+  test('삭제 요청 중에 화면을 떠나도 200 이 오면 기기 정리는 끝까지 한다 (세션·저장값·Google, 서버 기기 해제는 안 부름)', async () => {
+    const pending = deferred()
+    authApi.deleteMe.mockReturnValue(pending.promise)
+    await signedInStart()
+    await confirmDelete()
+    await screen.findByRole('button', { name: '삭제하는 중…' })
+    await leaveScreen()
+    expect(getSessionStatus()).toBe('signed_in')
+    await act(async () => { pending.resolve(DONE) })
+    await waitFor(() => expect(googleSignOut).toHaveBeenCalledTimes(1))
+    expect(getSessionStatus()).toBe('signed_out')
+    expect(SecureStore.__items().has('dw-refresh')).toBe(false)
+    expect(await AsyncStorage.getItem('dw-push-device')).toBeNull()
+    expect(await AsyncStorage.getItem('dw-picked-block')).toBeNull()
+    expect(deviceApi.remove).not.toHaveBeenCalled()
+    expect(authApi.logout).not.toHaveBeenCalled()
+    expect(authApi.deleteMe).toHaveBeenCalledTimes(1)
+  })
+
+  test.each([
+    [409, LIVE_TEXT],
+    [403, '개인 토큰으로는 계정을 삭제할 수 없습니다'],
+    [503, '지금은 계정을 삭제할 수 없습니다'],
+    [500, '서버 내부 오류가 났습니다'],
+  ])('삭제 요청 중에 화면을 떠난 뒤 %s 로 실패하면 아무것도 지우지 않는다', async (status, text) => {
+    const pending = deferred()
+    authApi.deleteMe.mockReturnValue(pending.promise)
+    await signedInStart()
+    await confirmDelete()
+    await screen.findByRole('button', { name: '삭제하는 중…' })
+    await leaveScreen()
+    await act(async () => { pending.reject(httpError(status, text)) })
+    expect(getSessionStatus()).toBe('signed_in')
+    expect(googleSignOut).not.toHaveBeenCalled()
+    expect(deviceApi.remove).not.toHaveBeenCalled()
+    expect(SecureStore.__items().has('dw-refresh')).toBe(true)
+    expect(await AsyncStorage.getItem('dw-push-device')).toBe('5')
+    expect(await AsyncStorage.getItem('dw-picked-block')).toBe('3')
+  })
+
+  test('화면을 떠난 뒤 200 이 와도 정리 단계 하나가 실패하면 나머지는 한다', async () => {
+    const pending = deferred()
+    authApi.deleteMe.mockReturnValue(pending.promise)
+    googleSignOut.mockRejectedValue(new Error('google down'))
+    await signedInStart()
+    await confirmDelete()
+    await screen.findByRole('button', { name: '삭제하는 중…' })
+    await leaveScreen()
+    await act(async () => { pending.resolve(DONE) })
+    await waitFor(() => expect(googleSignOut).toHaveBeenCalledTimes(1))
+    expect(getSessionStatus()).toBe('signed_out')
+    expect(await AsyncStorage.getItem('dw-push-device')).toBeNull()
+  })
+
   test('화면에 토큰이 없다', async () => {
     await signedInStart()
     await confirmDelete()

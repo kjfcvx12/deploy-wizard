@@ -181,10 +181,14 @@ export function AuthProvider({ children }) {
 
   // 계정 삭제가 끝난 뒤 이 기기에 남은 것을 지운다 - 서버가 기기 행을 이미 지웠으니 기기 번호는 저장값만 지운다
   const forgetAfterDelete = useCallback(async () => {
-    await clearSession('deleted')
-    await forgetPushDevice()
-    await clearUserScopedData()
-    await googleSignOut()
+    // 한 단계가 실패해도 나머지는 한다
+    for (const step of [() => clearSession('deleted'), forgetPushDevice, clearUserScopedData, googleSignOut]) {
+      try {
+        await step()
+      } catch {
+        // 이 기기에서 지우지 못한 것은 둔다 - 다음 단계는 계속한다
+      }
+    }
   }, [])
 
   const value = useMemo(() => ({
