@@ -17,8 +17,9 @@ import { clearUserScopedData } from './userData'
 const LOGIN_FAILED_TEXT = '로그인하지 못했습니다. 잠시 뒤 다시 시도해 주세요'
 
 // 갱신 함수를 세션에 등록한다 - 원문은 getRefreshToken() (보안 저장소 쓰기가 실패했으면 메모리의 것). 웹 번들은 쿠키라 본문이 없다
+// 두 번째 인자는 늦게 와서 버린 갱신 응답의 새 리프레시를 서버에서 폐기하는 함수
 export function installRefresher() {
-  setRefresher(async () => authApi.refresh(await getRefreshToken()))
+  setRefresher(async () => authApi.refresh(await getRefreshToken()), (raw) => authApi.logout(raw))
 }
 
 // 화면보다 먼저 한 번 등록한다 - 자식 화면의 effect 가 부모보다 먼저 돌아 첫 401 재시도가 이것을 쓴다

@@ -37,6 +37,11 @@ beforeEach(async () => {
   await AsyncStorage.clear()
 })
 
+afterEach(() => {
+  // replaceProperty 로 바꾼 Platform.OS 를 되돌린다
+  jest.restoreAllMocks()
+})
+
 describe('loginPlatform', () => {
   test.each([
     ['web', 'web'],
@@ -260,6 +265,81 @@ describe('refreshSession', () => {
     gate.resolve({ access_token: 'A2', refresh_token: 'dwr_2' })
     await expect(run).resolves.toBe(false)
     expect(getAccessToken()).toBeNull()
+    await expect(stored()).resolves.toBeNull()
+  })
+
+  test('갱신 중에 로그아웃하면 늦게 온 새 리프레시는 서버에서 폐기한다 (기다리지 않고, 저장하지 않는다)', async () => {
+    await setSession({ access_token: 'A1', refresh_token: 'dwr_1' })
+    const gate = deferred()
+    const discard = jest.fn(() => new Promise(() => {}))
+    setRefresher(() => gate.promise, discard)
+    const run = refreshSession()
+    await clearSession('logout')
+    gate.resolve({ access_token: 'A2', refresh_token: 'dwr_2' })
+    await expect(run).resolves.toBe(false)
+    expect(discard).toHaveBeenCalledTimes(1)
+    expect(discard).toHaveBeenCalledWith('dwr_2')
+    await expect(stored()).resolves.toBeNull()
+  })
+
+  test('폐기 호출이 던지거나 거절돼도 갱신 결과에는 영향이 없다', async () => {
+    await setSession({ access_token: 'A1', refresh_token: 'dwr_1' })
+    const gate = deferred()
+    setRefresher(() => gate.promise, () => Promise.reject(new Error('서버에 연결할 수 없습니다')))
+    const run = refreshSession()
+    await clearSession('logout')
+    gate.resolve({ access_token: 'A2', refresh_token: 'dwr_2' })
+    await expect(run).resolves.toBe(false)
+    setRefresher(() => gate.promise, () => { throw new Error('boom') })
+    await setSession({ access_token: 'B1', refresh_token: 'dwr_b' })
+    const run2 = refreshSession()
+    await clearSession('logout')
+    await expect(run2).resolves.toBe(false)
+  })
+
+  test('늦게 온 거절이나 정상 갱신에는 폐기를 부르지 않는다', async () => {
+    const discard = jest.fn()
+    await setSession({ access_token: 'A1', refresh_token: 'dwr_1' })
+    setRefresher(async () => ({ access_token: 'A2', refresh_token: 'dwr_2' }), discard)
+    await expect(refreshSession()).resolves.toBe(true)
+    setRefresher(async () => { throw httpError(401) }, discard)
+    await expect(refreshSession()).resolves.toBe(false)
+    expect(discard).not.toHaveBeenCalled()
+  })
+
+  test('원문이 없는 웹 응답은 다시 로그인한 세션이 있으면 폐기하지 않는다 (쿠키를 건드리지 않게)', async () => {
+    await setSession({ access_token: 'A1', refresh_token: 'dwr_1' })
+    const gate = deferred()
+    const discard = jest.fn()
+    setRefresher(() => gate.promise, discard)
+    const run = refreshSession()
+    await setSession({ access_token: 'B1', refresh_token: 'dwr_b' })
+    gate.resolve({ access_token: 'A2' })
+    await expect(run).resolves.toBe(true)
+    expect(discard).not.toHaveBeenCalled()
+    expect(getAccessToken()).toBe('B1')
+  })
+
+  test('액세스 토큰이 없는 갱신 응답은 거절과 같다: 로그인 상태였으면 expired', async () => {
+    await setSession({ access_token: 'A1', refresh_token: 'dwr_1' })
+    const seen = []
+    subscribeSession((state) => seen.push(state))
+    setRefresher(async () => ({ refresh_token: 'dwr_2' }))
+    await expect(refreshSession()).resolves.toBe(false)
+    expect(getSessionStatus()).toBe('signed_out')
+    expect(seen).toEqual([expect.objectContaining({ status: 'signed_out', reason: 'expired' })])
+    await expect(stored()).resolves.toBeNull()
+  })
+
+  test('액세스 토큰이 없는 갱신 응답: 첫 확인 중이면 조용히 signed_out, 받은 리프레시는 저장하지 않는다', async () => {
+    await SecureStore.setItemAsync(REFRESH_KEY, 'dwr_old')
+    const seen = []
+    subscribeSession((state) => seen.push(state))
+    setRefresher(async () => ({ access_token: '', refresh_token: 'dwr_new' }))
+    await expect(refreshSession()).resolves.toBe(false)
+    expect(getSessionStatus()).toBe('signed_out')
+    expect(seen).toEqual([{ status: 'signed_out', user: null, storageWarning: false }])
+    await Promise.resolve()
     await expect(stored()).resolves.toBeNull()
   })
 

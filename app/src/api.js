@@ -7,6 +7,9 @@ export const BASE_URL = process.env.EXPO_PUBLIC_API_BASE_URL || 'http://localhos
 const TIMEOUT_MS = 15000
 const NETWORK_ERROR = '서버에 연결할 수 없습니다'
 
+// 연결 실패 오류 - 웹과 같게 status 0 을 붙여 서버가 거절한 오류(1xx 이상)와 가린다
+const networkError = () => Object.assign(new Error(NETWORK_ERROR), { status: 0 })
+
 // 401 이어도 갱신·재시도하지 않는 경로 - 로그인·갱신·로그아웃 자체와 공개 설정 (무한 반복 방지)
 export const AUTH_NO_RETRY_PATHS = ['/api/auth/google', '/api/auth/refresh', '/api/auth/logout', '/api/auth/config']
 
@@ -89,7 +92,7 @@ async function send(path, options, token) {
     try {
       response = await fetch(`${BASE_URL}${path}`, { ...init, signal: controller.signal })
     } catch (e) {
-      throw new Error(NETWORK_ERROR)
+      throw networkError()
     }
 
     if (response.status === 204) return null
@@ -99,7 +102,7 @@ async function send(path, options, token) {
       data = await response.json()
     } catch (e) {
       // 성공(2xx)인데 본문이 잘렸거나 JSON 이 아니면, 또는 읽는 중 시간이 다 되면 성공으로 넘기지 않는다 (204 는 위에서 null)
-      if (response.ok || controller.signal.aborted) throw new Error(NETWORK_ERROR)
+      if (response.ok || controller.signal.aborted) throw networkError()
       data = null
     }
 

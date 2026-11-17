@@ -11,6 +11,8 @@ export function createSession() {
   let expiresAt = null
   let status = 'unknown'
   let refresher = null
+  // 늦게 와서 버린 갱신 응답의 새 리프레시를 서버에서 폐기하는 함수 (선택)
+  let discarder = null
   let inflight = null
   // 세션이 바뀔 때마다 오른다 - 갱신 요청 중에 로그인·로그아웃이 있었는지 본다
   let version = 0
@@ -109,8 +111,33 @@ export function createSession() {
     return () => { subscribers.delete(fn) }
   }
 
-  // 갱신 함수를 등록한다 (엔드포인트는 AuthProvider 가 안다)
-  const setRefresher = (fn) => { refresher = typeof fn === 'function' ? fn : null }
+  // 갱신 함수를 등록한다 (엔드포인트는 AuthProvider 가 안다) - discard 는 버린 새 리프레시를 서버에서 폐기하는 함수 (선택)
+  const setRefresher = (fn, discard) => {
+    refresher = typeof fn === 'function' ? fn : null
+    discarder = typeof discard === 'function' ? discard : null
+  }
+
+  // 갱신이 거절돼 리프레시가 쓸 수 없게 됐을 때 세션을 정리한다 - 로그인했던 상태면 expired, 아니면 조용히
+  const forgetDeadRefresh = async (startedStatus) => {
+    if (startedStatus === 'signed_in') {
+      await forget('expired')
+    } else {
+      // 로그인한 적 없는(또는 첫 확인 중인) 상태 - 만료 알림 없이 조용히. 이미 signed_out 이면 알리지도 않는다
+      await forget(null, status !== 'signed_out')
+    }
+    return false
+  }
+
+  // 늦게 와서 버린 갱신 응답의 새 리프레시를 서버에서 폐기한다 - 기다리지 않고, 오류는 삼키고, 값은 어디에도 남기지 않는다
+  const discardLateToken = (token) => {
+    if (!discarder) return
+    const raw = typeof token?.refresh_token === 'string' && token.refresh_token ? token.refresh_token : null
+    // 원문이 없는 웹은 쿠키로 폐기하므로 다시 로그인한 세션의 쿠키를 건드리지 않게 로그아웃 상태일 때만 한다
+    if (!raw && status === 'signed_in') return
+    try {
+      Promise.resolve(discarder(raw)).catch(() => {})
+    } catch { /* 폐기 실패는 무시 - 서버에서 저절로 만료된다 */ }
+  }
 
   // 실제로 갱신한다 - 요청 중에 로그인·로그아웃이 있었으면 그 결과를 따른다
   const runRefresh = async (startedStatus) => {
@@ -123,19 +150,18 @@ export function createSession() {
       if (REFRESH_DEAD_STATUSES.includes(e?.status)) {
         // 요청 중에 세션이 바뀌었으면 이 거절은 옛 토큰 기준이다 - 새 세션을 지우지 않는다
         if (version !== callVersion) return status === 'signed_in'
-        if (startedStatus === 'signed_in') {
-          await forget('expired')
-        } else {
-          // 로그인한 적 없는(또는 첫 확인 중인) 상태 - 만료 알림 없이 조용히. 이미 signed_out 이면 알리지도 않는다
-          await forget(null, status !== 'signed_out')
-        }
-        return false
+        return forgetDeadRefresh(startedStatus)
       }
       // 연결 실패·5xx 는 로그아웃이 아니다 - 세션을 두고 그 오류를 던진다
       throw e
     }
-    // 요청 중에 로그인·로그아웃이 있었으면 늦게 온 결과로 덮지 않는다
-    if (version !== callVersion) return status === 'signed_in'
+    // 요청 중에 로그인·로그아웃이 있었으면 늦게 온 결과로 덮지 않는다 - 새로 받은 리프레시는 서버에 남지 않게 폐기한다
+    if (version !== callVersion) {
+      discardLateToken(token)
+      return status === 'signed_in'
+    }
+    // 액세스 토큰이 없는 응답은 쓸 수 없다 - 거절된 갱신과 같게 다룬다
+    if (typeof token?.access_token !== 'string' || !token.access_token) return forgetDeadRefresh(startedStatus)
     await setSession(token)
     return status === 'signed_in'
   }
@@ -163,6 +189,7 @@ export function createSession() {
     expiresAt = null
     status = 'unknown'
     refresher = null
+    discarder = null
     inflight = null
     version = 0
     clearEpoch = 0

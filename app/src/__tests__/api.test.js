@@ -21,6 +21,8 @@ beforeEach(() => {
 
 afterEach(() => {
   jest.useRealTimers()
+  // replaceProperty 로 바꾼 Platform.OS 를 되돌린다
+  jest.restoreAllMocks()
 })
 
 describe('request', () => {
@@ -42,7 +44,7 @@ describe('request', () => {
     await expect(request('/x')).rejects.toThrow(new Error('배포를 찾을 수 없습니다'))
   })
 
-  test('서버가 거절한 오류에는 status 가 붙고, 연결 실패에는 붙지 않는다', async () => {
+  test('서버가 거절한 오류에는 그 status 가 붙고, 연결 실패에는 status 0 이 붙는다', async () => {
     global.fetch.mockResolvedValueOnce(okResponse({ detail: '배포를 찾을 수 없습니다' }, 404))
     await expect(request('/x')).rejects.toMatchObject({ message: '배포를 찾을 수 없습니다', status: 404 })
     global.fetch.mockResolvedValueOnce(okResponse(null, 502))
@@ -50,7 +52,10 @@ describe('request', () => {
     global.fetch.mockRejectedValueOnce(new TypeError('Network request failed'))
     const failure = await request('/x').catch((e) => e)
     expect(failure.message).toBe('서버에 연결할 수 없습니다')
-    expect(failure.status).toBeUndefined()
+    expect(failure.status).toBe(0)
+    // 본문이 잘린 2xx 도 같은 연결 실패
+    global.fetch.mockResolvedValueOnce({ ok: true, status: 200, json: async () => { throw new SyntaxError('cut') } })
+    await expect(request('/x')).rejects.toMatchObject({ message: '서버에 연결할 수 없습니다', status: 0 })
   })
 
   test('422 detail 배열은 msg를 ", "로 잇는다', async () => {
