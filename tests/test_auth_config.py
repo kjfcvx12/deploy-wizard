@@ -36,6 +36,8 @@ async def test_auth_config_off_mode(client):
     body=response.json()
     assert set(body) == CONFIG_KEYS
     assert body["auth_required"] is False
+    assert body["platforms"] == []
+    assert body["login_available"] is False
     assert body["pat_default_days"] == settings.auth_pat_default_days
     assert body["pat_max_days"] == settings.auth_pat_max_days
 
@@ -63,6 +65,8 @@ async def test_auth_config_on_mode_with_ids(client, monkeypatch):
     ("   ", "", "k", [], False, None),
     (WEB_ID, ANDROID_ID, None, ["android", "web"], False, WEB_ID),
     (None, ANDROID_ID, "k", ["android"], True, None),
+    (WEB_ID, None, "k", ["android", "web"], True, WEB_ID),
+    (WEB_ID, None, None, ["android", "web"], False, WEB_ID),
 ])
 async def test_auth_config_login_unavailable(client, monkeypatch, web_id, android_id, jwt_key, platforms, available, web_out):
     monkeypatch.setattr(settings, "auth_enabled", True)
